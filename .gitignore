@@ -1,0 +1,47 @@
+# Local environment and secrets
+.env
+.env.local
+*.local.ps1
+appsettings.*.local.json
+
+# Logs and diagnostics generated during local runs
+*.log
+
+# Flutter/Dart
+**/.dart_tool/
+**/.pub-cache/
+**/.flutter-plugins-dependencies
+**/.flutter_tool_state
+**/build/
+**/coverage/
+**/.verification/
+
+# Android/Gradle local state
+**/.gradle/
+**/.kotlin/
+**/local.properties
+**/work/gradle-home/
+
+# .NET local state
+**/bin/
+**/obj/
+**/.vs/
+**/.vscode/
+**/TestResults/
+**/.appdata/
+**/.dotnet/
+**/.dotnet-home/
+**/.nuget/
+**/.nuget-appdata/
+**/.nuget-localappdata/
+**/.nuget-packages/
+*.user
+*.suo
+*.rsuser
+*.nupkg
+*.snupkg
+
+# IDE/system files
+.DS_Store
+*.iml
+.idea/

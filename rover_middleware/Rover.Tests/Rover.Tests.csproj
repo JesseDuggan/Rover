@@ -1,0 +1,17 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+    <TargetFramework>net10.0</TargetFramework>
+    <Nullable>enable</Nullable>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <IsPackable>false</IsPackable>
+    <IsTestProject>true</IsTestProject>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\Rover.Api\Rover.Api.csproj" />
+    <ProjectReference Include="..\Rover.Application\Rover.Application.csproj" />
+    <ProjectReference Include="..\Rover.Domain\Rover.Domain.csproj" />
+    <ProjectReference Include="..\Rover.Infrastructure\Rover.Infrastructure.csproj" />
+  </ItemGroup>
+</Project>

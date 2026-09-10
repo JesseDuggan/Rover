@@ -1,0 +1,16 @@
+services:
+  rover-postgres:
+    image: postgis/postgis:17-3.5
+    container_name: rover-postgres
+    environment:
+      POSTGRES_DB: rover
+      POSTGRES_USER: rover
+      POSTGRES_PASSWORD: ${ROVER_POSTGRES_PASSWORD:?Set ROVER_POSTGRES_PASSWORD before starting PostgreSQL}
+    ports:
+      - "5432:5432"
+    volumes:
+      - rover-postgres-data:/var/lib/postgresql/data
+      - ./database/init:/docker-entrypoint-initdb.d:ro
+
+volumes:
+  rover-postgres-data:

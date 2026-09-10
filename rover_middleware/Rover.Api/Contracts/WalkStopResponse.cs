@@ -1,0 +1,28 @@
+namespace Rover.Api.Contracts;
+
+public sealed record WalkStopResponse(
+    string StopId,
+    int SequenceNumber,
+    string Name,
+    double Latitude,
+    double Longitude,
+    string ShortDescription,
+    string Narration,
+    string Category,
+    string ContentType,
+    string ContentSource,
+    string? SponsoredDisclosure,
+    string? Address,
+    string? WebsiteUrl,
+    string? PhoneNumber,
+    string? MenuUrl,
+    int EstimatedVisitMinutes,
+    int DistanceFromPreviousStopMeters,
+    int ArrivalRadiusMeters,
+    bool Visited,
+    string ArrivalState,
+    DateTimeOffset? ArrivedAtUtc,
+    string? DiscoveryProviderName,
+    string? ProviderPlaceId,
+    string? SourceUrl,
+    IReadOnlyCollection<string> RequiredAttribution);

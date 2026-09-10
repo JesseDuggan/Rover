@@ -1,0 +1,22 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<gpx version="1.1" creator="Rover Phase 4" xmlns="http://www.topografix.com/GPX/1/1">
+  <metadata>
+    <name>Rover Union Square Phase 4 Simulated Route</name>
+    <desc>Simulated Android emulator route. Coordinates are test data, not a user's real location.</desc>
+  </metadata>
+  <trk>
+    <name>Union Square ordered mock walk with off-route deviation</name>
+    <trkseg>
+      <trkpt lat="37.78790" lon="-122.40750"><time>2026-08-27T15:00:00Z</time></trkpt>
+      <trkpt lat="37.78800" lon="-122.40750"><time>2026-08-27T15:00:08Z</time></trkpt>
+      <trkpt lat="37.78790" lon="-122.40740"><time>2026-08-27T15:00:16Z</time></trkpt>
+      <trkpt lat="37.78850" lon="-122.40580"><time>2026-08-27T15:00:28Z</time></trkpt>
+      <trkpt lat="37.79020" lon="-122.41080"><time>2026-08-27T15:00:40Z</time></trkpt>
+      <trkpt lat="37.79030" lon="-122.41090"><time>2026-08-27T15:00:50Z</time></trkpt>
+      <trkpt lat="37.78820" lon="-122.40550"><time>2026-08-27T15:01:04Z</time></trkpt>
+      <trkpt lat="37.78750" lon="-122.40620"><time>2026-08-27T15:01:18Z</time></trkpt>
+      <trkpt lat="37.78690" lon="-122.40710"><time>2026-08-27T15:01:32Z</time></trkpt>
+      <trkpt lat="37.78470" lon="-122.40770"><time>2026-08-27T15:01:48Z</time></trkpt>
+    </trkseg>
+  </trk>
+</gpx>

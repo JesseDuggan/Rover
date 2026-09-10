@@ -1,0 +1,11 @@
+<Project>
+  <PropertyGroup>
+    <DotNetExecutable Condition="'$(DotNetExecutable)' == ''">$(DotNetHostPath)</DotNetExecutable>
+    <DotNetExecutable Condition="'$(DotNetExecutable)' == '' and Exists('C:\Program Files\dotnet\dotnet.exe')">C:\Program Files\dotnet\dotnet.exe</DotNetExecutable>
+    <DotNetExecutable Condition="'$(DotNetExecutable)' == ''">dotnet</DotNetExecutable>
+  </PropertyGroup>
+
+  <Target Name="VSTest" DependsOnTargets="Build">
+    <Exec Command="&quot;$(DotNetExecutable)&quot; &quot;$(TargetPath)&quot;" />
+  </Target>
+</Project>
