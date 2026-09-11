@@ -184,6 +184,7 @@ var tests = new List<(string Name, Func<Task> Run)>
     ("journey narration is quiet when facts are unavailable", JourneyNarrationIsQuietWhenFactsAreUnavailable),
     ("location intelligence endpoint validation", LocationIntelligenceEndpointValidation),
     ("location intelligence no external keys in Flutter", LocationIntelligenceNoExternalKeysInFlutter),
+    ("production startup validates required configuration", ProductionStartupValidatesRequiredConfiguration),
     ("API integration walk lifecycle", ApiIntegrationWalkLifecycle)
 };
 
@@ -3871,6 +3872,7 @@ static async Task LocationIntelligenceEndpointValidation()
 {
     using var api = await RoverApiProcess.StartAsync();
     using var client = new HttpClient { BaseAddress = api.BaseAddress };
+    client.DefaultRequestHeaders.Add("X-Rover-Dev-User", "location-validation");
 
     AssertEqual(HttpStatusCode.BadRequest, (await client.GetAsync("/api/location-context?lat=91&lng=-76&radiusMeters=1000")).StatusCode);
     AssertEqual(HttpStatusCode.BadRequest, (await client.GetAsync("/api/location-context?lat=44.6&lng=-76&radiusMeters=999999")).StatusCode);
@@ -3938,6 +3940,10 @@ static async Task ApiIntegrationWalkLifecycle()
 {
     using var api = await RoverApiProcess.StartAsync();
     using var client = new HttpClient { BaseAddress = api.BaseAddress };
+
+    AssertEqual(HttpStatusCode.OK, (await client.GetAsync("/health")).StatusCode);
+    AssertEqual(HttpStatusCode.Unauthorized, (await client.GetAsync("/api/beta/configuration")).StatusCode);
+    client.DefaultRequestHeaders.Add("X-Rover-Dev-User", "api-integration");
 
     var createResponse = await client.PostAsJsonAsync("/api/walks", new
     {
@@ -4010,7 +4016,6 @@ static async Task ApiIntegrationWalkLifecycle()
     AssertEqual(HttpStatusCode.OK, (await client.PostAsync($"/api/walks/{walkSessionId}/complete", null)).StatusCode);
     AssertEqual(HttpStatusCode.Conflict, (await client.PostAsync($"/api/walks/{walkSessionId}/start", null)).StatusCode);
     AssertEqual(HttpStatusCode.NotFound, (await client.GetAsync("/api/walks/missing-walk")).StatusCode);
-    AssertEqual(HttpStatusCode.OK, (await client.GetAsync("/health")).StatusCode);
     AssertEqual(HttpStatusCode.OK, (await client.GetAsync("/swagger")).StatusCode);
     AssertEqual(HttpStatusCode.OK, (await client.GetAsync("/api/beta/configuration")).StatusCode);
     AssertEqual(HttpStatusCode.OK, (await client.GetAsync("/api/beta/diagnostics")).StatusCode);
@@ -4028,6 +4033,7 @@ static async Task ApiIntegrationWalkLifecycle()
 
     var devSession = await client.PostAsJsonAsync("/api/auth/development/session", new { subject = "api-user-a", email = "a@example.test", guestProfileId = profileId });
     AssertEqual(HttpStatusCode.OK, devSession.StatusCode);
+    client.DefaultRequestHeaders.Remove("X-Rover-Dev-User");
     client.DefaultRequestHeaders.Add("X-Rover-Dev-User", "api-user-a");
     AssertEqual(HttpStatusCode.OK, (await client.PostAsJsonAsync("/api/accounts/link-guest", new { profileId })).StatusCode);
     AssertEqual(HttpStatusCode.OK, (await client.GetAsync("/api/accounts/me")).StatusCode);
@@ -4052,6 +4058,40 @@ static async Task ApiIntegrationWalkLifecycle()
     client.DefaultRequestHeaders.Remove("X-Rover-Dev-User");
     client.DefaultRequestHeaders.Add("X-Rover-Dev-User", "api-user-a");
     AssertEqual(HttpStatusCode.NoContent, (await client.DeleteAsync($"/api/profiles/{profileId}")).StatusCode);
+}
+
+static async Task ProductionStartupValidatesRequiredConfiguration()
+{
+    var apiExe = Path.Combine(AppContext.BaseDirectory, "Rover.Api.exe");
+    var startInfo = new ProcessStartInfo
+    {
+        FileName = apiExe,
+        RedirectStandardOutput = true,
+        RedirectStandardError = true,
+        UseShellExecute = false
+    };
+    startInfo.Environment["ASPNETCORE_ENVIRONMENT"] = "Production";
+    startInfo.Environment["PORT"] = "5409";
+    startInfo.Environment["ROVER_SKIP_ENV_LOCAL"] = "true";
+    foreach (var key in new[] { "ROVER_BETA_API_KEY", "GOOGLE_ROUTES_API_KEY", "GOOGLE_PLACES_API_KEY", "Rover__Cors__AllowedOrigins" })
+    {
+        startInfo.Environment.Remove(key);
+    }
+
+    using var process = Process.Start(startInfo)
+        ?? throw new InvalidOperationException("Failed to start Rover.Api.");
+    if (!process.WaitForExit(10000))
+    {
+        process.Kill(entireProcessTree: true);
+        throw new TimeoutException("Production configuration validation did not exit.");
+    }
+
+    var output = await process.StandardOutput.ReadToEndAsync();
+    var error = await process.StandardError.ReadToEndAsync();
+    var combined = output + error;
+    AssertTrue(process.ExitCode != 0, "Production startup without required variables must fail.");
+    AssertTrue(combined.Contains("required configuration", StringComparison.OrdinalIgnoreCase), "Expected a clear required configuration startup error.");
+    AssertTrue(!combined.Contains("secret", StringComparison.OrdinalIgnoreCase), "Startup validation must not print secret values.");
 }
 
 static WalkSessionService CreateService()

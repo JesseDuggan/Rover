@@ -18,6 +18,73 @@ Keep TCP 5080 restricted to the Windows Private firewall profile. Flutter setup 
 
 ASP.NET Core middleware for the Rover Flutter application.
 
+## Railway Beta Deployment
+
+The API startup project is `Rover.Api/Rover.Api.csproj` targeting `.NET 10` (`net10.0`). Railway builds the multi-stage `Dockerfile`, runs `dotnet Rover.Api.dll`, and the application binds to `http://0.0.0.0:$PORT` when Railway supplies `PORT`.
+
+`GET /health` is public and returns only service status and version. All `/api/*` beta requests require `X-Rover-Beta-Key: <ROVER_BETA_API_KEY>` or `Authorization: Bearer <ROVER_BETA_API_KEY>`. Swagger is only mapped in Development.
+
+Railway setup from GitHub:
+
+1. Push this repository to GitHub.
+2. In Railway, create a new project from the GitHub repository.
+3. Set the service root directory to `rover_middleware`.
+4. Confirm Railway detects `railway.toml` and the `Dockerfile`.
+5. Add the required variables below. Do not paste values into source files.
+6. Deploy, then confirm `https://<railway-domain>/health` returns `{"status":"Healthy","version":"..."}`.
+7. Add the Railway HTTPS origin to Flutter beta build settings and to `Rover__Cors__AllowedOrigins` if a web client is used.
+
+Required Railway variables:
+
+```text
+ASPNETCORE_ENVIRONMENT=Beta
+ROVER_BETA_API_KEY
+Rover__Cors__AllowedOrigins
+GOOGLE_ROUTES_API_KEY
+GOOGLE_PLACES_API_KEY
+ElevenLabs__ApiKey
+ElevenLabs__VoiceId
+ElevenLabs__ModelId
+ElevenLabs__Enabled=true
+```
+
+Provider and feature variables used when those modes are enabled:
+
+```text
+OPENAI_API_KEY
+OPENAI_MODEL
+OPENAI_ORGANIZATION
+OPENAI_PROJECT
+OPENAI_WEB_SEARCH_ENABLED
+MAPBOX_DIRECTIONS_TOKEN
+MAPBOX_SEARCH_TOKEN
+MAPBOX_PUBLIC_TOKEN
+OPENWEATHER_API_KEY
+GOOGLE_WEATHER_API_KEY
+TICKETMASTER_DISCOVERY_API_KEY
+ROVER_ROUTING_MODE
+ROVER_LOCAL_DISCOVERY_MODE
+ROVER_DISCOVERY_MODE
+ROVER_CONVERSATION_MODE
+ROVER_LOCATION_STORY_OPENAI_ENABLED
+ROVER_LOCATION_STORAGE_ENABLED
+ROVER_LOCATION_STORAGE_DIRECTORY
+ROVER_LOCATION_PROVIDER_MAPBOX_ENABLED
+ROVER_LOCATION_PROVIDER_WIKIPEDIA_ENABLED
+ROVER_LOCATION_PROVIDER_WIKIDATA_ENABLED
+ROVER_LOCATION_PROVIDER_GOOGLEPLACES_ENABLED
+ROVER_LOCATION_PROVIDER_OPENSTREETMAP_ENABLED
+ROVER_LOCATION_PROVIDER_WEATHER_ENABLED
+ROVER_PHASE15_ENABLED
+ROVER_PHASE15_LIVE_WEATHER_ENABLED
+ROVER_PHASE15_EVENTS_ENABLED
+ROVER_PHASE15_CURRENT_INFO_ENABLED
+ROVER_PHASE16_ENABLED
+ROVER_AUDIO_CACHE_RETENTION_HOURS
+```
+
+Database decision: the current beta code stores walk sessions, accounts, feedback, diagnostics, and speech usage in memory. Story packs and generated audio can use local files under `work/`. The repository includes PostgreSQL/PostGIS schema scaffolding, but `PostgreSqlProfileRepository` is still a clear-fail placeholder until EF Core/Npgsql packages and migrations are implemented. For Railway beta, keep `ROVER_STORAGE_MODE=InMemory` unless a persistent Railway volume is mounted for `work/`; expect data loss on redeploy/restart. Before production, implement the PostgreSQL repository and set `ROVER_STORAGE_MODE=PostgreSql` plus `DATABASE_URL` or `ROVER_POSTGRES_CONNECTION_STRING`, then migrate existing local JSON/audio data without deleting it.
+
 ## Phase 2 Scope
 
 Phase 2 adds a locally testable walking-tour session API backed by deterministic mock data. It supports creating a Union Square, San Francisco walk; starting it; visiting ordered stops; retrieving the next stop; completing or cancelling the walk; and viewing the lifecycle through Swagger.

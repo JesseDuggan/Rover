@@ -18,6 +18,20 @@ The recommended physical-device workflow no longer requires USB reverse. Follow 
 
 The canonical development API port is `5080`. Android emulator builds default to `http://10.0.2.2:5080`; Windows and local web builds default to `http://127.0.0.1:5080`; physical Android builds must supply `ROVER_API_BASE_URL`.
 
+## Railway Beta API
+
+Beta builds no longer depend on `adb reverse`, USB tethering, or the laptop development API. Build the app against the hosted Railway URL:
+
+```powershell
+flutter build appbundle --release `
+  --dart-define=ROVER_API_ENVIRONMENT=beta `
+  --dart-define=ROVER_BETA_API_BASE_URL=https://rover-api.up.railway.app `
+  --dart-define=ROVER_BETA_API_KEY=<beta-api-key> `
+  --dart-define=GOOGLE_MAPS_ANDROID_API_KEY=<android-restricted-key>
+```
+
+Use `ROVER_API_BASE_URL=http://127.0.0.1:5080` or `ROVER_API_BASE_URL=http://10.0.2.2:5080` only for local development. When Railway assigns the final HTTPS domain, replace `ROVER_BETA_API_BASE_URL` with that exact URL.
+
 ## Start The Middleware
 
 From the repository root:
@@ -76,21 +90,7 @@ cd SRC\rover_flutter
 flutter run --debug --dart-define-from-file=.env.local --dart-define=ROVER_API_BASE_URL=http://<LAPTOP_PRIVATE_IPV4>:5080
 ```
 
-Physical Samsung with USB reverse to local Rover.Api:
-
-```powershell
-cd SRC\rover_middleware
-dotnet run --project .\Rover.Api\Rover.Api.csproj --urls http://127.0.0.1:5080
-```
-
-```powershell
-& "C:\Users\jesse\AppData\Local\Android\Sdk\platform-tools\adb.exe" -s RFGYA0RB5HY reverse tcp:5080 tcp:5080
-```
-
-```powershell
-cd ..\rover_flutter
-.\run_rover_samsung.ps1
-```
+Physical Samsung beta testing should use the Railway HTTPS URL above. Use the LAN workflow only for local debugging on a private network.
 
 Google Maps is the preferred Flutter renderer when `GOOGLE_MAPS_ANDROID_API_KEY` is present. The key is passed to the Android manifest from the existing `--dart-define-from-file=.env.local` build flow. Restrict it in Google Cloud to the Maps SDK for Android, the `ai.myrover.rover` package, and the signing-certificate SHA fingerprints used for each build type.
 

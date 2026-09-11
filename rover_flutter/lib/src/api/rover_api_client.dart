@@ -381,6 +381,7 @@ class RoverApiClient {
       request.headers.contentType = ContentType.json;
       request.headers.set(HttpHeaders.acceptHeader, 'audio/mpeg');
       _applyDevelopmentUser(request);
+      _applyBetaApiKey(request);
       request.write(jsonEncode(body.toJson()));
 
       final response = await request.close().timeout(config.responseTimeout);
@@ -517,6 +518,7 @@ class RoverApiClient {
       request.headers.contentType = ContentType.json;
       request.headers.set(HttpHeaders.acceptHeader, ContentType.json.mimeType);
       _applyDevelopmentUser(request);
+      _applyBetaApiKey(request);
 
       if (body != null) {
         request.write(jsonEncode(body));
@@ -579,6 +581,13 @@ class RoverApiClient {
     final user = config.developmentUser;
     if (user != null && user.trim().isNotEmpty) {
       request.headers.set('X-Rover-Dev-User', user.trim());
+    }
+  }
+
+  void _applyBetaApiKey(HttpClientRequest request) {
+    final key = config.betaApiKey;
+    if (key != null && key.trim().isNotEmpty) {
+      request.headers.set('X-Rover-Beta-Key', key.trim());
     }
   }
 }

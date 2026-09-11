@@ -18,6 +18,7 @@ using Rover.Infrastructure.Adaptations;
 using Rover.Infrastructure.Beta;
 using Rover.Infrastructure.Conversation;
 using Rover.Infrastructure.Commerce;
+using Rover.Infrastructure.Http;
 using Rover.Infrastructure.LocationIntelligence;
 using Rover.Infrastructure.Journeys;
 using Rover.Infrastructure.LiveContext;
@@ -101,7 +102,9 @@ public static class DependencyInjection
                 : configuration.GetValue("ElevenLabs:CacheRetentionHours", 168)
         };
         services.AddSingleton(speechOptions);
-        services.AddHttpClient("ElevenLabs");
+        services.AddTransient<TransientRetryHandler>();
+        services.AddHttpClient("ElevenLabs")
+            .AddHttpMessageHandler<TransientRetryHandler>();
         services.AddSingleton(new OpenAIRoverConversationOptions
         {
             ApiKey = Environment.GetEnvironmentVariable("OPENAI_API_KEY"),
@@ -213,20 +216,34 @@ public static class DependencyInjection
         services.AddSingleton(googleWeatherOptions);
         services.AddSingleton(ticketmasterOptions);
         services.AddSingleton(currentInformationOptions);
-        services.AddHttpClient("MapboxDirections");
-        services.AddHttpClient("GoogleRoutes");
-        services.AddHttpClient("MapboxSearch");
-        services.AddHttpClient("Wikipedia", client => client.DefaultRequestHeaders.UserAgent.ParseAdd(locationOptions.UserAgent));
-        services.AddHttpClient("Wikidata", client => client.DefaultRequestHeaders.UserAgent.ParseAdd(locationOptions.UserAgent));
-        services.AddHttpClient("ParksCanadaHeritage", client => client.DefaultRequestHeaders.UserAgent.ParseAdd(locationOptions.UserAgent));
-        services.AddHttpClient("GooglePlaces", client => client.DefaultRequestHeaders.UserAgent.ParseAdd(locationOptions.UserAgent));
-        services.AddHttpClient("Overpass", client => client.DefaultRequestHeaders.UserAgent.ParseAdd(locationOptions.UserAgent));
-        services.AddHttpClient("Weather", client => client.DefaultRequestHeaders.UserAgent.ParseAdd(locationOptions.UserAgent));
-        services.AddHttpClient<OpenAIRoverConversationProvider>();
-        services.AddHttpClient<OpenAILocationStorySynthesizer>();
-        services.AddHttpClient<GoogleWeatherLiveProvider>();
-        services.AddHttpClient<TicketmasterLiveEventProvider>();
-        services.AddHttpClient<OpenAICurrentInformationProvider>();
+        services.AddHttpClient("MapboxDirections")
+            .AddHttpMessageHandler<TransientRetryHandler>();
+        services.AddHttpClient("GoogleRoutes")
+            .AddHttpMessageHandler<TransientRetryHandler>();
+        services.AddHttpClient("MapboxSearch")
+            .AddHttpMessageHandler<TransientRetryHandler>();
+        services.AddHttpClient("Wikipedia", client => client.DefaultRequestHeaders.UserAgent.ParseAdd(locationOptions.UserAgent))
+            .AddHttpMessageHandler<TransientRetryHandler>();
+        services.AddHttpClient("Wikidata", client => client.DefaultRequestHeaders.UserAgent.ParseAdd(locationOptions.UserAgent))
+            .AddHttpMessageHandler<TransientRetryHandler>();
+        services.AddHttpClient("ParksCanadaHeritage", client => client.DefaultRequestHeaders.UserAgent.ParseAdd(locationOptions.UserAgent))
+            .AddHttpMessageHandler<TransientRetryHandler>();
+        services.AddHttpClient("GooglePlaces", client => client.DefaultRequestHeaders.UserAgent.ParseAdd(locationOptions.UserAgent))
+            .AddHttpMessageHandler<TransientRetryHandler>();
+        services.AddHttpClient("Overpass", client => client.DefaultRequestHeaders.UserAgent.ParseAdd(locationOptions.UserAgent))
+            .AddHttpMessageHandler<TransientRetryHandler>();
+        services.AddHttpClient("Weather", client => client.DefaultRequestHeaders.UserAgent.ParseAdd(locationOptions.UserAgent))
+            .AddHttpMessageHandler<TransientRetryHandler>();
+        services.AddHttpClient<OpenAIRoverConversationProvider>()
+            .AddHttpMessageHandler<TransientRetryHandler>();
+        services.AddHttpClient<OpenAILocationStorySynthesizer>()
+            .AddHttpMessageHandler<TransientRetryHandler>();
+        services.AddHttpClient<GoogleWeatherLiveProvider>()
+            .AddHttpMessageHandler<TransientRetryHandler>();
+        services.AddHttpClient<TicketmasterLiveEventProvider>()
+            .AddHttpMessageHandler<TransientRetryHandler>();
+        services.AddHttpClient<OpenAICurrentInformationProvider>()
+            .AddHttpMessageHandler<TransientRetryHandler>();
         services.RemoveAll<ILiveWeatherProvider>();
         services.RemoveAll<ILiveEventProvider>();
         services.RemoveAll<ILiveCurrentInformationProvider>();

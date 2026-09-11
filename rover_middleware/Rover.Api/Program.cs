@@ -1,5 +1,7 @@
 using System.Diagnostics;
 using System.Net;
+using System.Threading.RateLimiting;
+using Microsoft.AspNetCore.RateLimiting;
 using Microsoft.AspNetCore.Mvc;
 using Rover.Api.Contracts;
 using Rover.Api.Mapping;
@@ -27,10 +29,32 @@ LoadLocalEnvironmentFile();
 
 var builder = WebApplication.CreateBuilder(args);
 
+ConfigureRailwayPort(builder);
 ValidateStartupConfiguration(builder);
 
 builder.Logging.ClearProviders();
 builder.Logging.AddConsole();
+builder.Logging.AddJsonConsole();
+
+builder.Services.AddProblemDetails();
+builder.Services.AddRateLimiter(options =>
+{
+    options.RejectionStatusCode = StatusCodes.Status429TooManyRequests;
+    options.GlobalLimiter = PartitionedRateLimiter.Create<HttpContext, string>(context =>
+    {
+        var key = context.Request.Headers.TryGetValue("X-Rover-Dev-User", out var devUser) && !string.IsNullOrWhiteSpace(devUser)
+            ? $"dev:{devUser}"
+            : context.Connection.RemoteIpAddress?.ToString() ?? "unknown";
+        return RateLimitPartition.GetFixedWindowLimiter(
+            key,
+            _ => new FixedWindowRateLimiterOptions
+            {
+                PermitLimit = context.Request.Path.StartsWithSegments("/health") ? 120 : 60,
+                Window = TimeSpan.FromMinutes(1),
+                QueueLimit = 0
+            });
+    });
+});
 
 builder.Services.AddSingleton(new LocationTrackingOptions
 {
@@ -87,6 +111,21 @@ builder.Services.AddCors(options =>
 
 var app = builder.Build();
 
+app.UseExceptionHandler(exceptionApp =>
+{
+    exceptionApp.Run(async context =>
+    {
+        context.Response.StatusCode = StatusCodes.Status500InternalServerError;
+        context.Response.ContentType = "application/problem+json";
+        await context.Response.WriteAsJsonAsync(new ProblemDetails
+        {
+            Status = StatusCodes.Status500InternalServerError,
+            Title = "Unexpected server error",
+            Detail = "Rover could not complete the request."
+        });
+    });
+});
+
 app.Use(async (context, next) =>
 {
     var stopwatch = Stopwatch.StartNew();
@@ -112,6 +151,8 @@ app.Use(async (context, next) =>
     }
 });
 
+app.UseRateLimiter();
+
 if (app.Environment.IsDevelopment())
 {
     app.MapGet("/swagger/v1/swagger.json", () => Results.Json(OpenApiDocumentFactory.Create()))
@@ -126,7 +167,32 @@ if (app.Environment.IsDevelopment())
 
 app.UseCors("LocalFlutter");
 
-app.MapGet("/health", () => Results.Ok(new HealthResponse("Rover.Api", "Healthy", DateTimeOffset.UtcNow)))
+app.Use(async (context, next) =>
+{
+    if (!IsProtectedApiRequest(context))
+    {
+        await next();
+        return;
+    }
+
+    if (IsAuthorizedBetaRequest(context, app.Environment, builder.Configuration))
+    {
+        await next();
+        return;
+    }
+
+    context.Response.StatusCode = StatusCodes.Status401Unauthorized;
+    await context.Response.WriteAsJsonAsync(new ProblemDetails
+    {
+        Status = StatusCodes.Status401Unauthorized,
+        Title = "Authentication required",
+        Detail = "Rover beta API requests require a valid beta API key."
+    });
+});
+
+app.MapGet("/health", (IConfiguration configuration) => Results.Ok(new HealthResponse(
+        "Healthy",
+        configuration["Rover:Build:Version"] ?? typeof(Program).Assembly.GetName().Version?.ToString() ?? "unknown")))
     .WithName("Health");
 
 var locationIntelligence = app.MapGroup("/api");
@@ -1620,6 +1686,73 @@ static bool IsPrivateIpv4(IPAddress address)
             || (bytes[0] == 192 && bytes[1] == 168));
 }
 
+static void ConfigureRailwayPort(WebApplicationBuilder builder)
+{
+    var port = Environment.GetEnvironmentVariable("PORT");
+    if (string.IsNullOrWhiteSpace(port))
+    {
+        return;
+    }
+
+    if (!int.TryParse(port, out var parsedPort) || parsedPort <= 0 || parsedPort > 65535)
+    {
+        throw new InvalidOperationException("PORT must be a valid TCP port number.");
+    }
+
+    builder.WebHost.UseUrls($"http://0.0.0.0:{parsedPort}");
+}
+
+static bool IsProtectedApiRequest(HttpContext context)
+{
+    if (!context.Request.Path.StartsWithSegments("/api"))
+    {
+        return false;
+    }
+
+    return !context.Request.Path.Equals("/api/auth/development/session", StringComparison.OrdinalIgnoreCase);
+}
+
+static bool IsAuthorizedBetaRequest(HttpContext context, IWebHostEnvironment environment, IConfiguration configuration)
+{
+    if (environment.IsDevelopment()
+        && context.Request.Headers.TryGetValue("X-Rover-Dev-User", out var devSubject)
+        && !string.IsNullOrWhiteSpace(devSubject))
+    {
+        return true;
+    }
+
+    var configuredKey = Environment.GetEnvironmentVariable("ROVER_BETA_API_KEY")
+        ?? configuration["Rover:Authentication:BetaApiKey"];
+    if (string.IsNullOrWhiteSpace(configuredKey))
+    {
+        return false;
+    }
+
+    var suppliedKey = context.Request.Headers.TryGetValue("X-Rover-Beta-Key", out var headerKey)
+        ? headerKey.ToString()
+        : null;
+    if (string.IsNullOrWhiteSpace(suppliedKey)
+        && context.Request.Headers.TryGetValue("Authorization", out var authorization)
+        && authorization.ToString().StartsWith("Bearer ", StringComparison.OrdinalIgnoreCase))
+    {
+        suppliedKey = authorization.ToString()["Bearer ".Length..].Trim();
+    }
+
+    return FixedTimeEquals(configuredKey, suppliedKey);
+}
+
+static bool FixedTimeEquals(string expected, string? actual)
+{
+    if (string.IsNullOrWhiteSpace(actual))
+    {
+        return false;
+    }
+
+    var expectedBytes = System.Text.Encoding.UTF8.GetBytes(expected);
+    var actualBytes = System.Text.Encoding.UTF8.GetBytes(actual);
+    return System.Security.Cryptography.CryptographicOperations.FixedTimeEquals(expectedBytes, actualBytes);
+}
+
 static void LoadLocalEnvironmentFile()
 {
     if (string.Equals(Environment.GetEnvironmentVariable("ROVER_SKIP_ENV_LOCAL"), "true", StringComparison.OrdinalIgnoreCase))
@@ -1894,11 +2027,17 @@ static void ValidateStartupConfiguration(WebApplicationBuilder builder)
     }
 
     var missing = new List<string>();
-    Require("Rover:Storage:PostgreSql:ConnectionString", missing);
-    Require("Rover:Authentication:Cognito:Authority", missing);
-    Require("Rover:Authentication:Cognito:Audience", missing);
+    Require("Rover:Authentication:BetaApiKey", missing, "ROVER_BETA_API_KEY");
     Require("Rover:Cors:AllowedOrigins", missing);
     Require("Rover:Routing:Google:ApiKey", missing, "GOOGLE_ROUTES_API_KEY", "GOOGLE_PLACES_API_KEY");
+
+    var storageMode = Environment.GetEnvironmentVariable("ROVER_STORAGE_MODE")
+        ?? builder.Configuration["Rover:Storage:Mode"]
+        ?? "InMemory";
+    if (storageMode.Equals("PostgreSql", StringComparison.OrdinalIgnoreCase))
+    {
+        Require("Rover:Storage:PostgreSql:ConnectionString", missing, "DATABASE_URL", "ROVER_POSTGRES_CONNECTION_STRING");
+    }
 
     if (builder.Environment.IsEnvironment("Beta") || builder.Environment.IsStaging())
     {

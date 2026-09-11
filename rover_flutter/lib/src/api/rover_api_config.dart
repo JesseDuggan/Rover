@@ -4,20 +4,36 @@ class RoverApiConfig {
   const RoverApiConfig({
     required String baseUrl,
     this.developmentUser,
+    this.betaApiKey,
     this.connectionTimeout = const Duration(seconds: 6),
     this.responseTimeout = const Duration(seconds: 45),
     this.allowDevelopmentOverride = true,
   }) : configuredBaseUrl = baseUrl;
 
+  static const apiEnvironment = String.fromEnvironment(
+    'ROVER_API_ENVIRONMENT',
+    defaultValue: 'local',
+  );
   static const suppliedBaseUrl = String.fromEnvironment('ROVER_API_BASE_URL');
+  static const betaBaseUrl = String.fromEnvironment(
+    'ROVER_BETA_API_BASE_URL',
+    defaultValue: 'https://rover-api.up.railway.app',
+  );
+  static const productionBaseUrl = String.fromEnvironment(
+    'ROVER_PRODUCTION_API_BASE_URL',
+  );
   static const defaultDevelopmentUser = String.fromEnvironment(
     'ROVER_DEV_USER',
+  );
+  static const suppliedBetaApiKey = String.fromEnvironment(
+    'ROVER_BETA_API_KEY',
   );
 
   static String? _developmentOverride;
 
   final String configuredBaseUrl;
   final String? developmentUser;
+  final String? betaApiKey;
   final Duration connectionTimeout;
   final Duration responseTimeout;
   final bool allowDevelopmentOverride;
@@ -45,20 +61,43 @@ class RoverApiConfig {
     return RoverApiConfig(
       baseUrl: resolveBaseUrl(
         suppliedBaseUrl: suppliedBaseUrl,
+        environment: apiEnvironment,
+        betaBaseUrl: betaBaseUrl,
+        productionBaseUrl: productionBaseUrl,
         platform: defaultTargetPlatform,
         isWeb: kIsWeb,
       ),
       developmentUser: defaultDevelopmentUser,
+      betaApiKey: suppliedBetaApiKey.trim().isEmpty
+          ? null
+          : suppliedBetaApiKey,
     );
   }
 
   static String resolveBaseUrl({
     required String suppliedBaseUrl,
+    String environment = 'local',
+    String betaBaseUrl = betaBaseUrl,
+    String productionBaseUrl = productionBaseUrl,
     required TargetPlatform platform,
     bool isWeb = false,
   }) {
     if (suppliedBaseUrl.trim().isNotEmpty) {
       return normalizeBaseUrl(suppliedBaseUrl);
+    }
+    switch (environment.trim().toLowerCase()) {
+      case 'beta':
+        return normalizeBaseUrl(betaBaseUrl);
+      case 'production':
+      case 'prod':
+        if (productionBaseUrl.trim().isEmpty) {
+          throw ArgumentError.value(
+            productionBaseUrl,
+            'productionBaseUrl',
+            'ROVER_PRODUCTION_API_BASE_URL is required for production builds',
+          );
+        }
+        return normalizeBaseUrl(productionBaseUrl);
     }
     if (!isWeb && platform == TargetPlatform.android) {
       return 'http://10.0.2.2:5080';

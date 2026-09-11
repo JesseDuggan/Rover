@@ -113,6 +113,18 @@ void main() {
     );
   });
 
+  test('named beta API environment uses Railway HTTPS URL', () {
+    expect(
+      RoverApiConfig.resolveBaseUrl(
+        suppliedBaseUrl: '',
+        environment: 'beta',
+        betaBaseUrl: 'https://rover-api.up.railway.app',
+        platform: TargetPlatform.android,
+      ),
+      'https://rover-api.up.railway.app',
+    );
+  });
+
   test('debug runtime API override updates existing configurations', () {
     const config = RoverApiConfig(baseUrl: 'http://10.0.2.2:5080');
 
