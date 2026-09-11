@@ -2039,14 +2039,6 @@ static void ValidateStartupConfiguration(WebApplicationBuilder builder)
         Require("Rover:Storage:PostgreSql:ConnectionString", missing, "DATABASE_URL", "ROVER_POSTGRES_CONNECTION_STRING");
     }
 
-/*
-    if (builder.Environment.IsEnvironment("Beta") || builder.Environment.IsStaging())
-    {
-        Require("ElevenLabs:ApiKey", missing, "ElevenLabs__ApiKey");
-        Require("ElevenLabs:VoiceId", missing, "ElevenLabs__VoiceId");
-        Require("ElevenLabs:ModelId", missing, "ElevenLabs__ModelId");
-    }
-*/
     if (missing.Count > 0)
     {
         throw new InvalidOperationException($"Rover cannot start outside Development until required configuration is present: {string.Join(", ", missing)}.");
