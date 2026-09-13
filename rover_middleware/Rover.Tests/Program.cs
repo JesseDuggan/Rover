@@ -779,7 +779,7 @@ static async Task LocalRouteResearchValidation()
         annotations = new[] { new { type = "url_citation", start_index = passage.Length + 1, end_index = passage.Length + 4,
             url = "https://museum.example/history", title = "Museum history" } }
     } } } } });
-    foreach (var scenario in new[] { "valid", "uncited", "far", "undated-event", "invented-event-dates", "unknown-evidence", "unsupported-location", "failure" })
+    foreach (var scenario in new[] { "valid", "wrapped", "uncited", "far", "undated-event", "invented-event-dates", "unknown-evidence", "unsupported-location", "failure" })
     {
         var calls = 0;
         using var client = new HttpClient(new RoutingHttpMessageHandler(request =>
@@ -788,7 +788,20 @@ static async Task LocalRouteResearchValidation()
             var body = request.Content!.ReadAsStringAsync().GetAwaiter().GetResult();
             AssertTrue(!body.Contains("walk-test"), "Research must not receive user session identifiers.");
             if (scenario == "failure") return JsonResponse(HttpStatusCode.ServiceUnavailable, "{}");
-            if (calls == 1) return JsonResponse(HttpStatusCode.OK, scenario == "uncited" ? "{\"output\":[]}" : research);
+            if (calls == 1)
+            {
+                var response = research;
+                if (scenario == "wrapped")
+                {
+                    response = JsonSerializer.Serialize(new { status = "completed", output = new[] { new { content = new[] { new
+                    {
+                        text = passage + "\n[1]",
+                        annotations = new[] { new { type = "url_citation", start_index = passage.Length + 1, end_index = passage.Length + 4,
+                            url = "https://museum.example/history", title = "Museum history" } }
+                    } } } } });
+                }
+                return JsonResponse(HttpStatusCode.OK, scenario == "uncited" ? "{\"output\":[]}" : response);
+            }
             AssertTrue(!body.Contains("\"tools\""), "Classification must not have tools.");
             var cards = JsonSerializer.Serialize(new { stories = new[] { new
             {
@@ -804,9 +817,9 @@ static async Task LocalRouteResearchValidation()
         var researcher = new Rover.Infrastructure.Journeys.OpenAILocalRouteResearcher(client,
             new Rover.Infrastructure.Journeys.LocalRouteResearchOptions { Enabled = true, ApiKey = "test", Model = "test" }, TimeProvider.System);
         var result = await researcher.ResearchAsync(query, CancellationToken.None);
-        AssertEqual(scenario == "valid" ? 1 : 0, result.Stories.Count);
+        AssertEqual(scenario is "valid" or "wrapped" ? 1 : 0, result.Stories.Count);
         AssertTrue(calls <= 2, "Research is bounded to two model calls per pack.");
-        if (scenario == "valid")
+        if (scenario is "valid" or "wrapped")
         {
             var story = result.Stories.Single();
             AssertEqual(passage, string.Join(' ', story.Claims.Select(claim => claim.Text)));
