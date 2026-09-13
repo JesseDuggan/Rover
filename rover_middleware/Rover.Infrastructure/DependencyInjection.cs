@@ -222,7 +222,9 @@ public static class DependencyInjection
                 && EnvironmentFlag("ROVER_LOCAL_RESEARCH_ENABLED", false),
             ApiKey = Environment.GetEnvironmentVariable("OPENAI_API_KEY"),
             Model = Environment.GetEnvironmentVariable("ROVER_LOCAL_RESEARCH_MODEL") ?? currentInformationOptions.Model,
-            TimeoutSeconds = configuration.GetValue("Rover:Phase16:LocalResearch:TimeoutSeconds", 60)
+            TimeoutSeconds = configuration.GetValue("Rover:Phase16:LocalResearch:TimeoutSeconds", 60),
+            SearchMaxOutputTokens = configuration.GetValue("Rover:Phase16:LocalResearch:SearchMaxOutputTokens", 8192),
+            ClassificationMaxOutputTokens = configuration.GetValue("Rover:Phase16:LocalResearch:ClassificationMaxOutputTokens", 4096)
         });
         services.AddHttpClient<ILocalRouteResearcher, OpenAILocalRouteResearcher>();
         services.AddHttpClient("MapboxDirections")

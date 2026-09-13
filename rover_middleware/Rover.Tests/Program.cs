@@ -787,6 +787,8 @@ static async Task LocalRouteResearchValidation()
             calls++;
             var body = request.Content!.ReadAsStringAsync().GetAwaiter().GetResult();
             AssertTrue(!body.Contains("walk-test"), "Research must not receive user session identifiers.");
+            using var payload = JsonDocument.Parse(body);
+            AssertEqual(calls == 1 ? 8192 : 4096, payload.RootElement.GetProperty("max_output_tokens").GetInt32());
             if (scenario == "failure") return JsonResponse(HttpStatusCode.ServiceUnavailable, "{}");
             if (calls == 1)
             {
