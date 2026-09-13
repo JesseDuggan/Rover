@@ -88,27 +88,29 @@ public sealed class OpenAILocalRouteResearcher(HttpClient client, LocalRouteRese
             stage = "story validation";
             var stories = new List<AdaptiveRouteStory>();
             var used = new HashSet<int>();
+            var outsideRoute = 0;
+            var invalidCards = 0;
             var now = clock.GetUtcNow();
-            foreach (var card in cards?.Stories ?? [])
+            foreach (var card in cards.Stories)
             {
                 if (card is null || card.EvidenceIndex < 0 || card.EvidenceIndex >= passages.Count || !used.Add(card.EvidenceIndex)
                     || string.IsNullOrWhiteSpace(card.Title) || card.Title.Length > 120
                     || !double.IsFinite(card.Latitude) || !double.IsFinite(card.Longitude)
-                    || Math.Abs(card.Latitude) > 90 || Math.Abs(card.Longitude) > 180) continue;
+                    || Math.Abs(card.Latitude) > 90 || Math.Abs(card.Longitude) > 180) { invalidCards++; continue; }
                 var passage = passages[card.EvidenceIndex];
                 if (string.IsNullOrWhiteSpace(card.LocationEvidence) || card.LocationEvidence.Length < 3
-                    || !passage.Text.Contains(card.LocationEvidence, StringComparison.OrdinalIgnoreCase)) continue;
+                    || !passage.Text.Contains(card.LocationEvidence, StringComparison.OrdinalIgnoreCase)) { invalidCards++; continue; }
                 var anchor = new GeoLocation(card.Latitude, card.Longitude);
                 var segment = query.Segments.OrderBy(s => RouteMath.DistanceMeters(s.Anchor, anchor)).First();
-                if (RouteMath.DistanceMeters(segment.Anchor, anchor) > 1000) continue;
-                if (card.Kind is not ("history" or "culture" or "architecture" or "event")) continue;
+                if (RouteMath.DistanceMeters(segment.Anchor, anchor) > 1000) { outsideRoute++; continue; }
+                if (card.Kind is not ("history" or "culture" or "architecture" or "event")) { invalidCards++; continue; }
                 var expires = card.Kind == "event" ? now.AddMinutes(30) : now.AddHours(6);
                 if (card.Kind == "event")
                 {
                     if (card.StartsUtc is null || card.EndsUtc is null || card.EndsUtc <= now
-                        || card.StartsUtc >= card.EndsUtc || card.StartsUtc > now.AddDays(7)) continue;
+                        || card.StartsUtc >= card.EndsUtc || card.StartsUtc > now.AddDays(7)) { invalidCards++; continue; }
                     if (!passage.Text.Contains(card.StartsUtc.Value.ToString("yyyy-MM-dd", CultureInfo.InvariantCulture), StringComparison.Ordinal)
-                        || !passage.Text.Contains(card.EndsUtc.Value.ToString("yyyy-MM-dd", CultureInfo.InvariantCulture), StringComparison.Ordinal)) continue;
+                        || !passage.Text.Contains(card.EndsUtc.Value.ToString("yyyy-MM-dd", CultureInfo.InvariantCulture), StringComparison.Ordinal)) { invalidCards++; continue; }
                     expires = card.EndsUtc.Value < expires ? card.EndsUtc.Value : expires;
                 }
                 var id = Hash(passage.Text);
@@ -126,7 +128,9 @@ public sealed class OpenAILocalRouteResearcher(HttpClient client, LocalRouteRese
                     card.Kind, anchor, segment.StartRouteMeters, segment.EndRouteMeters, variants, claims, passage.Sources, 0.75, expires));
                 if (stories.Count == 3) break;
             }
-            return new(stories, stories.Count == 0 ? "Local research found no cited stories within the route area." : null);
+            return new(stories, stories.Count == 0
+                ? $"Local research found no usable stories: {passages.Count} cited passages; {cards.Stories.Length} classified cards; {outsideRoute} outside route area; {invalidCards} failed evidence or field checks."
+                : null);
         }
         catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested) { throw; }
         catch (Exception error) when (error is HttpRequestException or JsonException or OperationCanceledException or InvalidOperationException or ArgumentException)
@@ -200,30 +204,47 @@ public sealed class OpenAILocalRouteResearcher(HttpClient client, LocalRouteRese
         details = "no annotated text returned";
         var paragraphs = 0;
         var citedParagraphs = 0;
+        var citationCount = 0;
+        var invalidOffsets = 0;
+        var invalidUrls = 0;
+        var rejectedLength = 0;
+        var embeddedUrls = 0;
         if (!root.TryGetProperty("output", out var output)) return results;
         foreach (var item in output.EnumerateArray())
         {
             if (!item.TryGetProperty("content", out var content)) continue;
             foreach (var part in content.EnumerateArray())
             {
-                if (!part.TryGetProperty("text", out var textNode) || !part.TryGetProperty("annotations", out var annotations)) continue;
+                if (!part.TryGetProperty("text", out var textNode)) continue;
                 var text = textNode.GetString() ?? "";
                 // Preserve offsets while grouping wrapped lines and their citations.
-                foreach (Match paragraph in Regex.Matches(text, @"[^\r\n]+(?:(?:\r?\n)(?![ \t]*\r?\n)[^\r\n]+)*"))
+                var matches = Regex.Matches(text, @"[^\r\n]+(?:(?:\r?\n)(?![ \t]*\r?\n)[^\r\n]+)*");
+                var validCitations = new List<(int Start, int End, AdaptiveStorySource Source)>();
+                if (part.TryGetProperty("annotations", out var annotations) && annotations.ValueKind == JsonValueKind.Array)
+                foreach (var citation in annotations.EnumerateArray())
+                {
+                    if (!citation.TryGetProperty("type", out var type) || type.GetString() != "url_citation") continue;
+                    citationCount++;
+                    if (!citation.TryGetProperty("start_index", out var start) || !start.TryGetInt32(out var from)
+                        || !citation.TryGetProperty("end_index", out var end) || !end.TryGetInt32(out var to)
+                        || from >= to || !matches.Cast<Match>().Any(p => from >= p.Index && to <= p.Index + p.Length))
+                    {
+                        invalidOffsets++;
+                        continue;
+                    }
+                    if (!citation.TryGetProperty("url", out var urlNode) || !PublicUrl(urlNode.GetString(), out var url))
+                    {
+                        invalidUrls++;
+                        continue;
+                    }
+                    validCitations.Add((from, to, new AdaptiveStorySource(Hash(url!.AbsoluteUri), "OnlineResearch",
+                        citation.TryGetProperty("title", out var title) ? title.GetString() : url.Host,
+                        url.AbsoluteUri, url.Host, now, 0.75) { AllowsOfflineUse = false }));
+                }
+                foreach (Match paragraph in matches)
                 {
                     paragraphs++;
-                    var citations = new List<(int Start, int End, AdaptiveStorySource Source)>();
-                    foreach (var citation in annotations.EnumerateArray())
-                    {
-                        if (!citation.TryGetProperty("type", out var type) || type.GetString() != "url_citation"
-                            || !citation.TryGetProperty("start_index", out var start) || !start.TryGetInt32(out var from)
-                            || !citation.TryGetProperty("end_index", out var end) || !end.TryGetInt32(out var to)
-                            || from < paragraph.Index || to > paragraph.Index + paragraph.Length || from >= to
-                            || !citation.TryGetProperty("url", out var urlNode) || !PublicUrl(urlNode.GetString(), out var url)) continue;
-                        citations.Add((from, to, new AdaptiveStorySource(Hash(url!.AbsoluteUri), "OnlineResearch",
-                            citation.TryGetProperty("title", out var title) ? title.GetString() : url.Host,
-                            url.AbsoluteUri, url.Host, now, 0.75) { AllowsOfflineUse = false }));
-                    }
+                    var citations = validCitations.Where(c => c.Start >= paragraph.Index && c.End <= paragraph.Index + paragraph.Length).ToList();
                     if (citations.Count == 0) continue;
                     citedParagraphs++;
                     var narration = paragraph.Value;
@@ -231,15 +252,15 @@ public sealed class OpenAILocalRouteResearcher(HttpClient client, LocalRouteRese
                         narration = narration.Remove(citation.Start - paragraph.Index, citation.End - citation.Start);
                     narration = Regex.Replace(narration, @"\s+", " ").Trim();
                     var words = narration.Split(' ', StringSplitOptions.RemoveEmptyEntries).Length;
-                    if (words is < 15 or > 100 || narration.Contains("http", StringComparison.OrdinalIgnoreCase)) continue;
+                    if (words is < 15 or > 100) { rejectedLength++; continue; }
+                    if (narration.Contains("http", StringComparison.OrdinalIgnoreCase)) { embeddedUrls++; continue; }
                     results.Add(new Passage(narration, citations.Select(c => c.Source).DistinctBy(s => s.Url).ToArray()));
                     if (results.Count == 3) return results;
                 }
             }
         }
-        details = citedParagraphs == 0
-            ? $"{paragraphs} paragraphs, none with valid in-paragraph HTTPS citations"
-            : $"{citedParagraphs} cited paragraphs rejected by text length or embedded URL checks";
+        details = $"{paragraphs} paragraphs; {citationCount} citation annotations; {invalidOffsets} invalid citation positions; "
+            + $"{invalidUrls} invalid HTTPS sources; {citedParagraphs} cited paragraphs; {rejectedLength} rejected for length; {embeddedUrls} with embedded URLs";
         return results;
     }
 

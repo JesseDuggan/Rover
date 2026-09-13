@@ -779,7 +779,7 @@ static async Task LocalRouteResearchValidation()
         annotations = new[] { new { type = "url_citation", start_index = passage.Length + 1, end_index = passage.Length + 4,
             url = "https://museum.example/history", title = "Museum history" } }
     } } } } });
-    foreach (var scenario in new[] { "valid", "wrapped", "uncited", "far", "undated-event", "invented-event-dates", "unknown-evidence", "unsupported-location", "failure" })
+    foreach (var scenario in new[] { "valid", "wrapped", "uncited", "missing-annotations", "bad-offset", "bad-url", "short-text", "embedded-url", "far", "undated-event", "invented-event-dates", "unknown-evidence", "unsupported-location", "failure" })
     {
         var calls = 0;
         using var client = new HttpClient(new RoutingHttpMessageHandler(request =>
@@ -795,6 +795,22 @@ static async Task LocalRouteResearchValidation()
             if (calls == 1)
             {
                 var response = research;
+                if (scenario is "missing-annotations" or "bad-offset" or "bad-url" or "short-text" or "embedded-url")
+                {
+                    var document = System.Text.Json.Nodes.JsonNode.Parse(research)!;
+                    var part = document["output"]![0]!["content"]![0]!;
+                    if (scenario == "missing-annotations") part.AsObject().Remove("annotations");
+                    if (scenario == "bad-offset") part["annotations"]![0]!["end_index"] = 99999;
+                    if (scenario == "bad-url") part["annotations"]![0]!["url"] = "http://museum.example/history";
+                    if (scenario == "short-text")
+                    {
+                        part["text"] = "Short [1]";
+                        part["annotations"]![0]!["start_index"] = 6;
+                        part["annotations"]![0]!["end_index"] = 9;
+                    }
+                    if (scenario == "embedded-url") part["text"] = passage + " [1] https://unverified.example";
+                    response = document.ToJsonString();
+                }
                 if (scenario == "wrapped")
                 {
                     response = JsonSerializer.Serialize(new { status = "completed", output = new[] { new { content = new[] { new
@@ -823,6 +839,22 @@ static async Task LocalRouteResearchValidation()
         var result = await researcher.ResearchAsync(query, CancellationToken.None);
         AssertEqual(scenario is "valid" or "wrapped" ? 1 : 0, result.Stories.Count);
         AssertTrue(calls <= 2, "Research is bounded to two model calls per pack.");
+        var expectedDiagnostic = scenario switch
+        {
+            "missing-annotations" => "1 paragraphs; 0 citation annotations",
+            "bad-offset" => "1 invalid citation positions",
+            "bad-url" => "1 invalid HTTPS sources",
+            "short-text" => "1 rejected for length",
+            "embedded-url" => "1 with embedded URLs",
+            "far" => "1 outside route area",
+            "unknown-evidence" or "unsupported-location" or "undated-event" or "invented-event-dates" => "1 failed evidence or field checks",
+            _ => null
+        };
+        if (expectedDiagnostic is not null)
+        {
+            AssertTrue(result.Warning?.Contains(expectedDiagnostic) == true, "Diagnostics must identify the rejection count: " + scenario);
+            AssertTrue(!result.Warning!.Contains("museum.example") && !result.Warning.Contains(passage), "Diagnostics must not disclose source text or URLs.");
+        }
         if (scenario is "valid" or "wrapped")
         {
             var story = result.Stories.Single();
