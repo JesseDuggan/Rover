@@ -88,6 +88,7 @@ class RouteStorySource {
     required this.confidence,
     this.title,
     this.url,
+    this.allowsOfflineUse = true,
   });
 
   final String sourceId;
@@ -97,6 +98,13 @@ class RouteStorySource {
   final String attribution;
   final DateTime retrievedUtc;
   final double confidence;
+
+  final bool allowsOfflineUse;
+
+  bool get canCache =>
+      allowsOfflineUse &&
+      !providerName.toLowerCase().contains('google') &&
+      providerName != 'OnlineResearch';
 
   factory RouteStorySource.fromJson(Map<String, dynamic> json) =>
       RouteStorySource(
@@ -109,6 +117,7 @@ class RouteStorySource {
             DateTime.tryParse(json['retrievedUtc'] as String? ?? '') ??
             DateTime.fromMillisecondsSinceEpoch(0, isUtc: true),
         confidence: (json['confidence'] as num?)?.toDouble() ?? 0,
+        allowsOfflineUse: json['allowsOfflineUse'] as bool? ?? true,
       );
 
   Map<String, Object?> toJson() => {
@@ -119,6 +128,7 @@ class RouteStorySource {
     'attribution': attribution,
     'retrievedUtc': retrievedUtc.toUtc().toIso8601String(),
     'confidence': confidence,
+    'allowsOfflineUse': allowsOfflineUse,
   };
 }
 
@@ -239,6 +249,17 @@ class AdaptiveRouteStory {
       expiresUtc: DateTime.tryParse(json['expiresUtc'] as String? ?? ''),
     );
   }
+
+  double get playbackWindowEnd =>
+      closesAtRouteMeters +
+      (const {
+            'HiddenHistory',
+            'StreetHistory',
+            'NeighbourhoodHistory',
+            'CityHistory',
+          }.contains(intent)
+          ? 300
+          : 0);
 
   Map<String, Object?> toJson() => {
     'storyId': storyId,

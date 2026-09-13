@@ -34,6 +34,18 @@ class RoverApiConfig {
   final String configuredBaseUrl;
   final String? developmentUser;
   final String? betaApiKey;
+
+  String? betaKeyFor(Uri destination) {
+    final configured = Uri.parse(normalizeBaseUrl(configuredBaseUrl));
+    final key = betaApiKey?.trim();
+    // A development URL override must not receive another server's credential.
+    return key != null &&
+            key.isNotEmpty &&
+            destination.origin == configured.origin &&
+            destination.path.startsWith('/api/')
+        ? key
+        : null;
+  }
   final Duration connectionTimeout;
   final Duration responseTimeout;
   final bool allowDevelopmentOverride;

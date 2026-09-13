@@ -4,6 +4,31 @@ import 'package:rover/src/on_device_ai/rover_ai_models.dart';
 import 'package:rover/src/on_device_ai/rover_phase13_flags.dart';
 
 void main() {
+  test('OCR does not require Gemini Nano or a particular phone model', () {
+    const guardian = RoverAiGuardian(
+      RoverPhase13Flags(enabled: true, lensOcr: true),
+    );
+    for (final model in [
+      'Fold5',
+      'Fold7',
+      'S24',
+      'S22',
+      'Other manufacturer',
+    ]) {
+      final capabilities = _availableCapabilities(
+        model: model,
+        nanoUnavailable: true,
+      );
+      final decision = guardian.evaluate(
+        _request(
+          operation: RoverAiOperation.lensOcr,
+          policy: const RoverAiPrivacyPolicy(cameraPermissionGranted: true),
+        ),
+        capabilities: capabilities,
+      );
+      expect(decision.allowed, isTrue, reason: model);
+    }
+  });
   test('master disable blocks all Phase 13 work', () {
     const guardian = RoverAiGuardian(RoverPhase13Flags());
 
@@ -120,6 +145,8 @@ RoverAiRequest _request({
 
 RoverAiCapabilitySnapshot _availableCapabilities({
   RoverAiThermalState thermalState = RoverAiThermalState.nominal,
+  String model = 'Test device',
+  bool nanoUnavailable = false,
 }) {
   const available = RoverAiFeatureCapability(
     availability: RoverAiCapabilityAvailability.available,
@@ -129,9 +156,17 @@ RoverAiCapabilitySnapshot _availableCapabilities({
     platform: 'android',
     apiLevel: 36,
     manufacturer: 'Samsung',
-    model: 'Test device',
-    prompt: available,
-    imageDescription: available,
+    model: model,
+    prompt: nanoUnavailable
+        ? const RoverAiFeatureCapability(
+            availability: RoverAiCapabilityAvailability.unavailable,
+          )
+        : available,
+    imageDescription: nanoUnavailable
+        ? const RoverAiFeatureCapability(
+            availability: RoverAiCapabilityAvailability.unavailable,
+          )
+        : available,
     ocr: available,
     objectDetection: available,
     speechRecognition: available,

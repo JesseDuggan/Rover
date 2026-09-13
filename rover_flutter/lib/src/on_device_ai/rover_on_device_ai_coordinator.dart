@@ -226,7 +226,9 @@ class RoverOnDeviceAiCoordinator implements Listenable {
   }
 
   Future<RoverAiCapabilitySnapshot> getCapabilitiesForDiagnostics() async {
-    final snapshot = await provider.getCapabilities();
+    final snapshot = await provider.getCapabilities().timeout(
+      maximumOperationTimeout,
+    );
     _diagnostics.record(
       'on-device-ai',
       'capabilities checked; platform ${snapshot.platform}; '
@@ -287,7 +289,15 @@ class RoverOnDeviceAiCoordinator implements Listenable {
         ),
       );
     }
-    await provider.cancel(correlationId);
+    await _cancelProvider(correlationId);
+  }
+
+  Future<void> _cancelProvider(String correlationId) async {
+    try {
+      await provider.cancel(correlationId).timeout(const Duration(seconds: 1));
+    } catch (_) {
+      // Native cancellation failure must not prevent a bounded fallback result.
+    }
   }
 
   Future<void> dispose() async {
@@ -302,28 +312,37 @@ class RoverOnDeviceAiCoordinator implements Listenable {
   ) async {
     inFlight.request = request;
     final stopwatch = Stopwatch()..start();
+    final timeout = request.timeout < maximumOperationTimeout
+        ? request.timeout
+        : maximumOperationTimeout;
     RoverAiResult<RoverAiPayload> result;
     try {
       final preflight = _guardian.evaluate(request);
       if (!preflight.allowed) {
         result = _decisionResult(request, preflight);
       } else {
-        final capabilities = await provider.getCapabilities();
+        final capabilities = await provider.getCapabilities().timeout(timeout);
         final decision = _guardian.evaluate(
           request,
           capabilities: capabilities,
         );
-        if (!decision.allowed) {
+        if (inFlight.cancelled) {
+          result = _result(
+            request,
+            status: RoverAiResultStatus.cancelled,
+            diagnosticCode: 'cancelled',
+          );
+        } else if (!decision.allowed) {
           result = _decisionResult(request, decision);
         } else {
-          final timeout = request.timeout < maximumOperationTimeout
-              ? request.timeout
-              : maximumOperationTimeout;
-          result = await provider.execute(request).timeout(timeout);
+          final remaining = timeout - stopwatch.elapsed;
+          if (remaining <= Duration.zero)
+            throw TimeoutException('Operation budget exhausted');
+          result = await provider.execute(request).timeout(remaining);
         }
       }
     } on TimeoutException {
-      await provider.cancel(request.context.correlationId);
+      await _cancelProvider(request.context.correlationId);
       result = _result(
         request,
         status: RoverAiResultStatus.timeout,

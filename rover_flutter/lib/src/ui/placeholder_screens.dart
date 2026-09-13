@@ -4,6 +4,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter/foundation.dart';
 import 'package:flutter/services.dart';
 import 'package:go_router/go_router.dart';
+import 'package:url_launcher/url_launcher.dart';
 
 import '../active_roam/active_roam_controller.dart';
 import '../active_roam/active_roam_session.dart';
@@ -2964,6 +2965,7 @@ class _AdaptiveRouteStoryPanel extends StatelessWidget {
                         ? 'downloaded for offline use'
                         : 'online sources'}',
             ),
+            Text(controller.researchStatus),
             const SizedBox(height: 8),
             OutlinedButton.icon(
               onPressed: controller.isBusy
@@ -3082,6 +3084,36 @@ class _AdaptiveRouteStoryPanel extends StatelessWidget {
                 contentPadding: EdgeInsets.zero,
                 leading: const Icon(Icons.description_outlined),
                 title: Text(source.title ?? source.providerName),
+                trailing: source.url == null
+                    ? null
+                    : IconButton(
+                        tooltip: 'Open source',
+                        icon: const Icon(Icons.open_in_new),
+                        onPressed: () async {
+                          final uri = Uri.tryParse(source.url!);
+                          var opened = false;
+                          try {
+                            if (uri != null &&
+                                uri.hasAuthority &&
+                                (uri.scheme == 'https' ||
+                                    uri.scheme == 'http')) {
+                              opened = await launchUrl(
+                                uri,
+                                mode: LaunchMode.externalApplication,
+                              );
+                            }
+                          } catch (_) {
+                            // Show the same recoverable message for unavailable browser handlers.
+                          }
+                          if (!opened && context.mounted) {
+                            ScaffoldMessenger.of(context).showSnackBar(
+                              const SnackBar(
+                                content: Text('Could not open this source.'),
+                              ),
+                            );
+                          }
+                        },
+                      ),
                 subtitle: Text(
                   [
                     source.attribution,

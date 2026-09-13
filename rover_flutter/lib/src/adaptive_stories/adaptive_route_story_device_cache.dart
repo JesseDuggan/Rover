@@ -82,6 +82,29 @@ class AdaptiveRouteStoryDeviceCache extends ChangeNotifier {
 
   Future<bool> store(AdaptiveRouteStoryPackState state) async {
     await load();
+    final pack = state.pack;
+    if (pack != null) {
+      final permitted = pack.stories
+          .where(
+            (story) =>
+                story.sources.isNotEmpty &&
+                story.sources.every((source) => source.canCache),
+          )
+          .toList();
+      if (permitted.length != pack.stories.length) {
+        state = AdaptiveRouteStoryPackState.fromJson({
+          ...state.toJson(),
+          'pack': {
+            ...pack.toJson(),
+            'stories': permitted.map((story) => story.toJson()).toList(),
+            'warnings': [
+              ...pack.warnings,
+              'Online-only stories are not downloaded.',
+            ],
+          },
+        });
+      }
+    }
     if (!_eligible(state)) {
       return false;
     }
@@ -113,12 +136,17 @@ class AdaptiveRouteStoryDeviceCache extends ChangeNotifier {
             .where(
               (story) =>
                   request.routeProgressMeters >= story.opensAtRouteMeters &&
-                  request.routeProgressMeters <= story.closesAtRouteMeters,
+                  request.routeProgressMeters <= story.playbackWindowEnd,
             )
             .toList()
-          ..sort(
-            (left, right) => right.evidenceScore.compareTo(left.evidenceScore),
-          );
+          ..sort((left, right) {
+            final window = left.playbackWindowEnd.compareTo(
+              right.playbackWindowEnd,
+            );
+            return window != 0
+                ? window
+                : right.evidenceScore.compareTo(left.evidenceScore);
+          });
     for (final story in candidates) {
       final variant = _variantFor(story, request);
       if (variant != null)
@@ -193,10 +221,7 @@ class AdaptiveRouteStoryDeviceCache extends ChangeNotifier {
         pack.stories.every(
           (story) =>
               story.sources.isNotEmpty &&
-              story.sources.every(
-                (source) =>
-                    !source.providerName.toLowerCase().contains('google'),
-              ),
+              story.sources.every((source) => source.canCache),
         );
   }
 

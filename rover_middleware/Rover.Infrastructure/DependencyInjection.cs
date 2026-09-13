@@ -216,6 +216,15 @@ public static class DependencyInjection
         services.AddSingleton(googleWeatherOptions);
         services.AddSingleton(ticketmasterOptions);
         services.AddSingleton(currentInformationOptions);
+        services.AddSingleton(new LocalRouteResearchOptions
+        {
+            Enabled = EnvironmentFlag("ROVER_PHASE16_ENABLED", configuration.GetValue("Rover:Phase16:Enabled", false))
+                && EnvironmentFlag("ROVER_LOCAL_RESEARCH_ENABLED", false),
+            ApiKey = Environment.GetEnvironmentVariable("OPENAI_API_KEY"),
+            Model = Environment.GetEnvironmentVariable("ROVER_LOCAL_RESEARCH_MODEL") ?? currentInformationOptions.Model,
+            TimeoutSeconds = configuration.GetValue("Rover:Phase16:LocalResearch:TimeoutSeconds", 60)
+        });
+        services.AddHttpClient<ILocalRouteResearcher, OpenAILocalRouteResearcher>();
         services.AddHttpClient("MapboxDirections")
             .AddHttpMessageHandler<TransientRetryHandler>();
         services.AddHttpClient("GoogleRoutes")
@@ -412,6 +421,17 @@ public static class DependencyInjection
 
             return provider.GetRequiredService<NoOpLocalDiscoveryProvider>();
         });
+        services.AddSingleton(new StoryLedPlanningOptions
+        {
+            Enabled = EnvironmentFlag("ROVER_STORY_LED_PLANNING_ENABLED", false)
+                && string.Equals(Environment.GetEnvironmentVariable("ROVER_ROUTING_MODE") ?? configuration["Rover:Routing:Mode"], "Google", StringComparison.OrdinalIgnoreCase)
+                && string.Equals(Environment.GetEnvironmentVariable("ROVER_LOCAL_DISCOVERY_MODE") ?? configuration["Rover:LocalDiscovery:Mode"], "GooglePlaces", StringComparison.OrdinalIgnoreCase),
+            ApiKey = Environment.GetEnvironmentVariable("OPENAI_API_KEY"),
+            Model = Environment.GetEnvironmentVariable("ROVER_STORY_LED_PLANNING_MODEL")
+                ?? Environment.GetEnvironmentVariable("OPENAI_MODEL") ?? configuration["Rover:Conversation:OpenAI:Model"],
+            TimeoutSeconds = configuration.GetValue("Rover:StoryLedPlanning:TimeoutSeconds", 12)
+        });
+        services.AddHttpClient<IStoryLedStopSelector, OpenAIStoryLedStopSelector>();
         services.AddScoped<IWalkPlanner, MockWalkPlanner>();
         services.AddScoped<MockRoverConversationProvider>();
         services.AddScoped<IRoverConversationProvider>(provider =>

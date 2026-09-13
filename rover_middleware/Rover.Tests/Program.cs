@@ -37,6 +37,10 @@ using Rover.Infrastructure.Walks;
 
 var tests = new List<(string Name, Func<Task> Run)>
 {
+    ("Story-led planning validates sourced IDs and structured responses", StoryLedPlanningTests.SelectionValidation),
+    ("Story-led planning fails gracefully and preserves cancellation", StoryLedPlanningTests.FailureAndCancellation),
+    ("Story-led planning matches only fresh same-place Wikipedia evidence", StoryLedPlanningTests.EvidenceMatching),
+    ("Story-led planning preserves Google routing and reports actual duration", StoryLedPlanningTests.PlannerIntegration),
     ("valid walk creation", ValidWalkCreation),
     ("invalid coordinates", InvalidCoordinates),
     ("invalid available time", InvalidAvailableTime),
@@ -73,6 +77,7 @@ var tests = new List<(string Name, Func<Task> Run)>
     ("Phase 16 route packs select, complete, and save stories", Phase16RoutePacksSelectCompleteAndSaveStories),
     ("Route stories merge only fresh, nearby, cited live updates", RouteStoriesMergeFreshLiveUpdates),
     ("Route evidence prioritizes history and provides short cited passages", StoryFirstEvidence),
+    ("Local route research discovers cited evidence and rejects invalid cards", LocalRouteResearchValidation),
     ("Phase 15 corridor flags are disabled by default", Phase15CorridorFlagsAreDisabledByDefault),
     ("Phase 15 plans follow accepted route revisions", Phase15PlansFollowAcceptedRouteRevisions),
     ("Phase 15 prefetch selects bounded upcoming segments", Phase15PrefetchSelectsBoundedUpcomingSegments),
@@ -761,6 +766,61 @@ static async Task Phase16RoutePacksAreRevisionScoped()
     AssertNull(await repository.GetAsync("walk-1", 3, CancellationToken.None), "A changed route revision must not reuse a stale route pack.");
 }
 
+static async Task LocalRouteResearchValidation()
+{
+    var now = DateTimeOffset.UtcNow;
+    var anchor = new GeoLocation(48.856, 2.352);
+    var segment = new RouteStorySegment("s", 1, anchor, anchor, anchor, 0, 300, 300, 240, false, []);
+    var query = new LocalRouteResearchQuery([segment], new ApproximateLiveLocation("Paris", null, "FR", null), ["Public museum"], ["history"], "en");
+    const string passage = "In Paris, this museum preserves local workshop traditions through its collection of tools and accounts of the people who used them.";
+    var research = JsonSerializer.Serialize(new { status = "completed", output = new[] { new { content = new[] { new
+    {
+        text = passage + " [1]",
+        annotations = new[] { new { type = "url_citation", start_index = passage.Length + 1, end_index = passage.Length + 4,
+            url = "https://museum.example/history", title = "Museum history" } }
+    } } } } });
+    foreach (var scenario in new[] { "valid", "uncited", "far", "undated-event", "invented-event-dates", "unknown-evidence", "unsupported-location", "failure" })
+    {
+        var calls = 0;
+        using var client = new HttpClient(new RoutingHttpMessageHandler(request =>
+        {
+            calls++;
+            var body = request.Content!.ReadAsStringAsync().GetAwaiter().GetResult();
+            AssertTrue(!body.Contains("walk-test"), "Research must not receive user session identifiers.");
+            if (scenario == "failure") return JsonResponse(HttpStatusCode.ServiceUnavailable, "{}");
+            if (calls == 1) return JsonResponse(HttpStatusCode.OK, scenario == "uncited" ? "{\"output\":[]}" : research);
+            AssertTrue(!body.Contains("\"tools\""), "Classification must not have tools.");
+            var cards = JsonSerializer.Serialize(new { stories = new[] { new
+            {
+                evidenceIndex = scenario == "unknown-evidence" ? 99 : 0,
+                title = "Workshop traditions", kind = scenario is "undated-event" or "invented-event-dates" ? "event" : "history",
+                latitude = scenario == "far" ? 44 : anchor.Latitude, longitude = anchor.Longitude,
+                locationEvidence = scenario == "unsupported-location" ? "Berlin" : "Paris",
+                startsUtc = scenario == "invented-event-dates" ? now.AddDays(1).ToString("O") : null,
+                endsUtc = scenario == "invented-event-dates" ? now.AddDays(1).AddHours(1).ToString("O") : null
+            } } });
+            return JsonResponse(HttpStatusCode.OK, JsonSerializer.Serialize(new { status = "completed", output = new[] { new { content = new[] { new { text = cards } } } } }));
+        }));
+        var researcher = new Rover.Infrastructure.Journeys.OpenAILocalRouteResearcher(client,
+            new Rover.Infrastructure.Journeys.LocalRouteResearchOptions { Enabled = true, ApiKey = "test", Model = "test" }, TimeProvider.System);
+        var result = await researcher.ResearchAsync(query, CancellationToken.None);
+        AssertEqual(scenario == "valid" ? 1 : 0, result.Stories.Count);
+        AssertTrue(calls <= 2, "Research is bounded to two model calls per pack.");
+        if (scenario == "valid")
+        {
+            var story = result.Stories.Single();
+            AssertEqual(passage, string.Join(' ', story.Claims.Select(claim => claim.Text)));
+            AssertTrue(story.Sources.All(source => !source.AllowsOfflineUse), "Unknown source rights cannot permit offline storage.");
+            AssertTrue(story.ExpiresUtc > now.AddHours(5) && story.ExpiresUtc <= now.AddHours(7), "Historical research must last through a walk, but expire within hours.");
+        }
+    }
+    using var disabledClient = new HttpClient(new RoutingHttpMessageHandler(_ => throw new InvalidOperationException("Disabled research called network")));
+    var disabled = new Rover.Infrastructure.Journeys.OpenAILocalRouteResearcher(disabledClient, new(), TimeProvider.System);
+    var disabledResult = await disabled.ResearchAsync(query, CancellationToken.None);
+    AssertEqual(0, disabledResult.Stories.Count);
+    AssertTrue(disabledResult.Warning?.Contains("disabled") == true, "Disabled research must be visible in pack diagnostics.");
+}
+
 static Task StoryFirstEvidence()
 {
     var now = DateTimeOffset.UtcNow;
@@ -876,6 +936,15 @@ static async Task Phase16RoutePacksSelectCompleteAndSaveStories()
     await packs.StoreAsync(state, CancellationToken.None);
     AssertEqual(2, story.Claims.Count);
     AssertEqual(fact.FactText, story.Variants.First().Narration);
+    AssertNotNull(await service.GetNextAsync(session.WalkSessionId,
+        new NextAdaptiveRouteStoryQuery(story.ClosesAtRouteMeters + 100, null, null, Array.Empty<string>()), CancellationToken.None),
+        "Missed history must remain available briefly after its segment.");
+    AssertNull(await service.GetNextAsync(session.WalkSessionId,
+        new NextAdaptiveRouteStoryQuery(story.ClosesAtRouteMeters + 301, null, null, Array.Empty<string>()), CancellationToken.None),
+        "Catch-up must stay geographically bounded.");
+    AssertNull(await service.GetNextAsync(session.WalkSessionId,
+        new NextAdaptiveRouteStoryQuery(story.ClosesAtRouteMeters + 100, 10, null, Array.Empty<string>()), CancellationToken.None),
+        "Catch-up must still preserve navigation time.");
     var shortStory = story with { StoryId = "short-story", EvidenceScore = 0.5,
         Variants = new[] { new AdaptiveNarrationVariant(AdaptiveStoryLength.Quick, 5, "A short sourced story.", new[] { fact.FactId }) } };
     var longStory = story with { Variants = new[] { new AdaptiveNarrationVariant(AdaptiveStoryLength.Deep, 300, "Long story", new[] { fact.FactId }) } };
@@ -4078,16 +4147,18 @@ static async Task ProductionStartupValidatesRequiredConfiguration()
         startInfo.Environment.Remove(key);
     }
 
-    using var process = Process.Start(startInfo)
-        ?? throw new InvalidOperationException("Failed to start Rover.Api.");
+    using var process = StartupFailureProcess.Start(startInfo);
+    // Drain both redirected pipes while the child runs to avoid a full-pipe deadlock.
+    var outputTask = process.StandardOutput.ReadToEndAsync();
+    var errorTask = process.StandardError.ReadToEndAsync();
     if (!process.WaitForExit(10000))
     {
         process.Kill(entireProcessTree: true);
         throw new TimeoutException("Production configuration validation did not exit.");
     }
 
-    var output = await process.StandardOutput.ReadToEndAsync();
-    var error = await process.StandardError.ReadToEndAsync();
+    var output = await outputTask;
+    var error = await errorTask;
     var combined = output + error;
     AssertTrue(process.ExitCode != 0, "Production startup without required variables must fail.");
     AssertTrue(combined.Contains("required configuration", StringComparison.OrdinalIgnoreCase), "Expected a clear required configuration startup error.");

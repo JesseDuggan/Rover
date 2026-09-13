@@ -7,6 +7,33 @@ import 'package:rover/src/on_device_ai/rover_on_device_ai_coordinator.dart';
 import 'package:rover/src/on_device_ai/rover_phase13_flags.dart';
 
 void main() {
+  test('capability discovery consumes the operation timeout budget', () async {
+    final provider = _FakeRoverAiProvider()..capabilityGate = Completer<void>();
+    final coordinator = _enabledCoordinator(provider);
+    final result = await coordinator.execute(
+      _request('discovery', timeout: const Duration(milliseconds: 10)),
+    );
+    expect(result.status, RoverAiResultStatus.timeout);
+    expect(provider.executeCalls, 0);
+    expect(coordinator.inFlightCount, 0);
+    provider.capabilityGate!.complete();
+    await Future<void>.delayed(Duration.zero);
+    expect(provider.executeCalls, 0);
+    await coordinator.dispose();
+  });
+
+  test('cancel during discovery never starts late inference', () async {
+    final provider = _FakeRoverAiProvider()..capabilityGate = Completer<void>();
+    final coordinator = _enabledCoordinator(provider);
+    final pending = coordinator.execute(_request('cancel-discovery'));
+    await coordinator.cancel('cancel-discovery');
+    expect((await pending).status, RoverAiResultStatus.cancelled);
+    provider.capabilityGate!.complete();
+    await Future<void>.delayed(Duration.zero);
+    expect(provider.executeCalls, 0);
+    await coordinator.dispose();
+  });
+
   test(
     'diagnostics query bypasses feature flags without executing work',
     () async {
@@ -220,6 +247,7 @@ class _FakeRoverAiProvider implements RoverAiProvider {
   final Map<String, Completer<RoverAiResult<RoverAiPayload>>> _pending = {};
   final List<String> cancelledIds = [];
   int capabilityCalls = 0;
+  Completer<void>? capabilityGate;
   int executeCalls = 0;
 
   @override
@@ -250,6 +278,7 @@ class _FakeRoverAiProvider implements RoverAiProvider {
   @override
   Future<RoverAiCapabilitySnapshot> getCapabilities() async {
     capabilityCalls++;
+    if (capabilityGate != null) await capabilityGate!.future;
     const available = RoverAiFeatureCapability(
       availability: RoverAiCapabilityAvailability.available,
       provider: 'fake-device',

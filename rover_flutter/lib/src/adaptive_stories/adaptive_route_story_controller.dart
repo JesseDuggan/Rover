@@ -38,6 +38,8 @@ class AdaptiveRouteStoryController extends ChangeNotifier {
   DateTime? _lastStatusCheckUtc;
   DateTime? _lastSelectionCheckUtc;
   final Set<String> _prefetchedStoryIds = {};
+  final Set<String> _completedStoryIds = {};
+  final Set<String> _completedPlaces = {};
   double? _lastSelectionProgressMeters;
 
   bool get enabled => _flags.enabled;
@@ -48,6 +50,30 @@ class AdaptiveRouteStoryController extends ChangeNotifier {
   String? get errorMessage => _errorMessage;
   bool get usingOfflinePack => _usingOfflinePack;
   int get queuedEventCount => _deviceCache.queuedEventCount;
+  String get researchStatus {
+    final currentPack = pack;
+    if (currentPack == null) return 'Local research: waiting for story pack.';
+    final count = currentPack.stories
+        .where(
+          (story) => story.sources.any(
+            (source) => source.providerName == 'OnlineResearch',
+          ),
+        )
+        .length;
+    final details = currentPack.warnings
+        .where(
+          (warning) =>
+              warning.toLowerCase().contains('local research') ||
+              warning.toLowerCase().contains('local online research'),
+        )
+        .join(' ');
+    if (count > 0) return 'Local research: $count stories in this pack.';
+    if (details.isNotEmpty) return details;
+    return _usingOfflinePack
+        ? 'Local research: online-only stories are not in this download.'
+        : 'Local research: no researched stories in this pack; outcome not reported. Refresh to check.';
+  }
+
   String get readinessLabel => !enabled
       ? 'disabled'
       : _usingOfflinePack
@@ -59,10 +85,7 @@ class AdaptiveRouteStoryController extends ChangeNotifier {
         stories.every(
           (story) =>
               story.sources.isNotEmpty &&
-              story.sources.every(
-                (source) =>
-                    !source.providerName.toLowerCase().contains('google'),
-              ),
+              story.sources.every((source) => source.canCache),
         );
   }
 
@@ -70,12 +93,19 @@ class AdaptiveRouteStoryController extends ChangeNotifier {
     RoamSession session,
     RoverVoiceController voiceController,
   ) async {
-    if (!enabled || session.apiWalkSessionId == null || _syncInFlight) {
+    if (!enabled ||
+        session.apiWalkSessionId == null ||
+        _syncInFlight ||
+        _playbackInFlight) {
       return;
     }
 
     if (_routeRevision != session.routeRevision ||
         _walkSessionId != session.apiWalkSessionId) {
+      if (_walkSessionId != session.apiWalkSessionId) {
+        _completedStoryIds.clear();
+        _completedPlaces.clear();
+      }
       _walkSessionId = session.apiWalkSessionId;
       _routeRevision = session.routeRevision;
       _packState = null;
@@ -100,7 +130,7 @@ class AdaptiveRouteStoryController extends ChangeNotifier {
             (progressMeters - _lastSelectionProgressMeters!).abs() >= 20 ||
             _lastSelectionCheckUtc == null ||
             now.difference(_lastSelectionCheckUtc!) >=
-                const Duration(seconds: 10));
+                const Duration(seconds: 5));
     final interruptedStory = _currentSelection;
     if (interruptedStory != null &&
         voiceController.hasAutomaticallyResumableAdaptiveStory(
@@ -131,6 +161,7 @@ class AdaptiveRouteStoryController extends ChangeNotifier {
           'pack status=${_packState!.status} '
               'stories=${_packState!.pack?.stories.length ?? 0} '
               'deviceCached=$cached '
+              'research=$researchStatus '
               'latencyMs=${DateTime.now().difference(statusStarted).inMilliseconds}',
         );
       }
@@ -138,7 +169,7 @@ class AdaptiveRouteStoryController extends ChangeNotifier {
           (_packState?.pack?.stories ?? const <AdaptiveRouteStory>[])
               .where(
                 (story) =>
-                    story.closesAtRouteMeters >= progressMeters &&
+                    story.playbackWindowEnd >= progressMeters &&
                     !(_packState?.heardStoryIds.contains(story.storyId) ??
                         false),
               )
@@ -240,6 +271,11 @@ class AdaptiveRouteStoryController extends ChangeNotifier {
         return;
       }
       _errorMessage = null;
+      FieldDiagnostics.instance.record(
+        'route-story',
+        'playback start trigger=${userRequested ? "manual" : "automatic"} '
+            'story=${selection.story.storyId} intent=${selection.story.intent}',
+      );
       await _record(walkSessionId, selection.story.storyId, 'Started');
       final played = await voiceController.playAdaptiveRouteStory(
         selection,
@@ -247,6 +283,14 @@ class AdaptiveRouteStoryController extends ChangeNotifier {
         userRequested: userRequested,
       );
       if (played) {
+        // Remember audible completion before a slow or failed acknowledgement can permit a replay.
+        _completedStoryIds.add(selection.story.storyId);
+        if (selection.story.placeId.isNotEmpty) {
+          _completedPlaces.add(
+            '${selection.story.placeId}|${selection.story.intent}',
+          );
+        }
+        _currentSelection = null;
         await _record(walkSessionId, selection.story.storyId, 'Completed');
         FieldDiagnostics.instance.record(
           'route-story',
@@ -428,6 +472,13 @@ class AdaptiveRouteStoryController extends ChangeNotifier {
       routeProgressMeters: progressMeters,
       secondsUntilNextManeuver: _secondsUntilNextManeuver(session),
       preferredLength: 'Standard',
+      excludedStoryIds: {
+        ..._completedStoryIds,
+        ...?packState?.heardStoryIds,
+        for (final story in pack?.stories ?? const <AdaptiveRouteStory>[])
+          if (_completedPlaces.contains('${story.placeId}|${story.intent}'))
+            story.storyId,
+      }.toList(),
     );
     AdaptiveRouteStorySelection? selection;
     if (_usingOfflinePack) {
@@ -461,6 +512,7 @@ class AdaptiveRouteStoryController extends ChangeNotifier {
       );
       return;
     }
+    if (request.excludedStoryIds.contains(selection.story.storyId)) return;
     _currentSelection = selection;
     _notify();
     await playCurrent(session, voiceController, userRequested: false);

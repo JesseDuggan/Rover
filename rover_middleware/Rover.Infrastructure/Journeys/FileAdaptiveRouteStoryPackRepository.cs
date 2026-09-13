@@ -88,7 +88,7 @@ public sealed class FileAdaptiveRouteStoryPackRepository : IAdaptiveRouteStoryPa
         var durableStories = state.Pack.Stories
             .Where(story => story.ExpiresUtc is null || story.ExpiresUtc > _timeProvider.GetUtcNow())
             .Where(story => story.Sources.Count > 0)
-            .Where(story => story.Sources.All(source => !IsGoogle(source)))
+            .Where(story => story.Sources.All(source => source.AllowsOfflineUse && !IsGoogle(source)))
             .ToArray();
         var durable = state with
         {

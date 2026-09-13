@@ -133,16 +133,30 @@ class RoverVoiceController extends ChangeNotifier {
     }
     if (_latestRouteRevision != 0 &&
         _latestRouteRevision != session.routeRevision) {
+      _latestRouteRevision = session.routeRevision;
       _staleJourneyJobs++;
       _activeScheduledStory = null;
       _interruptedScheduledStory = null;
       _activeAdaptiveStory = null;
       _interruptedAdaptiveStory = null;
-      _playbackGeneration++;
-      if (_activeAudioPriority < _navigationPriority) {
-        await _premiumVoice?.stop();
-        await _textToSpeech.stop();
-        _setState(RoverAudioState.idle);
+      // A route update invalidates route stories, not an arrival already being heard.
+      final arrivalInProgress =
+          session.status == RoamSessionStatus.active &&
+          _arrivalNarrationInFlightKeys.contains(
+            '$walkSessionId:$_activeNarrationStopId',
+          );
+      if (!arrivalInProgress) {
+        _playbackGeneration++;
+        if (_activeAudioPriority < _navigationPriority) {
+          await _premiumVoice?.stop();
+          await _textToSpeech.stop();
+          _setState(RoverAudioState.idle);
+        }
+      } else {
+        FieldDiagnostics.instance.record(
+          'voice',
+          'route revision ${session.routeRevision}: preserving active arrival stop=$_activeNarrationStopId',
+        );
       }
     }
     _latestRouteRevision = session.routeRevision;
@@ -283,14 +297,15 @@ class RoverVoiceController extends ChangeNotifier {
       return false;
     }
 
-    await _interruptScheduledStoryForNavigation(session);
-
     final key =
         '${session.apiWalkSessionId}:${session.routeRevision}:'
         '${guidance.maneuver.sequenceNumber}';
     if (!_announcedManeuverKeys.add(key)) {
       return true;
     }
+
+    // Repeated GPS updates for an announced maneuver must not stop resumed audio.
+    await _interruptScheduledStoryForNavigation(session);
 
     final instruction = guidance.distanceMeters <= 12
         ? guidance.maneuver.instruction
@@ -796,9 +811,7 @@ class RoverVoiceController extends ChangeNotifier {
       await _premiumVoice?.prefetch(
         text: segments.first,
         purpose: 'AdaptiveRouteStory',
-        audioCacheEligible: story.sources.every(
-          (source) => !source.providerName.toLowerCase().contains('google'),
-        ),
+        audioCacheEligible: story.sources.every((source) => source.canCache),
         cacheExpiresUtc: story.expiresUtc,
         storyId: story.storyId,
         variantId: '${story.storyId}:${variant.length.toLowerCase()}:0',
@@ -846,7 +859,7 @@ class RoverVoiceController extends ChangeNotifier {
     );
     _captionText = selection.variant.narration;
     final audioCacheEligible = selection.story.sources.every(
-      (source) => !source.providerName.toLowerCase().contains('google'),
+      (source) => source.canCache,
     );
     while (playback.segmentIndex < playback.segments.length) {
       if (selection.story.expiresUtc?.isAfter(DateTime.now().toUtc()) == false)

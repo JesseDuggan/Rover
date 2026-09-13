@@ -66,7 +66,10 @@ public sealed record AdaptiveStorySource(
     string? Url,
     string Attribution,
     DateTimeOffset RetrievedUtc,
-    double Confidence);
+    double Confidence)
+{
+    public bool AllowsOfflineUse { get; init; } = true;
+}
 
 public sealed record AdaptiveStoryClaim(
     string ClaimId,
@@ -295,6 +298,7 @@ public sealed class AdaptiveRouteStoryPackService : IAdaptiveRouteStoryPackServi
     private readonly IAdaptiveStoryLengthSelector _lengthSelector;
     private readonly TimeProvider _timeProvider;
     private readonly ILiveJourneyContextService? _liveContext;
+    private readonly ILocalRouteResearcher? _researcher;
 
     public AdaptiveRouteStoryPackService(
         Phase16Options options,
@@ -305,7 +309,8 @@ public sealed class AdaptiveRouteStoryPackService : IAdaptiveRouteStoryPackServi
         IStoryIntentClassifier intentClassifier,
         IAdaptiveStoryLengthSelector lengthSelector,
         TimeProvider timeProvider,
-        ILiveJourneyContextService? liveContext = null)
+        ILiveJourneyContextService? liveContext = null,
+        ILocalRouteResearcher? researcher = null)
     {
         _options = options;
         _walks = walks;
@@ -316,6 +321,7 @@ public sealed class AdaptiveRouteStoryPackService : IAdaptiveRouteStoryPackServi
         _lengthSelector = lengthSelector;
         _timeProvider = timeProvider;
         _liveContext = liveContext;
+        _researcher = researcher;
     }
 
     public async Task<AdaptiveRouteStoryPackState> GenerateAsync(
@@ -351,7 +357,7 @@ public sealed class AdaptiveRouteStoryPackService : IAdaptiveRouteStoryPackServi
                 ?? await _plans.RefreshAsync(session, cancellationToken)
                 ?? throw new InvalidOperationException("Phase 15 route corridor planning must be enabled before Phase 16 route stories can be generated.");
             var warnings = new List<string>();
-            var stories = await BuildStoriesAsync(session, plan, command.ProfileId, warnings, cancellationToken);
+            var stories = await BuildStoriesAsync(session, plan, command.ProfileId, command.Language ?? "en", warnings, cancellationToken);
             if (stories.Count == 0) warnings.Add("No sufficiently grounded route stories were found.");
             var key = IdempotencyKey(session, command, _options.PromptVersion);
             var pack = new AdaptiveRouteStoryPack(
@@ -408,9 +414,9 @@ public sealed class AdaptiveRouteStoryPackService : IAdaptiveRouteStoryPackServi
         var candidates = state?.Pack?.Stories
             .Where(candidate => IsFresh(candidate, state!.Pack!))
             .Where(candidate => !state.HeardStoryIds.Contains(candidate.StoryId) && !excluded.Contains(candidate.StoryId))
-            .Where(candidate => query.RouteProgressMeters >= candidate.OpensAtRouteMeters && query.RouteProgressMeters <= candidate.ClosesAtRouteMeters)
-            .OrderByDescending(candidate => candidate.EvidenceScore)
-            .ThenBy(candidate => candidate.OpensAtRouteMeters)
+            .Where(candidate => query.RouteProgressMeters >= candidate.OpensAtRouteMeters && query.RouteProgressMeters <= PlaybackWindowEnd(candidate))
+            .OrderBy(PlaybackWindowEnd)
+            .ThenByDescending(candidate => candidate.EvidenceScore)
             .ToArray() ?? Array.Empty<AdaptiveRouteStory>();
         foreach (var story in candidates)
         {
@@ -500,6 +506,7 @@ public sealed class AdaptiveRouteStoryPackService : IAdaptiveRouteStoryPackServi
         WalkSession session,
         RouteStoryPlan plan,
         Guid? profileId,
+        string language,
         List<string> warnings,
         CancellationToken cancellationToken)
     {
@@ -580,8 +587,23 @@ public sealed class AdaptiveRouteStoryPackService : IAdaptiveRouteStoryPackServi
                 warnings.Add("Live updates were unavailable; historical stories remain available.");
             }
         }
+        if (_researcher is not null)
+        {
+            var research = await _researcher.ResearchAsync(new LocalRouteResearchQuery(plan.Segments,
+                new ApproximateLiveLocation(areaPlace?.City, areaPlace?.Region, areaPlace?.CountryCode, null),
+                session.Stops.Select(stop => stop.Name).ToArray(), session.Interests.ToArray(), language), cancellationToken);
+            var known = stories.SelectMany(story => story.Claims).Select(claim => claim.Text.Trim())
+                .ToHashSet(StringComparer.OrdinalIgnoreCase);
+            stories.AddRange(research.Stories.Where(story => !story.Claims.Any(claim => known.Contains(claim.Text.Trim()))));
+            if (research.Warning is not null) warnings.Add(research.Warning);
+        }
         return stories;
     }
+
+    // Area history remains relevant just after a navigation interruption; visual/live stories do not.
+    private static double PlaybackWindowEnd(AdaptiveRouteStory story) => story.ClosesAtRouteMeters +
+        (story.Intent is RouteStoryIntent.HiddenHistory or RouteStoryIntent.StreetHistory
+            or RouteStoryIntent.NeighbourhoodHistory or RouteStoryIntent.CityHistory ? 300 : 0);
 
     private static bool ReservedForArrival(LocationPlace candidate, WalkSession session) =>
         session.Stops.Any(stop =>

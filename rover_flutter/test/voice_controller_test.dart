@@ -414,6 +414,46 @@ void main() {
     controller.dispose();
   });
 
+  test(
+    'route revisions preserve active arrival without repeating it',
+    () async {
+      final tts = BlockingTextToSpeech();
+      final narrated = <String>[];
+      final controller = RoverVoiceController(
+        walkRepository: FakeVoiceWalkRepository(),
+        textToSpeech: tts,
+        speechRecognizer: FakeSpeechRecognizer(),
+        audioSession: FakeAudioSession(),
+        onArrivalNarrated: (id) async {
+          narrated.add(id);
+        },
+      );
+      final session = _session(completedStopIds: {'stop-1'}).copyWith(
+        routeRevision: 1,
+        arrivalCandidate: true,
+        arrivalCandidateStopId: 'stop-1',
+        recentNarrationStopId: 'stop-1',
+        recentNarrationStopOverride: _stop,
+      );
+      final firstSync = controller.syncWithSession(session);
+      await tts.firstSpeakStarted.future;
+      final stopsBefore = tts.stopCount;
+      await controller.syncWithSession(session.copyWith(routeRevision: 2));
+      await controller.syncWithSession(session.copyWith(routeRevision: 3));
+      expect(tts.stopCount, stopsBefore);
+      tts.releaseFirstSpeak.complete();
+      await firstSync;
+      await controller.syncWithSession(session.copyWith(routeRevision: 3));
+      expect(tts.spoken, hasLength(3));
+      expect(
+        tts.spoken.where((text) => text.contains('You have arrived')),
+        hasLength(1),
+      );
+      expect(narrated, ['stop-1']);
+      controller.dispose();
+    },
+  );
+
   test('failed arrival playback remains eligible for retry', () async {
     final tts = FailOnceTextToSpeech();
     final controller = RoverVoiceController(
@@ -616,6 +656,40 @@ void main() {
   });
 
   test(
+    'announced maneuver updates do not interrupt adaptive playback',
+    () async {
+      final tts = BlockingTextToSpeech(blockAt: 1);
+      final controller = RoverVoiceController(
+        walkRepository: FakeVoiceWalkRepository(),
+        textToSpeech: tts,
+        speechRecognizer: FakeSpeechRecognizer(),
+        audioSession: FakeAudioSession(),
+        adaptiveRouteStoriesEnabled: true,
+      );
+      await controller.syncWithSession(_googleNavigationSession());
+      final playback = controller.playAdaptiveRouteStory(
+        _adaptiveSelection(),
+        _session(),
+      );
+      await tts.firstSpeakStarted.future;
+      final stopsBefore = tts.stopCount;
+      for (var i = 0; i < 3; i++) {
+        await controller.syncWithSession(_googleNavigationSession());
+      }
+      expect(tts.stopCount, stopsBefore);
+      expect(controller.hasInterruptedAdaptiveStory('adaptive-1'), isFalse);
+      tts.releaseFirstSpeak.complete();
+      expect(await playback, isTrue);
+      expect(tts.spoken, [
+        'Turn left onto Main Street',
+        'First fact.',
+        'Second fact.',
+      ]);
+      controller.dispose();
+    },
+  );
+
+  test(
     'successful premium story never also invokes Android fallback',
     () async {
       final repository = ScheduledVoiceWalkRepository();
@@ -772,13 +846,15 @@ class FakeTextToSpeech implements RoverTextToSpeech {
 }
 
 class BlockingTextToSpeech extends FakeTextToSpeech {
+  BlockingTextToSpeech({this.blockAt = 0});
+  final int blockAt;
   final firstSpeakStarted = Completer<void>();
   final releaseFirstSpeak = Completer<void>();
 
   @override
   Future<void> speak(String text) async {
     spoken.add(text);
-    if (!firstSpeakStarted.isCompleted) {
+    if (spoken.length == blockAt + 1 && !firstSpeakStarted.isCompleted) {
       firstSpeakStarted.complete();
       await releaseFirstSpeak.future;
     }

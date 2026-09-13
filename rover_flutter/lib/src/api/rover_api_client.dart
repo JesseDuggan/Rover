@@ -585,7 +585,7 @@ class RoverApiClient {
   }
 
   void _applyBetaApiKey(HttpClientRequest request) {
-    final key = config.betaApiKey;
+    final key = config.betaKeyFor(request.uri);
     if (key != null && key.trim().isNotEmpty) {
       request.headers.set('X-Rover-Beta-Key', key.trim());
     }

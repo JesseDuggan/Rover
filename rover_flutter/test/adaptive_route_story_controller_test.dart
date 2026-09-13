@@ -18,6 +18,57 @@ void main() {
         const MethodChannel('ai.myrover.rover/voice'),
         (_) async => null,
       );
+  test('completed audio cannot replay when server status is stale', () async {
+    final directory = await Directory.systemTemp.createTemp(
+      'story-repeat-test',
+    );
+    final story = AdaptiveRouteStory.fromJson({
+      'storyId': 'story-1',
+      'placeId': 'history-1',
+      'intent': 'HiddenHistory',
+      'opensAtRouteMeters': 0,
+      'closesAtRouteMeters': 10000,
+    });
+    final selection = AdaptiveRouteStorySelection(
+      story: story,
+      variant: RouteStoryNarrationVariant.fromJson({
+        'length': 'Quick',
+        'estimatedDurationSeconds': 5,
+        'narration': 'A sourced story.',
+      }),
+      reason: 'test',
+    );
+    final repository = _StoryRepository()..selection = selection;
+    final cache = AdaptiveRouteStoryDeviceCache(
+      file: File('${directory.path}/cache.json'),
+    );
+    final controller = AdaptiveRouteStoryController(
+      repository: repository,
+      deviceCache: cache,
+    );
+    final voice = _PlaybackVoice();
+    try {
+      final session = RoamSession.demo().copyWith(
+        apiWalkSessionId: 'walk-test',
+        status: RoamSessionStatus.active,
+        distanceToNextStopMeters: 500,
+        routeProgressPercentage: 25,
+      );
+      await controller.syncWithSession(session, voice);
+      await controller.syncWithSession(
+        session.copyWith(routeProgressPercentage: 50),
+        voice,
+      );
+      expect(voice.plays, 1);
+      expect(repository.lastRequest!.excludedStoryIds, contains('story-1'));
+      expect(controller.currentSelection, isNull);
+    } finally {
+      controller.dispose();
+      voice.dispose();
+      cache.dispose();
+      await directory.delete(recursive: true);
+    }
+  });
   test(
     'selection retries after arrival clears without progress changing',
     () async {
@@ -96,6 +147,7 @@ class _WalkRepository implements WalkRepository {
 }
 
 class _StoryRepository implements AdaptiveRouteStoryRepository {
+  AdaptiveRouteStorySelection? selection;
   int selections = 0;
   NextRouteStoryRequest? lastRequest;
   @override
@@ -131,9 +183,35 @@ class _StoryRepository implements AdaptiveRouteStoryRepository {
   ) async {
     selections++;
     lastRequest = request;
-    return null;
+    return selection;
   }
 
   @override
+  Future<void> recordRouteStoryPlayback(
+    String id,
+    RouteStoryPlaybackEventRequest request,
+  ) async {}
+
+  @override
   dynamic noSuchMethod(Invocation invocation) => super.noSuchMethod(invocation);
+}
+
+class _PlaybackVoice extends RoverVoiceController {
+  _PlaybackVoice() : super(walkRepository: _WalkRepository());
+  int plays = 0;
+  @override
+  bool canPlayAdaptiveRouteStory(
+    AdaptiveRouteStorySelection selection,
+    RoamSession session, {
+    bool userRequested = false,
+  }) => true;
+  @override
+  Future<bool> playAdaptiveRouteStory(
+    AdaptiveRouteStorySelection selection,
+    RoamSession session, {
+    bool userRequested = false,
+  }) async {
+    plays++;
+    return true;
+  }
 }

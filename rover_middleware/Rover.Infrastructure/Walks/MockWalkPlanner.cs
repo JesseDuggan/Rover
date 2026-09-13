@@ -7,40 +7,68 @@ public sealed class MockWalkPlanner : IWalkPlanner
 {
     private readonly IWalkRouteProvider _routeProvider;
     private readonly ILocalDiscoveryProvider _localDiscoveryProvider;
+    private readonly IStoryLedStopSelector? _storySelector;
 
     public MockWalkPlanner()
         : this(new MockWalkRouteProvider(), new NoOpLocalDiscoveryProvider())
     {
     }
 
-    public MockWalkPlanner(IWalkRouteProvider routeProvider, ILocalDiscoveryProvider? localDiscoveryProvider = null)
+    public MockWalkPlanner(IWalkRouteProvider routeProvider, ILocalDiscoveryProvider? localDiscoveryProvider = null,
+        IStoryLedStopSelector? storySelector = null)
     {
         _routeProvider = routeProvider;
         _localDiscoveryProvider = localDiscoveryProvider ?? new NoOpLocalDiscoveryProvider();
+        _storySelector = storySelector;
     }
 
     public async Task<WalkSession> PlanWalkAsync(CreateWalkCommand command, CancellationToken cancellationToken)
     {
         cancellationToken.ThrowIfCancellationRequested();
 
-        var isUnionSquareStart = RouteMath.DistanceMeters(command.StartingLocation, new GeoLocation(37.7880, -122.4075)) < 5_000;
+        var storyPlanning = _storySelector?.Enabled == true;
+        var isUnionSquareStart = !storyPlanning && RouteMath.DistanceMeters(command.StartingLocation, new GeoLocation(37.7880, -122.4075)) < 5_000;
         var desiredStops = DesiredStopCount(command.AvailableMinutes);
         var discoveredStops = isUnionSquareStart
             ? Array.Empty<WalkStop>()
-            : await _localDiscoveryProvider.FindCandidateStopsAsync(command, cancellationToken, Math.Max(desiredStops * 2, 12));
+            : await _localDiscoveryProvider.FindCandidateStopsAsync(command, cancellationToken, storyPlanning ? 30 : Math.Max(desiredStops * 2, 12));
+        var selection = storyPlanning
+            ? await _storySelector!.SelectAsync(command, discoveredStops, desiredStops, cancellationToken)
+            : null;
         var stops = isUnionSquareStart
             ? CreateUnionSquareStops()
+            : selection?.Stops.Count >= 2
+            ? CreateEfficientStopPlan(command, selection.Stops, selection.Stops.Count)
             : discoveredStops.Count >= 2
             ? CreateEfficientStopPlan(command, discoveredStops, desiredStops)
             : CreateLocalWaypointStops(command.StartingLocation);
         var route = await _routeProvider.CreateRouteAsync(command, stops, cancellationToken);
-        var estimatedDurationMinutes = Math.Min(command.AvailableMinutes, route.DurationMinutes + stops.Sum(stop => stop.EstimatedVisitMinutes));
+        // One bounded reroute may reduce an over-budget selection. Never fabricate an ETA.
+        if (selection?.Stops.Count > 2 && route.DurationMinutes + stops.Sum(stop => stop.EstimatedVisitMinutes) > command.AvailableMinutes)
+        {
+            var total = route.DurationMinutes + stops.Sum(stop => stop.EstimatedVisitMinutes);
+            var count = Math.Clamp((int)Math.Floor(stops.Count * command.AvailableMinutes / (double)total), 2, stops.Count - 1);
+            var retained = selection.Stops.Take(count).ToArray();
+            stops = CreateEfficientStopPlan(command, retained, retained.Length);
+            route = await _routeProvider.CreateRouteAsync(command, stops, cancellationToken);
+        }
+        var estimatedDurationMinutes = storyPlanning
+            ? route.DurationMinutes + stops.Sum(stop => stop.EstimatedVisitMinutes)
+            : Math.Min(command.AvailableMinutes, route.DurationMinutes + stops.Sum(stop => stop.EstimatedVisitMinutes));
         var estimatedDistanceMeters = route.DistanceMeters;
         var summary = isUnionSquareStart
             ? "A compact Union Square loop with architecture, public art, shopping history, a local cafe recommendation, and one clearly disclosed sponsored stop."
             : discoveredStops.Count >= 2
             ? "A live local walk using nearby places and walking-route geometry."
             : "A short local walk generated around your selected starting area.";
+        if (selection is not null)
+        {
+            summary += selection.Stops.Count >= 2
+                ? $" Story-led planning: {selection.Status}; {stops.Count} stops retained."
+                : $" Story-led planning fallback: {selection.Status}.";
+            if (estimatedDurationMinutes > command.AvailableMinutes)
+                summary += " This route exceeds your requested time; review the estimate before starting.";
+        }
 
         var session = new WalkSession(
             Guid.NewGuid().ToString("n"),

@@ -42,6 +42,74 @@ void main() {
     expect(cache.packCount, 0);
   });
 
+  test(
+    'online research is excluded without losing downloadable stories',
+    () async {
+      final cache = AdaptiveRouteStoryDeviceCache(file: file);
+      final wiki = _state(provider: 'Wikipedia');
+      final research = _state(provider: 'OnlineResearch').pack!.stories.first
+          .toJson();
+      final mixed = AdaptiveRouteStoryPackState.fromJson({
+        ...wiki.toJson(),
+        'pack': {
+          ...wiki.pack!.toJson(),
+          'stories': [
+            wiki.pack!.stories.first.toJson(),
+            {...research, 'storyId': 'research-only'},
+          ],
+        },
+      });
+      expect(await cache.store(mixed), isTrue);
+      final stored = await cache.get('walk-1', 3);
+      expect(stored!.pack!.stories.map((story) => story.storyId), ['story-1']);
+      expect(await file.readAsString(), isNot(contains('research-only')));
+      final source = RouteStorySource.fromJson({
+        'providerName': 'Museum',
+        'allowsOfflineUse': false,
+      });
+      expect(source.canCache, isFalse);
+      expect(
+        RouteStorySource.fromJson(source.toJson()).allowsOfflineUse,
+        isFalse,
+      );
+    },
+  );
+
+  test(
+    'missed history catches up without ignoring navigation or distance',
+    () async {
+      final cache = AdaptiveRouteStoryDeviceCache(file: file);
+      await cache.store(_state(provider: 'Wikipedia'));
+      expect(
+        await cache.select(
+          'walk-1',
+          3,
+          const NextRouteStoryRequest(routeProgressMeters: 400),
+        ),
+        isNotNull,
+      );
+      expect(
+        await cache.select(
+          'walk-1',
+          3,
+          const NextRouteStoryRequest(routeProgressMeters: 601),
+        ),
+        isNull,
+      );
+      expect(
+        await cache.select(
+          'walk-1',
+          3,
+          const NextRouteStoryRequest(
+            routeProgressMeters: 400,
+            secondsUntilNextManeuver: 10,
+          ),
+        ),
+        isNull,
+      );
+    },
+  );
+
   test('expired story is not selected from a still-valid pack', () async {
     final cache = AdaptiveRouteStoryDeviceCache(file: file);
     final state = _state(
