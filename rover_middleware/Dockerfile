@@ -18,5 +18,8 @@ RUN dotnet publish Rover.Api/Rover.Api.csproj -c Release -o /app/publish --no-re
 FROM runtime AS final
 WORKDIR /app
 COPY --from=build /app/publish .
+# Give the non-root API access to its default story and location cache.
+RUN mkdir -p /app/work/location-intelligence \
+    && chown -R "$APP_UID" /app/work
 USER $APP_UID
 ENTRYPOINT ["dotnet", "Rover.Api.dll"]
