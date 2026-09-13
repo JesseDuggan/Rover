@@ -16,6 +16,7 @@ public sealed class Phase16Options
     public int StorySearchRadiusMeters { get; set; } = 225;
     public int NavigationSafetyBufferSeconds { get; set; } = 15;
     public int PackRetentionHours { get; set; } = 48;
+    public int GenerationTimeoutSeconds { get; set; } = 120;
     public string PromptVersion { get; set; } = "phase16-story-first-v3";
 }
 
@@ -351,13 +352,16 @@ public sealed class AdaptiveRouteStoryPackService : IAdaptiveRouteStoryPackServi
             existing?.SavedStoryIds ?? new HashSet<string>(StringComparer.OrdinalIgnoreCase));
         await _packs.StoreAsync(generating, cancellationToken);
 
+        using var budget = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
+        budget.CancelAfter(TimeSpan.FromSeconds(Math.Clamp(_options.GenerationTimeoutSeconds, 1, 300)));
+        var generationToken = budget.Token;
         try
         {
-            var plan = await _plans.GetAsync(walkSessionId, session.RouteRevision, cancellationToken)
-                ?? await _plans.RefreshAsync(session, cancellationToken)
+            var plan = await _plans.GetAsync(walkSessionId, session.RouteRevision, generationToken).WaitAsync(generationToken)
+                ?? await _plans.RefreshAsync(session, generationToken).WaitAsync(generationToken)
                 ?? throw new InvalidOperationException("Phase 15 route corridor planning must be enabled before Phase 16 route stories can be generated.");
             var warnings = new List<string>();
-            var stories = await BuildStoriesAsync(session, plan, command.ProfileId, command.Language ?? "en", warnings, cancellationToken);
+            var stories = await BuildStoriesAsync(session, plan, command.ProfileId, command.Language ?? "en", warnings, generationToken).WaitAsync(generationToken);
             if (stories.Count == 0) warnings.Add("No sufficiently grounded route stories were found.");
             var key = IdempotencyKey(session, command, _options.PromptVersion);
             var pack = new AdaptiveRouteStoryPack(
@@ -378,8 +382,23 @@ public sealed class AdaptiveRouteStoryPackService : IAdaptiveRouteStoryPackServi
                 UpdatedUtc = _timeProvider.GetUtcNow(),
                 Pack = pack
             };
-            await _packs.StoreAsync(ready, cancellationToken);
+            await _packs.StoreAsync(ready, generationToken);
             return ready;
+        }
+        catch (OperationCanceledException)
+        {
+            var message = cancellationToken.IsCancellationRequested
+                ? "Route story generation was interrupted. Please retry."
+                : "Route story generation timed out. Please retry.";
+            // The request token is cancelled; terminal state must still be recorded.
+            await _packs.StoreAsync(generating with
+            {
+                Status = AdaptiveRouteStoryPackStatus.Failed,
+                UpdatedUtc = _timeProvider.GetUtcNow(),
+                Error = message
+            }, CancellationToken.None);
+            if (cancellationToken.IsCancellationRequested) throw;
+            throw new InvalidOperationException(message);
         }
         catch (Exception exception) when (exception is not OperationCanceledException)
         {

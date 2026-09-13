@@ -919,6 +919,28 @@ static async Task Phase16RoutePacksSelectCompleteAndSaveStories()
         new GenerateAdaptiveRouteStoryPackCommand(null, "GeneralTraveller", "en", false),
         CancellationToken.None);
     var story = state.Pack!.Stories.Single();
+    foreach (var cancelRequest in new[] { false, true })
+    {
+        using var requestCancellation = new CancellationTokenSource();
+        var terminalPacks = new InMemoryAdaptiveRouteStoryPackRepository();
+        var boundedOptions = new Phase16Options { Enabled = true, GenerationTimeoutSeconds = 1 };
+        var bounded = new AdaptiveRouteStoryPackService(boundedOptions, walks, plans,
+            new RecordingLocationStoryContextService(Array.Empty<LocationPlace>()), terminalPacks,
+            new DeterministicStoryIntentClassifier(), new DeterministicAdaptiveStoryLengthSelector(boundedOptions),
+            TimeProvider.System, researcher: new BlockingRouteResearcher(cancelRequest ? requestCancellation : null));
+        var failedAsExpected = false;
+        try
+        {
+            await bounded.GenerateAsync(session.WalkSessionId,
+                new GenerateAdaptiveRouteStoryPackCommand(null, null, "en", false), requestCancellation.Token);
+        }
+        catch (OperationCanceledException) when (cancelRequest) { failedAsExpected = true; }
+        catch (InvalidOperationException) when (!cancelRequest) { failedAsExpected = true; }
+        AssertTrue(failedAsExpected, "Generation must terminate on cancellation or timeout.");
+        var terminal = await terminalPacks.GetAsync(session.WalkSessionId, session.RouteRevision, CancellationToken.None);
+        AssertEqual(AdaptiveRouteStoryPackStatus.Failed, terminal!.Status);
+        AssertTrue(terminal.Error!.Contains(cancelRequest ? "interrupted" : "timed out"), "Failure must explain why generation stopped.");
+    }
     var textAnswer = await service.AskAsync(session.WalkSessionId,
         new AdaptiveRouteStoryQuestion("what happens here", story.OpensAtRouteMeters, 0), CancellationToken.None);
     AssertNotNull(textAnswer.Selection, "An imminent turn may delay audio but must not hide a grounded text answer.");
