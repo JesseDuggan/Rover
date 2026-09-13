@@ -74,7 +74,7 @@ public static class DependencyInjection
         {
             configuration.GetSection("Rover:LocalDiscovery:Mapbox").Bind(options);
             options.Enabled = configuration.GetValue("Rover:LocalDiscovery:Enabled", options.Enabled)
-                || IsLiveDiscoveryMode(Environment.GetEnvironmentVariable("ROVER_LOCAL_DISCOVERY_MODE"));
+                || IsLiveDiscoveryMode(Environment.GetEnvironmentVariable("ROVER_LOCAL_DISCOVERY_MODE") ?? configuration["Rover:LocalDiscovery:Mode"]);
             options.AccessToken ??= Environment.GetEnvironmentVariable("MAPBOX_SEARCH_TOKEN")
                 ?? Environment.GetEnvironmentVariable("MAPBOX_DIRECTIONS_TOKEN")
                 ?? Environment.GetEnvironmentVariable("MAPBOX_PUBLIC_TOKEN");

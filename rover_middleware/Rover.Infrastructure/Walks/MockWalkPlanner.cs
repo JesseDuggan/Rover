@@ -27,11 +27,16 @@ public sealed class MockWalkPlanner : IWalkPlanner
         cancellationToken.ThrowIfCancellationRequested();
 
         var storyPlanning = _storySelector?.Enabled == true;
-        var isUnionSquareStart = !storyPlanning && RouteMath.DistanceMeters(command.StartingLocation, new GeoLocation(37.7880, -122.4075)) < 5_000;
+        var isUnionSquareStart = !storyPlanning && !_localDiscoveryProvider.RequiresRealPlaces
+            && RouteMath.DistanceMeters(command.StartingLocation, new GeoLocation(37.7880, -122.4075)) < 5_000;
         var desiredStops = DesiredStopCount(command.AvailableMinutes);
-        var discoveredStops = isUnionSquareStart
-            ? Array.Empty<WalkStop>()
-            : await _localDiscoveryProvider.FindCandidateStopsAsync(command, cancellationToken, storyPlanning ? 30 : Math.Max(desiredStops * 2, 12));
+        var discovery = isUnionSquareStart
+            ? new LocalDiscoveryResult(Array.Empty<WalkStop>(), null)
+            : await _localDiscoveryProvider.DiscoverForPlanningAsync(command, cancellationToken, storyPlanning ? 30 : Math.Max(desiredStops * 2, 12));
+        var discoveredStops = discovery.Stops;
+        if (_localDiscoveryProvider.RequiresRealPlaces && discoveredStops.Count < 2)
+            throw new InvalidOperationException("A real-place walk could not be created: fewer than two usable places were found. "
+                + discovery.Diagnostic + " No fallback waypoints were created.");
         var selection = storyPlanning
             ? await _storySelector!.SelectAsync(command, discoveredStops, desiredStops, cancellationToken)
             : null;

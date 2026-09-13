@@ -138,6 +138,7 @@ var tests = new List<(string Name, Func<Task> Run)>
     ("Google Places provider is safe on network failure", GooglePlacesProviderIsSafeOnNetworkFailure),
     ("Google Places provider prevents aggregate content caching", GooglePlacesProviderPreventsAggregateContentCaching),
     ("Google Places local discovery creates attributed walk stops", GooglePlacesLocalDiscoveryCreatesAttributedWalkStops),
+    ("Live planning refuses synthetic fallback and preserves discovery diagnostics", LivePlanningRefusesSyntheticFallback),
     ("Google Places discovery mode selects Google provider", GooglePlacesDiscoveryModeSelectsGoogleProvider),
     ("Wikipedia provider enriches nearby pages with summaries and Wikidata", WikipediaProviderEnrichesNearbyPages),
     ("Parks Canada heritage provider preserves official evidence and attribution", ParksCanadaHeritageProviderPreservesEvidence),
@@ -2627,6 +2628,55 @@ static async Task GooglePlacesLocalDiscoveryCreatesAttributedWalkStops()
     AssertTrue(stops[0].RequiredAttribution.Contains("Google Maps"), "Expected visible Google Maps attribution on the walk stop.");
 }
 
+static async Task LivePlanningRefusesSyntheticFallback()
+{
+    var now = DateTimeOffset.UtcNow;
+    foreach (var scenario in new[] { "forbidden", "empty", "filtered", "disabled", "missing-key", "success" })
+    {
+        var calls = 0;
+        using var client = new HttpClient(new RoutingHttpMessageHandler(_ =>
+        {
+            calls++;
+            if (scenario == "forbidden") return JsonResponse(HttpStatusCode.Forbidden, "{\"error\":\"private-provider-response\"}");
+            var latitude = scenario == "filtered" ? 0 : 44.6791;
+            var places = scenario == "empty" ? Array.Empty<object>() : new object[]
+            {
+                new { id = "real-1", displayName = new { text = "Test Cafe" }, location = new { latitude, longitude = -76.3951 }, primaryType = "cafe" },
+                new { id = "real-2", displayName = new { text = "Test Museum" }, location = new { latitude, longitude = -76.3971 }, primaryType = "museum" }
+            };
+            return JsonResponse(HttpStatusCode.OK, JsonSerializer.Serialize(new { places }));
+        }));
+        var placesProvider = new GooglePlacesLocationContextProvider(new SingleHttpClientFactory(client),
+            new InMemoryLocationContextCache(new ManualTimeProvider(now)), new ManualTimeProvider(now),
+            new LocationProviderOptions { Enabled = scenario != "disabled", AccessToken = scenario == "missing-key" ? null : "test-key" });
+        var discovery = new GooglePlacesLocalDiscoveryProvider(placesProvider,
+            Microsoft.Extensions.Options.Options.Create(new LocalDiscoveryOptions { Enabled = true }));
+        var planner = new MockWalkPlanner(new MockWalkRouteProvider(), discovery);
+        var command = new CreateWalkCommand(new GeoLocation(44.678, -76.395), 90, new[] { "history" }, WalkingPace.Standard, Array.Empty<AccessibilityPreference>());
+        try
+        {
+            var session = await planner.PlanWalkAsync(command, CancellationToken.None);
+            AssertEqual("success", scenario);
+            AssertEqual(2, session.Stops.Count);
+            AssertTrue(session.Stops.All(stop => stop.DiscoveryProviderName == "GooglePlaces"), "Live planning must retain real provider stops.");
+        }
+        catch (InvalidOperationException exception) when (scenario != "success")
+        {
+            var expected = scenario switch
+            {
+                "forbidden" => "HTTP 403",
+                "filtered" => "Returned 2 places; retained 0",
+                "disabled" => "provider is disabled",
+                "missing-key" => "GOOGLE_PLACES_API_KEY is not configured",
+                _ => "Returned 0 places; retained 0"
+            };
+            AssertTrue(exception.Message.Contains(expected) && exception.Message.Contains("No fallback waypoints"), "Planning must expose the failure instead of inventing stops: " + scenario);
+            AssertTrue(!exception.Message.Contains("private-provider-response"), "Raw provider failures must not leak into app errors.");
+        }
+        AssertEqual(scenario is "disabled" or "missing-key" ? 0 : 1, calls);
+    }
+}
+
 static Task GooglePlacesDiscoveryModeSelectsGoogleProvider()
 {
     var previousLocalMode = Environment.GetEnvironmentVariable("ROVER_LOCAL_DISCOVERY_MODE");
@@ -2655,6 +2705,22 @@ static Task GooglePlacesDiscoveryModeSelectsGoogleProvider()
 
         AssertEqual("GooglePlacesLocalDiscoveryProvider", scope.ServiceProvider.GetRequiredService<ILocalDiscoveryProvider>().GetType().Name);
         AssertEqual("LocalNearbyDiscoveryProvider", scope.ServiceProvider.GetRequiredService<INearbyDiscoveryProvider>().GetType().Name);
+        Environment.SetEnvironmentVariable("ROVER_LOCAL_DISCOVERY_MODE", null);
+        var configuredServices = new ServiceCollection();
+        configuredServices.AddLogging();
+        configuredServices.AddSingleton<IHostEnvironment>(new TestHostEnvironment("Development"));
+        configuredServices.AddApplication();
+        configuredServices.AddInfrastructure(new ConfigurationBuilder().AddInMemoryCollection(new Dictionary<string, string?>
+        {
+            ["Rover:LocalDiscovery:Mode"] = "GooglePlaces",
+            ["Rover:LocalDiscovery:Enabled"] = "false"
+        }).Build());
+        using var configuredProvider = configuredServices.BuildServiceProvider();
+        using var configuredScope = configuredProvider.CreateScope();
+        AssertTrue(configuredScope.ServiceProvider.GetRequiredService<Microsoft.Extensions.Options.IOptions<LocalDiscoveryOptions>>().Value.Enabled,
+            "Selecting live discovery in configuration must enable discovery just as the environment mode does.");
+        AssertTrue(configuredScope.ServiceProvider.GetRequiredService<ILocalDiscoveryProvider>().RequiresRealPlaces,
+            "Configured Google discovery must refuse synthetic planning.");
         return Task.CompletedTask;
     }
     finally

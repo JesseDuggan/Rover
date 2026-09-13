@@ -9,6 +9,7 @@ namespace Rover.Infrastructure.Walks;
 
 public sealed class MapboxLocalDiscoveryProvider : ILocalDiscoveryProvider
 {
+    public bool RequiresRealPlaces => true;
     private static readonly string[] DefaultCategories =
     {
         "coffee",

@@ -8,6 +8,7 @@ namespace Rover.Infrastructure.Walks;
 
 public sealed class GooglePlacesLocalDiscoveryProvider : ILocalDiscoveryProvider
 {
+    public bool RequiresRealPlaces => true;
     private readonly GooglePlacesLocationContextProvider _placesProvider;
     private readonly LocalDiscoveryOptions _options;
 
@@ -36,10 +37,14 @@ public sealed class GooglePlacesLocalDiscoveryProvider : ILocalDiscoveryProvider
         CreateWalkCommand command,
         CancellationToken cancellationToken,
         int maximumStops = 30)
+        => (await DiscoverForPlanningAsync(command, cancellationToken, maximumStops)).Stops;
+
+    public async Task<LocalDiscoveryResult> DiscoverForPlanningAsync(
+        CreateWalkCommand command, CancellationToken cancellationToken, int maximumStops)
     {
         if (!_options.Enabled)
         {
-            return Array.Empty<WalkStop>();
+            return new(Array.Empty<WalkStop>(), "Google Places local discovery is disabled.");
         }
 
         var result = await _placesProvider.GetContextAsync(
@@ -63,7 +68,7 @@ public sealed class GooglePlacesLocalDiscoveryProvider : ILocalDiscoveryProvider
             .Take(Math.Max(1, maximumStops))
             .ToArray();
 
-        return selected
+        var stops = selected
             .Select((candidate, index) => ToStop(
                 candidate.Place,
                 index + 1,
@@ -73,6 +78,10 @@ public sealed class GooglePlacesLocalDiscoveryProvider : ILocalDiscoveryProvider
                         selected[index - 1].Place.Coordinates,
                         candidate.Place.Coordinates))))
             .ToArray();
+        var diagnostic = !result.Enabled ? "Google Places location provider is disabled."
+            : result.Warnings.Count > 0 ? string.Join(" ", result.Warnings)
+            : "Google Places search completed.";
+        return new(stops, $"{diagnostic} Returned {result.Places.Count} places; retained {stops.Length} within the configured distance limits.");
     }
 
     private static WalkStop ToStop(LocationPlace place, int sequenceNumber, int distanceFromPreviousStopMeters)
