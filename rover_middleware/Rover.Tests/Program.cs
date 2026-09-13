@@ -139,6 +139,7 @@ var tests = new List<(string Name, Func<Task> Run)>
     ("Google Places provider prevents aggregate content caching", GooglePlacesProviderPreventsAggregateContentCaching),
     ("Google Places local discovery creates attributed walk stops", GooglePlacesLocalDiscoveryCreatesAttributedWalkStops),
     ("Google Places quota cooldown suppresses requests across clients", GooglePlacesQuotaCooldownSuppressesRequests),
+    ("Story evidence scans skip Google while explicit context retains live discovery", StoryEvidenceSkipsGoogleDiscovery),
     ("Live planning refuses synthetic fallback and preserves discovery diagnostics", LivePlanningRefusesSyntheticFallback),
     ("Google Places discovery mode selects Google provider", GooglePlacesDiscoveryModeSelectsGoogleProvider),
     ("Wikipedia provider enriches nearby pages with summaries and Wikidata", WikipediaProviderEnrichesNearbyPages),
@@ -1120,13 +1121,16 @@ static async Task Phase16RoutePacksSelectCompleteAndSaveStories()
     var historyPlace = place with { Facts = new[] { summary } };
     var listingPlace = place with { CanonicalId = "listing-only", Name = "Nearby shop", StoryWorthinessScore = 100,
         Facts = new[] { fact with { FactType = "identity", FactText = "A nearby coffee shop." } } };
+    var historyContext = new RecordingLocationStoryContextService(new[] { listingPlace, historyPlace });
     var historyService = new AdaptiveRouteStoryPackService(options, walks, plans,
-        new RecordingLocationStoryContextService(new[] { listingPlace, historyPlace }),
+        historyContext,
         new InMemoryAdaptiveRouteStoryPackRepository(), new DeterministicStoryIntentClassifier(),
         new DeterministicAdaptiveStoryLengthSelector(options), TimeProvider.System);
     var historyState = await historyService.GenerateAsync(session.WalkSessionId,
         new GenerateAdaptiveRouteStoryPackCommand(null, "GeneralTraveller", "en", false), CancellationToken.None);
     var historyStory = historyState.Pack!.Stories.Single();
+    AssertTrue(historyContext.Queries.Count > 0 && historyContext.Queries.All(query => !query.IncludeGooglePlaces),
+        "Route story evidence must not repeat Google place discovery for each segment.");
     AssertEqual(place.Name, historyStory.Title);
     var quick = historyStory.Variants.Single(variant => variant.Length == AdaptiveStoryLength.Quick);
     AssertTrue(historyStory.Variants.Any(variant => variant.EstimatedDurationSeconds > quick.EstimatedDurationSeconds),
@@ -1286,6 +1290,7 @@ static async Task Phase15PrefetchDeduplicatesAndDiscardsStaleRevisions()
     AssertEqual(2L, stats.CompletedCount);
     AssertEqual(0L, stats.FailedCount);
     AssertEqual(2, context.Queries.Count);
+    AssertTrue(context.Queries.All(query => !query.IncludeGooglePlaces), "Background evidence prefetch must not call Google Places.");
     AssertTrue(context.Queries.All(query => query.RouteId?.EndsWith(":r2", StringComparison.Ordinal) == true), "Only the latest route revision should reach the Location Knowledge Engine.");
 }
 
@@ -2589,6 +2594,38 @@ static async Task GooglePlacesProviderPreventsAggregateContentCaching()
     AssertEqual(2, requestCount);
     AssertTrue(first.CacheStatus.ExpiresUtc is null && second.CacheStatus.ExpiresUtc is null, "Aggregate context containing Google Places content must not be cached.");
     AssertTrue(!second.CacheStatus.Hit, "Google Places aggregate context must remain a cache miss.");
+}
+
+static async Task StoryEvidenceSkipsGoogleDiscovery()
+{
+    var now = DateTimeOffset.UtcNow;
+    var time = new ManualTimeProvider(now);
+    var googleCalls = 0;
+    using var client = new HttpClient(new RoutingHttpMessageHandler(_ =>
+    {
+        googleCalls++;
+        return JsonResponse(HttpStatusCode.OK, "{\"places\":[]}");
+    }));
+    var google = new GooglePlacesLocationContextProvider(new SingleHttpClientFactory(client),
+        new InMemoryLocationContextCache(time), time, new LocationProviderOptions { Enabled = true, AccessToken = "test-key" });
+    var history = new StaticLocationProvider("Wikipedia", Array.Empty<LocationPlace>());
+    var service = CreateLocationStoryContextService(new ILocationContextProvider[] { google, history }, timeProvider: time);
+    var query = new LocationContextQuery(new GeoLocation(44.678, -76.395), 500, null, null,
+        Array.Empty<GeoLocation>(), new[] { "history" }) { IncludeGooglePlaces = false };
+    var evidence = await service.GetContextAsync(query, CancellationToken.None);
+    AssertEqual(0, googleCalls);
+    AssertEqual(1, history.Calls);
+    var repeated = await service.GetContextAsync(query, CancellationToken.None);
+    AssertEqual(0, googleCalls);
+    AssertEqual(1, history.Calls);
+    var live = query with { IncludeGooglePlaces = true };
+    await service.GetContextAsync(live, CancellationToken.None);
+    await service.GetContextAsync(live, CancellationToken.None);
+    AssertEqual(2, googleCalls);
+    AssertEqual(3, history.Calls);
+    await service.GetContextAsync(query, CancellationToken.None);
+    AssertEqual(2, googleCalls);
+    AssertEqual(3, history.Calls);
 }
 
 static async Task GooglePlacesQuotaCooldownSuppressesRequests()
@@ -5085,6 +5122,7 @@ internal sealed class NeverCompletingHttpMessageHandler : HttpMessageHandler
 
 internal sealed class StaticLocationProvider : ILocationContextProvider
 {
+    public int Calls { get; private set; }
     private readonly IReadOnlyList<LocationPlace> _places;
 
     public StaticLocationProvider(string name, IReadOnlyList<LocationPlace> places)
@@ -5097,6 +5135,7 @@ internal sealed class StaticLocationProvider : ILocationContextProvider
 
     public Task<LocationContextProviderResult> GetContextAsync(LocationContextQuery query, CancellationToken cancellationToken)
     {
+        Calls++;
         return Task.FromResult(new LocationContextProviderResult(Name, true, _places, null, Array.Empty<string>(), false, 3));
     }
 }

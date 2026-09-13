@@ -142,7 +142,7 @@ public sealed class QueuedRouteStoryEvidencePrefetcher : BackgroundService, IRou
                         $"{request.WalkSessionId}:r{request.RouteRevision}",
                         null,
                         request.RouteGeometry,
-                        request.Interests),
+                        request.Interests) { IncludeGooglePlaces = false },
                     stoppingToken);
                 stopwatch.Stop();
 

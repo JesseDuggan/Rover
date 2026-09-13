@@ -545,7 +545,9 @@ public sealed class AdaptiveRouteStoryPackService : IAdaptiveRouteStoryPackServi
                 session.Interests)
             {
                 RouteSegmentId = segment.SegmentId,
-                DirectionalContext = RouteRelativeDirection.AlongRoute.ToString()
+                DirectionalContext = RouteRelativeDirection.AlongRoute.ToString(),
+                // Stops already come from place discovery; evidence scans need narrative sources.
+                IncludeGooglePlaces = false
             };
             var context = await _locationStories.GetContextAsync(query, cancellationToken);
             warnings.AddRange(context.SourceWarnings.Where(warning => !warnings.Contains(warning)));

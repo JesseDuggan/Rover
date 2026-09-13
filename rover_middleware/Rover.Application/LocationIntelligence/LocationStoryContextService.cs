@@ -61,7 +61,9 @@ public sealed class LocationStoryContextService : ILocationStoryContextService
     {
         ValidateQuery(query, _options);
         var cacheKey = CacheKey(query);
-        var aggregateCachingAllowed = _providers
+        var providers = _providers.Where(provider => query.IncludeGooglePlaces
+            || !provider.Name.Equals("GooglePlaces", StringComparison.OrdinalIgnoreCase)).ToArray();
+        var aggregateCachingAllowed = providers
             .OfType<ILocationContextCachePolicy>()
             .All(provider => provider.AllowsAggregateCaching);
         if (aggregateCachingAllowed && _cache.TryGet<LocationStoryContext>(cacheKey, out var cached) && cached is not null)
@@ -75,7 +77,7 @@ public sealed class LocationStoryContextService : ILocationStoryContextService
         var statuses = new List<LocationProviderStatus>();
         WeatherTimeContext? weather = null;
 
-        var providerResults = await Task.WhenAll(_providers.Select(provider =>
+        var providerResults = await Task.WhenAll(providers.Select(provider =>
             FetchProviderAsync(provider, query, cancellationToken)));
         foreach (var fetch in providerResults)
         {
@@ -315,7 +317,7 @@ public sealed class LocationStoryContextService : ILocationStoryContextService
         var lat = Math.Round(query.UserLocation.Latitude, 3);
         var lng = Math.Round(query.UserLocation.Longitude, 3);
         var interests = string.Join(",", query.Interests.Order(StringComparer.OrdinalIgnoreCase));
-        return $"location-context:{lat:F3}:{lng:F3}:{query.RadiusMeters}:{query.RouteId}:{query.RouteSegmentId}:{query.DirectionalContext}:{query.ProfileId}:{interests}";
+        return $"location-context:{lat:F3}:{lng:F3}:{query.RadiusMeters}:{query.RouteId}:{query.RouteSegmentId}:{query.DirectionalContext}:{query.ProfileId}:{interests}:google={query.IncludeGooglePlaces}";
     }
     private sealed record ProviderFetch(
         string ProviderName,
