@@ -232,6 +232,8 @@ public static class DependencyInjection
             .AddHttpMessageHandler<TransientRetryHandler>();
         services.AddHttpClient("GoogleRoutes")
             .AddHttpMessageHandler<TransientRetryHandler>();
+        services.AddSingleton<GooglePlacesQuotaCooldown>();
+        services.AddTransient<GooglePlacesQuotaHandler>();
         services.AddHttpClient("MapboxSearch")
             .AddHttpMessageHandler<TransientRetryHandler>();
         services.AddHttpClient("Wikipedia", client => client.DefaultRequestHeaders.UserAgent.ParseAdd(locationOptions.UserAgent))
@@ -241,7 +243,7 @@ public static class DependencyInjection
         services.AddHttpClient("ParksCanadaHeritage", client => client.DefaultRequestHeaders.UserAgent.ParseAdd(locationOptions.UserAgent))
             .AddHttpMessageHandler<TransientRetryHandler>();
         services.AddHttpClient("GooglePlaces", client => client.DefaultRequestHeaders.UserAgent.ParseAdd(locationOptions.UserAgent))
-            .AddHttpMessageHandler<TransientRetryHandler>();
+            .AddHttpMessageHandler<GooglePlacesQuotaHandler>();
         services.AddHttpClient("Overpass", client => client.DefaultRequestHeaders.UserAgent.ParseAdd(locationOptions.UserAgent))
             .AddHttpMessageHandler<TransientRetryHandler>();
         services.AddHttpClient("Weather", client => client.DefaultRequestHeaders.UserAgent.ParseAdd(locationOptions.UserAgent))

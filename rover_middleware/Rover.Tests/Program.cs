@@ -138,6 +138,7 @@ var tests = new List<(string Name, Func<Task> Run)>
     ("Google Places provider is safe on network failure", GooglePlacesProviderIsSafeOnNetworkFailure),
     ("Google Places provider prevents aggregate content caching", GooglePlacesProviderPreventsAggregateContentCaching),
     ("Google Places local discovery creates attributed walk stops", GooglePlacesLocalDiscoveryCreatesAttributedWalkStops),
+    ("Google Places quota cooldown suppresses requests across clients", GooglePlacesQuotaCooldownSuppressesRequests),
     ("Live planning refuses synthetic fallback and preserves discovery diagnostics", LivePlanningRefusesSyntheticFallback),
     ("Google Places discovery mode selects Google provider", GooglePlacesDiscoveryModeSelectsGoogleProvider),
     ("Wikipedia provider enriches nearby pages with summaries and Wikidata", WikipediaProviderEnrichesNearbyPages),
@@ -2588,6 +2589,66 @@ static async Task GooglePlacesProviderPreventsAggregateContentCaching()
     AssertEqual(2, requestCount);
     AssertTrue(first.CacheStatus.ExpiresUtc is null && second.CacheStatus.ExpiresUtc is null, "Aggregate context containing Google Places content must not be cached.");
     AssertTrue(!second.CacheStatus.Hit, "Google Places aggregate context must remain a cache miss.");
+}
+
+static async Task GooglePlacesQuotaCooldownSuppressesRequests()
+{
+    var services = new ServiceCollection();
+    services.AddLogging();
+    services.AddSingleton<IHostEnvironment>(new TestHostEnvironment("Development"));
+    services.AddApplication();
+    services.AddInfrastructure(new ConfigurationBuilder().Build());
+    var pipelineCalls = 0;
+    services.AddHttpClient("GooglePlaces").ConfigurePrimaryHttpMessageHandler(() => new RoutingHttpMessageHandler(_ =>
+    {
+        pipelineCalls++;
+        return new HttpResponseMessage(HttpStatusCode.TooManyRequests);
+    }));
+    using (var provider = services.BuildServiceProvider())
+    {
+        var factory = provider.GetRequiredService<IHttpClientFactory>();
+        using var one = factory.CreateClient("GooglePlaces");
+        using var two = factory.CreateClient("GooglePlaces");
+        using var firstFailure = await one.GetAsync("https://places.googleapis.com/v1/places:searchNearby");
+        using var nextFailure = await two.GetAsync("https://places.googleapis.com/v1/places:searchNearby");
+        AssertEqual(1, pipelineCalls);
+        AssertTrue(nextFailure.Headers.Contains("X-Rover-Quota-Cooldown"), "The actual DI pipeline must share cooldown and must not retry 429.");
+    }
+    foreach (var mode in new[] { "default", "delta", "date" })
+    {
+        var time = new ManualTimeProvider(DateTimeOffset.UtcNow);
+        var cooldown = new Rover.Infrastructure.Http.GooglePlacesQuotaCooldown(time);
+        var calls = 0;
+        HttpResponseMessage Respond(HttpRequestMessage _)
+        {
+            calls++;
+            var response = new HttpResponseMessage(calls == 1 ? HttpStatusCode.TooManyRequests : HttpStatusCode.OK);
+            if (calls == 1 && mode == "delta") response.Headers.RetryAfter = new System.Net.Http.Headers.RetryConditionHeaderValue(TimeSpan.FromMinutes(20));
+            if (calls == 1 && mode == "date") response.Headers.RetryAfter = new System.Net.Http.Headers.RetryConditionHeaderValue(time.GetUtcNow().AddMinutes(20));
+            return response;
+        }
+        using var first = new HttpClient(new Rover.Infrastructure.Http.GooglePlacesQuotaHandler(cooldown) { InnerHandler = new RoutingHttpMessageHandler(Respond) });
+        using var second = new HttpClient(new Rover.Infrastructure.Http.GooglePlacesQuotaHandler(cooldown) { InnerHandler = new RoutingHttpMessageHandler(Respond) });
+        using var initial = await first.GetAsync("https://places.googleapis.com/v1/places:searchNearby");
+        using var blocked = await second.GetAsync("https://places.googleapis.com/v1/places:searchText");
+        AssertEqual(HttpStatusCode.TooManyRequests, blocked.StatusCode);
+        AssertTrue(blocked.Headers.Contains("X-Rover-Quota-Cooldown"), "Skipped requests must be distinguishable from provider responses.");
+        AssertEqual(1, calls);
+        time.Advance(TimeSpan.FromMinutes(mode == "default" ? 15 : 20));
+        using var resumed = await second.GetAsync("https://places.googleapis.com/v1/places:searchNearby");
+        AssertEqual(HttpStatusCode.OK, resumed.StatusCode);
+        using var fresh = await first.GetAsync("https://places.googleapis.com/v1/places:searchNearby");
+        AssertEqual(3, calls);
+        using var canceled = new CancellationTokenSource();
+        canceled.Cancel();
+        try
+        {
+            using var ignored = await first.GetAsync("https://places.googleapis.com/v1/places:searchNearby", canceled.Token);
+            throw new InvalidOperationException("Canceled request should not run.");
+        }
+        catch (OperationCanceledException) { }
+        AssertEqual(3, calls);
+    }
 }
 
 static async Task GooglePlacesLocalDiscoveryCreatesAttributedWalkStops()

@@ -127,6 +127,8 @@ public sealed class GooglePlacesLocationContextProvider : LocationContextProvide
             using var response = await client.SendAsync(request, HttpCompletionOption.ResponseHeadersRead, timeout.Token);
             if (!response.IsSuccessStatusCode)
             {
+                if (response.Headers.Contains("X-Rover-Quota-Cooldown"))
+                    return (Array.Empty<LocationPlace>(), new[] { "Google Places requests are paused after HTTP 429 (quota exhausted). No new request was sent to Google." });
                 return (Array.Empty<LocationPlace>(), new[] { $"Google Places returned HTTP {(int)response.StatusCode} ({response.StatusCode})." });
             }
 
