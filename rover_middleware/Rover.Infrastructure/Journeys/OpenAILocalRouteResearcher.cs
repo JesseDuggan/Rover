@@ -7,6 +7,7 @@ using System.Text;
 using System.Text.Json;
 using System.Text.Json.Nodes;
 using System.Text.RegularExpressions;
+using Microsoft.Extensions.Logging;
 using Rover.Application.Journeys;
 using Rover.Application.Walks;
 using Rover.Domain.Walks;
@@ -21,10 +22,12 @@ public sealed class LocalRouteResearchOptions
     public int TimeoutSeconds { get; set; } = 60;
     public int SearchMaxOutputTokens { get; set; } = 8192;
     public int ClassificationMaxOutputTokens { get; set; } = 4096;
+    public bool CaptureRejectedResponses { get; set; }
 }
 
 // Search produces cited evidence; a tool-free second pass only classifies that evidence.
-public sealed class OpenAILocalRouteResearcher(HttpClient client, LocalRouteResearchOptions options, TimeProvider clock)
+public sealed class OpenAILocalRouteResearcher(HttpClient client, LocalRouteResearchOptions options, TimeProvider clock,
+    ILogger<OpenAILocalRouteResearcher>? logger = null)
     : ILocalRouteResearcher
 {
     private static readonly JsonSerializerOptions JsonOptions = new(JsonSerializerDefaults.Web);
@@ -67,7 +70,11 @@ public sealed class OpenAILocalRouteResearcher(HttpClient client, LocalRouteRese
             }, budget.Token);
             stage = "citation extraction";
             var passages = ReadPassages(research.RootElement, clock.GetUtcNow(), out var extractionDetails);
-            if (passages.Count == 0) return new([], $"Local research found no usable cited passages: {extractionDetails}.");
+            if (passages.Count == 0)
+            {
+                CaptureRejectedResponse(context, research.RootElement, extractionDetails);
+                return new([], $"Local research found no usable cited passages: {extractionDetails}.");
+            }
 
             stage = "story classification";
             using var organized = await SendAsync(new
@@ -196,6 +203,23 @@ public sealed class OpenAILocalRouteResearcher(HttpClient client, LocalRouteRese
             document.Dispose();
             throw;
         }
+    }
+
+    private void CaptureRejectedResponse(string context, JsonElement root, string details)
+    {
+        if (!options.CaptureRejectedResponses || logger is null) return;
+        // Temporary opt-in capture: only the same coarse context sent to research, never the query or HTTP headers.
+        string Bounded(string value, int limit)
+        {
+            var redacted = string.IsNullOrEmpty(options.ApiKey) ? value : value.Replace(options.ApiKey, "[REDACTED]", StringComparison.Ordinal);
+            return redacted.Length <= limit ? redacted : redacted[..limit] + " [truncated]";
+        }
+        var text = OutputText(root);
+        var searchCalls = root.TryGetProperty("output", out var output) && output.ValueKind == JsonValueKind.Array
+            ? output.EnumerateArray().Count(item => item.TryGetProperty("type", out var type) && type.GetString() == "web_search_call") : 0;
+        logger.LogWarning(new EventId(6101, "RoverResearchCapture"),
+            "RoverResearchCapture: Model={Model}; Context={Context}; SearchCalls={SearchCalls}; Rejection={Rejection}; ResponseCharacters={ResponseCharacters}; ResponseExcerpt={ResponseExcerpt}",
+            Bounded(options.Model ?? "", 120), Bounded(context, 4000), searchCalls, details, text.Length, Bounded(text, 2000));
     }
 
     private static IReadOnlyList<Passage> ReadPassages(JsonElement root, DateTimeOffset now, out string details)

@@ -224,7 +224,8 @@ public static class DependencyInjection
             Model = Environment.GetEnvironmentVariable("ROVER_LOCAL_RESEARCH_MODEL") ?? currentInformationOptions.Model,
             TimeoutSeconds = configuration.GetValue("Rover:Phase16:LocalResearch:TimeoutSeconds", 60),
             SearchMaxOutputTokens = configuration.GetValue("Rover:Phase16:LocalResearch:SearchMaxOutputTokens", 8192),
-            ClassificationMaxOutputTokens = configuration.GetValue("Rover:Phase16:LocalResearch:ClassificationMaxOutputTokens", 4096)
+            ClassificationMaxOutputTokens = configuration.GetValue("Rover:Phase16:LocalResearch:ClassificationMaxOutputTokens", 4096),
+            CaptureRejectedResponses = EnvironmentFlag("ROVER_LOCAL_RESEARCH_CAPTURE_REJECTIONS", false)
         });
         services.AddHttpClient<ILocalRouteResearcher, OpenAILocalRouteResearcher>();
         services.AddHttpClient("MapboxDirections")

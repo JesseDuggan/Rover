@@ -889,6 +889,40 @@ static async Task LocalRouteResearchValidation()
         AssertTrue(!result.Warning.Contains("secret-provider-text") && !result.Warning.Contains("existing stories remain"), "Diagnostics must not echo provider text or promise nonexistent stories.");
         AssertTrue(calls <= 2, "Diagnostics must not trigger extra paid retries.");
     }
+    foreach (var capture in new[] { false, true })
+    {
+        const string secret = "private-test-api-key";
+        var logger = new ResearchCaptureLogger();
+        var calls = 0;
+        var uncitedText = "I could not establish a locality. " + secret + new string('x', 2200);
+        using var captureClient = new HttpClient(new RoutingHttpMessageHandler(_ =>
+        {
+            calls++;
+            return JsonResponse(HttpStatusCode.OK, JsonSerializer.Serialize(new
+            {
+                status = "completed", output = new[] { new { type = "message", content = new[] { new { text = uncitedText } } } }
+            }));
+        }));
+        var captureResearcher = new Rover.Infrastructure.Journeys.OpenAILocalRouteResearcher(captureClient,
+            new Rover.Infrastructure.Journeys.LocalRouteResearchOptions
+            {
+                Enabled = true, ApiKey = secret, Model = "test", CaptureRejectedResponses = capture
+            }, TimeProvider.System, logger);
+        var captured = await captureResearcher.ResearchAsync(query, CancellationToken.None);
+        AssertEqual(1, calls);
+        AssertEqual(0, captured.Stories.Count);
+        AssertEqual(capture ? 1 : 0, logger.Entries.Count);
+        AssertTrue(!captured.Warning!.Contains("I could not establish"), "Raw research must not appear in app status.");
+        if (capture)
+        {
+            var entry = logger.Entries.Single();
+            AssertEqual("RoverResearchCapture", entry.EventId.Name);
+            AssertTrue(entry.Message.Contains("I could not establish a locality.") && entry.Message.Contains("Paris"), "Capture must expose the rejected text and coarse context.");
+            AssertTrue(entry.Message.Contains("[truncated]") && entry.Message.Contains("[REDACTED]"), "Capture must bound text and redact credentials.");
+            AssertTrue(!entry.Message.Contains(secret) && !entry.Message.Contains("48.856"), "Capture must not disclose the API key or precise query coordinates.");
+            AssertTrue(entry.Message.Contains("48.86") && entry.Message.Contains("SearchCalls=0"), "Capture must use rounded request coordinates and record search execution.");
+        }
+    }
     using var disabledClient = new HttpClient(new RoutingHttpMessageHandler(_ => throw new InvalidOperationException("Disabled research called network")));
     var disabled = new Rover.Infrastructure.Journeys.OpenAILocalRouteResearcher(disabledClient, new(), TimeProvider.System);
     var disabledResult = await disabled.ResearchAsync(query, CancellationToken.None);
