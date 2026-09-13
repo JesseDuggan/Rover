@@ -789,6 +789,8 @@ static async Task LocalRouteResearchValidation()
             AssertTrue(!body.Contains("walk-test"), "Research must not receive user session identifiers.");
             using var payload = JsonDocument.Parse(body);
             AssertEqual(calls == 1 ? 8192 : 4096, payload.RootElement.GetProperty("max_output_tokens").GetInt32());
+            AssertEqual("low", payload.RootElement.GetProperty("reasoning").GetProperty("effort").GetString());
+            if (calls == 1) AssertTrue(payload.RootElement.GetProperty("instructions").GetString()!.Contains("at most three"), "Search should request a bounded starter pack.");
             if (scenario == "failure") return JsonResponse(HttpStatusCode.ServiceUnavailable, "{}");
             if (calls == 1)
             {
@@ -817,7 +819,7 @@ static async Task LocalRouteResearchValidation()
             return JsonResponse(HttpStatusCode.OK, JsonSerializer.Serialize(new { status = "completed", output = new[] { new { content = new[] { new { text = cards } } } } }));
         }));
         var researcher = new Rover.Infrastructure.Journeys.OpenAILocalRouteResearcher(client,
-            new Rover.Infrastructure.Journeys.LocalRouteResearchOptions { Enabled = true, ApiKey = "test", Model = "test" }, TimeProvider.System);
+            new Rover.Infrastructure.Journeys.LocalRouteResearchOptions { Enabled = true, ApiKey = "test", Model = "gpt-5-mini" }, TimeProvider.System);
         var result = await researcher.ResearchAsync(query, CancellationToken.None);
         AssertEqual(scenario is "valid" or "wrapped" ? 1 : 0, result.Stories.Count);
         AssertTrue(calls <= 2, "Research is bounded to two model calls per pack.");
