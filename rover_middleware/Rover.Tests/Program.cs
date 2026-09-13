@@ -800,7 +800,7 @@ static async Task LocalRouteResearchValidation()
                             url = "https://museum.example/history", title = "Museum history" } }
                     } } } } });
                 }
-                return JsonResponse(HttpStatusCode.OK, scenario == "uncited" ? "{\"output\":[]}" : response);
+                return JsonResponse(HttpStatusCode.OK, scenario == "uncited" ? "{\"status\":\"completed\",\"output\":[]}" : response);
             }
             AssertTrue(!body.Contains("\"tools\""), "Classification must not have tools.");
             var cards = JsonSerializer.Serialize(new { stories = new[] { new
@@ -826,6 +826,32 @@ static async Task LocalRouteResearchValidation()
             AssertTrue(story.Sources.All(source => !source.AllowsOfflineUse), "Unknown source rights cannot permit offline storage.");
             AssertTrue(story.ExpiresUtc > now.AddHours(5) && story.ExpiresUtc <= now.AddHours(7), "Historical research must last through a walk, but expire within hours.");
         }
+    }
+    foreach (var diagnostic in new[]
+    {
+        (Stage: "web search", Body: """{"status":"incomplete","incomplete_details":{"reason":"max_output_tokens"}}""", Reason: "output-token limit"),
+        (Stage: "story classification", Body: """{"status":"incomplete","incomplete_details":{"reason":"max_output_tokens"}}""", Reason: "output-token limit"),
+        (Stage: "web search", Body: """{"status":"incomplete","incomplete_details":{"reason":"content_filter"}}""", Reason: "content filtering"),
+        (Stage: "web search", Body: """{"status":"incomplete","incomplete_details":{"reason":"secret-provider-text"}}""", Reason: "did not complete"),
+        (Stage: "web search", Body: """{"status":"completed","output":[{"content":[{"type":"refusal","refusal":"secret-provider-text"}]}]}""", Reason: "declined"),
+        (Stage: "classification parsing", Body: """{"status":"completed","output":[]}""", Reason: "no classification text"),
+        (Stage: "classification parsing", Body: """{"status":"completed","output":[{"content":[{"text":"{bad-json-secret-provider-text"}]}]}""", Reason: "invalid JSON"),
+        (Stage: "classification parsing", Body: """{"status":"completed","output":[{"content":[{"text":"{}"}]}]}""", Reason: "missing its stories array")
+    })
+    {
+        var calls = 0;
+        using var client = new HttpClient(new RoutingHttpMessageHandler(_ =>
+        {
+            calls++;
+            return JsonResponse(HttpStatusCode.OK, diagnostic.Stage != "web search" && calls == 1 ? research : diagnostic.Body);
+        }));
+        var researcher = new Rover.Infrastructure.Journeys.OpenAILocalRouteResearcher(client,
+            new Rover.Infrastructure.Journeys.LocalRouteResearchOptions { Enabled = true, ApiKey = "test", Model = "test" }, TimeProvider.System);
+        var result = await researcher.ResearchAsync(query, CancellationToken.None);
+        AssertEqual(0, result.Stories.Count);
+        AssertTrue(result.Warning!.Contains(diagnostic.Stage) && result.Warning.Contains(diagnostic.Reason), "Failure must identify its stage and safe reason.");
+        AssertTrue(!result.Warning.Contains("secret-provider-text") && !result.Warning.Contains("existing stories remain"), "Diagnostics must not echo provider text or promise nonexistent stories.");
+        AssertTrue(calls <= 2, "Diagnostics must not trigger extra paid retries.");
     }
     using var disabledClient = new HttpClient(new RoutingHttpMessageHandler(_ => throw new InvalidOperationException("Disabled research called network")));
     var disabled = new Rover.Infrastructure.Journeys.OpenAILocalRouteResearcher(disabledClient, new(), TimeProvider.System);
