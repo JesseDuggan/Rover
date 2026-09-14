@@ -1,6 +1,7 @@
+import 'support/route_fixtures.dart';
+
 import 'package:flutter_test/flutter_test.dart';
 import 'package:rover/src/adventure/adventure_request.dart';
-import 'package:rover/src/adventure/roam.dart';
 
 void main() {
   test('generated ordered stops are always sequential', () {

@@ -1,3 +1,5 @@
+import 'support/adventure_fixtures.dart';
+
 import 'package:flutter_test/flutter_test.dart';
 import 'package:rover/src/adventure/adventure_request.dart';
 

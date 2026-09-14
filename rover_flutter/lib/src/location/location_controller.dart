@@ -3,27 +3,20 @@ import 'package:flutter/widgets.dart';
 import 'rover_location.dart';
 
 class LocationController extends ChangeNotifier {
-  LocationController({
-    RoverLocationProvider? realProvider,
-    SimulatedLocationProvider? simulatedProvider,
-  }) : _realProvider = realProvider ?? const GeolocatorLocationProvider(),
-       _simulatedProvider = simulatedProvider ?? SimulatedLocationProvider();
+  LocationController({RoverLocationProvider? realProvider})
+    : _realProvider = realProvider ?? const GeolocatorLocationProvider();
 
   final RoverLocationProvider _realProvider;
-  final SimulatedLocationProvider _simulatedProvider;
 
-  bool _useSimulator = false;
   RoverLatLng? _location;
   LocationFailure? _failure;
   bool _isLoading = false;
   Future<RoverLocationResult>? _deviceLocationRequest;
 
-  bool get useSimulator => _useSimulator;
   bool get isLoading => _isLoading;
   RoverLatLng? get location => _location;
   LocationFailure? get failure => _failure;
-  RoverLocationProvider get activeProvider =>
-      _useSimulator ? _simulatedProvider : _realProvider;
+  RoverLocationProvider get activeProvider => _realProvider;
 
   Future<RoverLocationResult> locate() async {
     _isLoading = true;
@@ -39,14 +32,12 @@ class LocationController extends ChangeNotifier {
   }
 
   Future<RoverLocationResult> useRealDeviceLocation() async {
-    _useSimulator = false;
     return locate();
   }
 
   Future<RoverLocationResult> ensureDeviceLocation({
     bool forceRefresh = false,
   }) {
-    _useSimulator = false;
     if (!forceRefresh && _location != null) {
       return Future.value(RoverLocationResult.success(_location!));
     }
@@ -63,25 +54,6 @@ class LocationController extends ChangeNotifier {
         _deviceLocationRequest = null;
       }
     });
-  }
-
-  Future<RoverLocationResult> useSimulatedLocation() async {
-    _useSimulator = true;
-    return locate();
-  }
-
-  Future<RoverLocationResult> advanceSimulation() async {
-    _useSimulator = true;
-    _simulatedProvider.moveNext();
-    return locate();
-  }
-
-  void resetSimulation() {
-    _simulatedProvider.reset();
-    _location = null;
-    _failure = null;
-    _useSimulator = false;
-    notifyListeners();
   }
 }
 

@@ -1,4 +1,7 @@
 import 'dart:convert';
+
+import 'route_persistence.dart';
+
 import 'dart:math' as math;
 
 import '../api/adaptation_models.dart';
@@ -154,6 +157,9 @@ class RoamSession {
   }
 
   double get distanceMilesToNext {
+    if (roam.stops.isEmpty) {
+      return 0;
+    }
     final target = arrivedAtCurrentStop
         ? nextStop?.coordinates
         : currentStop.coordinates;
@@ -308,6 +314,7 @@ class RoamSession {
 
   String toJson() {
     return jsonEncode({
+      'route': routeToJson(roam),
       'status': status.name,
       'currentStopIndex': currentStopIndex,
       'completedStopIds': completedStopIds.toList(),
@@ -342,11 +349,14 @@ class RoamSession {
 
   static RoamSession fromJson(String source) {
     final data = jsonDecode(source) as Map<String, dynamic>;
-    final roam = MockRouteGenerationService.activeSanFranciscoDemo();
+    final route = data['route'] as Map<String, dynamic>?;
+    final roam = route == null ? empty().roam : routeFromJson(route);
     return RoamSession(
       roam: roam,
       status: RoamSessionStatus.values.byName(data['status'] as String),
-      currentStopIndex: data['currentStopIndex'] as int,
+      currentStopIndex: roam.stops.isEmpty
+          ? 0
+          : (data['currentStopIndex'] as int).clamp(0, roam.stops.length - 1),
       completedStopIds: Set<String>.from(data['completedStopIds'] as List),
       skippedStopIds: Set<String>.from(data['skippedStopIds'] as List),
       simulatedLocation: RoverLatLng(
@@ -395,26 +405,27 @@ class RoamSession {
     );
   }
 
-  static RoamSession demo() {
-    final roam = MockRouteGenerationService.activeSanFranciscoDemo();
-    return RoamSession(
-      roam: roam,
-      status: RoamSessionStatus.notStarted,
-      currentStopIndex: 0,
-      completedStopIds: const {},
-      skippedStopIds: const {},
-      simulatedLocation: roam.stops.first.coordinates,
-      audioStatus: AudioPlaybackStatus.stopped,
-      screenAwake: false,
-      arrivedAtCurrentStop: true,
-      timeRemainingMinutes: roam.totalEstimatedMinutes,
-      progressPercentage: 0,
-      routeProgressPercentage: 0,
-      distanceToNextStopMeters: 0,
-      routeRevision: 1,
-      savedDiscoveryIds: const {},
-    );
-  }
+  static RoamSession empty() => const RoamSession(
+    roam: RoverRoam(
+      title: '',
+      summary: '',
+      walkingMinutes: 0,
+      distanceMiles: 0,
+      startingPoint: '',
+      stops: [],
+      routeGeometry: [],
+      accessibilityNotes: [],
+      warnings: [],
+    ),
+    status: RoamSessionStatus.notStarted,
+    currentStopIndex: 0,
+    completedStopIds: {},
+    skippedStopIds: {},
+    simulatedLocation: RoverLatLng(latitude: 0, longitude: 0),
+    audioStatus: AudioPlaybackStatus.stopped,
+    screenAwake: false,
+    arrivedAtCurrentStop: false,
+  );
 
   static double _distanceBetween(RoverLatLng a, RoverLatLng b) {
     final latMiles = (a.latitude - b.latitude).abs() * 69;

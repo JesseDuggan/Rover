@@ -50,7 +50,7 @@ class ActiveRoamController extends ChangeNotifier {
   final Set<String> _insideGeofenceStopIds = <String>{};
   String? _lastAdaptationInterest;
 
-  RoamSession get session => _session ?? RoamSession.demo();
+  RoamSession get session => _session ?? RoamSession.empty();
   bool get isLoaded => _isLoaded;
   bool get isBusy => _isBusy;
   bool get isTrackingLocation => _locationSubscription != null;
@@ -516,22 +516,27 @@ class ActiveRoamController extends ChangeNotifier {
 
   Future<void> load() async {
     _session = await _repository.load();
+    // Older saves contain only session metadata, not the route itself.
+    final walkId = _session?.apiWalkSessionId;
+    if (_session != null && _session!.roam.stops.isEmpty && walkId != null) {
+      try {
+        _session = _sessionFromWalk(await _walkRepository.getWalk(walkId));
+        await _repository.save(_session!);
+      } catch (_) {
+        _session = _session!.copyWith(
+          status: RoamSessionStatus.notStarted,
+          screenAwake: false,
+          errorMessage:
+              'Your saved walk could not be loaded. Try again when connected.',
+        );
+      }
+    }
     _isLoaded = true;
     notifyListeners();
     if (session.apiWalkSessionId != null &&
         session.status == RoamSessionStatus.active) {
       await startLocationTracking();
     }
-  }
-
-  Future<void> startDemo() async {
-    await _save(
-      RoamSession.demo().copyWith(
-        status: RoamSessionStatus.active,
-        screenAwake: true,
-      ),
-    );
-    await _screenAwakeController.enable();
   }
 
   Future<void> pause() async {
@@ -547,6 +552,9 @@ class ActiveRoamController extends ChangeNotifier {
   }
 
   Future<void> resume() async {
+    if (session.roam.stops.isEmpty) {
+      return;
+    }
     await _save(
       session.copyWith(status: RoamSessionStatus.active, screenAwake: true),
     );
@@ -619,34 +627,6 @@ class ActiveRoamController extends ChangeNotifier {
     if (isLast) {
       await _screenAwakeController.disable();
       await stopLocationTracking();
-    }
-  }
-
-  Future<void> advanceDemoStep() async {
-    final target = session.arrivedAtCurrentStop
-        ? session.nextStop
-        : session.currentStop;
-    if (target == null) {
-      await completeCurrentStop();
-      return;
-    }
-    await _save(
-      session.copyWith(
-        simulatedLocation: target.coordinates,
-        arrivedAtCurrentStop: true,
-      ),
-    );
-  }
-
-  Future<void> runAutoDemo() async {
-    if (session.status == RoamSessionStatus.notStarted ||
-        session.status == RoamSessionStatus.ended) {
-      await startDemo();
-    }
-
-    while (session.status != RoamSessionStatus.completed) {
-      await advanceDemoStep();
-      await completeCurrentStop();
     }
   }
 
@@ -937,8 +917,7 @@ class ActiveRoamController extends ChangeNotifier {
       return const _GeofenceEntryScan(summary: 'Geofence: no stops on walk');
     }
 
-    final threshold =
-        closest.arrivalRadiusMeters + math.min(accuracy ?? 0, 10);
+    final threshold = closest.arrivalRadiusMeters + math.min(accuracy ?? 0, 10);
     final wasInside = previouslyInside.contains(closest.id);
     final completed = baseSession.completedStopIds.contains(closest.id);
     final state = closestDistance <= threshold

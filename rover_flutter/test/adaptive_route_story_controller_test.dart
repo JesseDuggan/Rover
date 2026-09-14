@@ -1,3 +1,5 @@
+import 'support/route_fixtures.dart';
+
 import 'dart:io';
 
 import 'package:flutter/services.dart';
@@ -18,6 +20,51 @@ void main() {
         const MethodChannel('ai.myrover.rover/voice'),
         (_) async => null,
       );
+  test('polls unchanged sessions and exposes terminal errors, then stops on disposal', () async {
+    final directory = await Directory.systemTemp.createTemp('story-poll-test');
+    final repository = _StoryRepository()..statusOverride = 'Generating';
+    final cache = AdaptiveRouteStoryDeviceCache(
+      file: File('${directory.path}/cache.json'),
+    );
+    final controller = AdaptiveRouteStoryController(
+      repository: repository,
+      deviceCache: cache,
+    );
+    final voice = _PlaybackVoice();
+    final session = demoSession().copyWith(
+      apiWalkSessionId: 'walk-test',
+      status: RoamSessionStatus.notStarted,
+    );
+    var foreground = false;
+    var disposed = false;
+    try {
+      await controller.syncWithSession(session, voice);
+      expect(controller.readinessLabel, 'generating');
+      repository.statusOverride = 'Failed';
+      controller.startPolling(
+        session: () => session,
+        voiceController: voice,
+        isForeground: () => foreground,
+      );
+      await Future<void>.delayed(const Duration(milliseconds: 5200));
+      expect(repository.statusChecks, 1);
+      foreground = true;
+      await Future<void>.delayed(const Duration(milliseconds: 5200));
+      expect(repository.statusChecks, 2);
+      expect(controller.readinessLabel, 'failed');
+      expect(controller.errorMessage, 'Generation timed out.');
+      expect(controller.researchStatus, 'Generation timed out.');
+      controller.dispose();
+      disposed = true;
+      await Future<void>.delayed(const Duration(milliseconds: 5200));
+      expect(repository.statusChecks, 2);
+    } finally {
+      if (!disposed) controller.dispose();
+      voice.dispose();
+      cache.dispose();
+      await directory.delete(recursive: true);
+    }
+  });
   test('completed audio cannot replay when server status is stale', () async {
     final directory = await Directory.systemTemp.createTemp(
       'story-repeat-test',
@@ -48,7 +95,7 @@ void main() {
     );
     final voice = _PlaybackVoice();
     try {
-      final session = RoamSession.demo().copyWith(
+      final session = demoSession().copyWith(
         apiWalkSessionId: 'walk-test',
         status: RoamSessionStatus.active,
         distanceToNextStopMeters: 500,
@@ -85,7 +132,7 @@ void main() {
       );
       final voice = RoverVoiceController(walkRepository: _WalkRepository());
       try {
-        final safe = RoamSession.demo().copyWith(
+        final safe = demoSession().copyWith(
           apiWalkSessionId: 'walk-test',
           status: RoamSessionStatus.active,
           distanceToNextStopMeters: 500,
@@ -147,12 +194,26 @@ class _WalkRepository implements WalkRepository {
 }
 
 class _StoryRepository implements AdaptiveRouteStoryRepository {
+  String? statusOverride;
+  int statusChecks = 0;
   AdaptiveRouteStorySelection? selection;
   int selections = 0;
   NextRouteStoryRequest? lastRequest;
   @override
   Future<AdaptiveRouteStoryPackState> getRouteStoryPackStatus(String id) async {
+    statusChecks++;
     final now = DateTime.now().toUtc();
+    if (statusOverride != null) {
+      return AdaptiveRouteStoryPackState(
+        walkSessionId: id,
+        routeRevision: 1,
+        status: statusOverride!,
+        updatedUtc: now,
+        heardStoryIds: const [],
+        savedStoryIds: const [],
+        error: statusOverride == 'Failed' ? 'Generation timed out.' : null,
+      );
+    }
     return AdaptiveRouteStoryPackState(
       walkSessionId: id,
       routeRevision: 1,

@@ -112,12 +112,21 @@ class _RoverMapViewState extends State<RoverMapView> {
 
   @override
   Widget build(BuildContext context) {
+    if (widget.mapProvider.mockMode ||
+        (widget.currentLocation == null &&
+            widget.routeGeometry.isEmpty &&
+            widget.orderedStops.isEmpty)) {
+      return SizedBox(
+        height: widget.height,
+        child: const Center(child: Text('Map unavailable')),
+      );
+    }
     final center = _toLatLng(
       widget.currentLocation ??
           (widget.routeGeometry.isNotEmpty
               ? widget.routeGeometry.first
               : null) ??
-          const RoverLatLng(latitude: 40.75362, longitude: -73.98323),
+          widget.orderedStops.first.stop.coordinates,
     );
     final stopPoints = widget.orderedStops
         .map((orderedStop) => _toLatLng(orderedStop.stop.coordinates))
@@ -159,7 +168,6 @@ class _RoverMapViewState extends State<RoverMapView> {
           child: Stack(
             fit: StackFit.expand,
             children: [
-              if (widget.mapProvider.mockMode) const _MockMapBackdrop(),
               if (widget.mapProvider.mode == RoverMapMode.google)
                 GoogleRoverMap(
                   currentLocation: widget.currentLocation,
@@ -1172,72 +1180,5 @@ class _MapPin extends StatelessWidget {
         ),
       ),
     );
-  }
-}
-
-class _MockMapBackdrop extends StatelessWidget {
-  const _MockMapBackdrop();
-
-  @override
-  Widget build(BuildContext context) {
-    final scheme = Theme.of(context).colorScheme;
-    return DecoratedBox(
-      decoration: BoxDecoration(
-        color: scheme.surfaceContainerHighest,
-        border: Border.all(color: scheme.outlineVariant),
-      ),
-      child: CustomPaint(
-        painter: _MockMapPainter(
-          lineColor: scheme.outlineVariant,
-          parkColor: scheme.tertiaryContainer.withValues(alpha: 0.55),
-          waterColor: scheme.primaryContainer.withValues(alpha: 0.45),
-        ),
-        child: const SizedBox.expand(),
-      ),
-    );
-  }
-}
-
-class _MockMapPainter extends CustomPainter {
-  const _MockMapPainter({
-    required this.lineColor,
-    required this.parkColor,
-    required this.waterColor,
-  });
-
-  final Color lineColor;
-  final Color parkColor;
-  final Color waterColor;
-
-  @override
-  void paint(Canvas canvas, Size size) {
-    final linePaint = Paint()
-      ..color = lineColor
-      ..strokeWidth = 2;
-    for (var x = 0.0; x < size.width; x += 44) {
-      canvas.drawLine(Offset(x, 0), Offset(x + 90, size.height), linePaint);
-    }
-    for (var y = 22.0; y < size.height; y += 52) {
-      canvas.drawLine(Offset(0, y), Offset(size.width, y + 18), linePaint);
-    }
-
-    canvas.drawOval(
-      Rect.fromLTWH(size.width * 0.58, size.height * 0.1, 130, 78),
-      Paint()..color = parkColor,
-    );
-    canvas.drawRRect(
-      RRect.fromRectAndRadius(
-        Rect.fromLTWH(-20, size.height * 0.68, size.width * 0.6, 64),
-        const Radius.circular(28),
-      ),
-      Paint()..color = waterColor,
-    );
-  }
-
-  @override
-  bool shouldRepaint(covariant _MockMapPainter oldDelegate) {
-    return oldDelegate.lineColor != lineColor ||
-        oldDelegate.parkColor != parkColor ||
-        oldDelegate.waterColor != waterColor;
   }
 }

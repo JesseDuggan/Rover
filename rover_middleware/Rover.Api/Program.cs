@@ -658,9 +658,11 @@ beta.MapGet("/mapbox-smoke-test", async (
         discoveryError = RedactionService.Redact(exception.Message);
     }
 
-    var routeStops = discoveredStops.Count >= 2
-        ? discoveredStops.Take(3).ToArray()
-        : MockWalkPlanner.CreateLocalWaypointStops(origin).Take(3).ToArray();
+    if (discoveredStops.Count < 2)
+    {
+        return Results.UnprocessableEntity(new { error = discoveryError ?? "Fewer than two real places were found. No synthetic smoke-test route was created." });
+    }
+    var routeStops = discoveredStops.Take(3).ToArray();
 
     try
     {

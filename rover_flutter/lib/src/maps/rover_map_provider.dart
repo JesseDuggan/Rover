@@ -11,7 +11,7 @@ class RoverMapProvider {
       'ROVER_MAP_PROVIDER',
       defaultValue: 'google',
     ),
-    this.routingProvider = 'Mock',
+    this.routingProvider = 'Unknown',
   });
 
   final GoogleMapsConfig google;

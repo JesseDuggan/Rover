@@ -1,3 +1,5 @@
+import 'support/route_fixtures.dart';
+
 import 'package:flutter_test/flutter_test.dart';
 import 'package:rover/src/active_roam/active_roam_controller.dart';
 import 'package:rover/src/active_roam/active_roam_repository.dart';
@@ -9,12 +11,12 @@ void main() {
   test('start pause resume and end update status and screen awake', () async {
     final awake = MemoryScreenAwakeController();
     final controller = ActiveRoamController(
-      repository: MemoryActiveRoamRepository(),
+      repository: MemoryActiveRoamRepository(demoSession()),
       screenAwakeController: awake,
     );
     await controller.load();
 
-    await controller.startDemo();
+    await controller.resume();
     expect(controller.session.status, RoamSessionStatus.active);
     expect(controller.session.screenAwake, isTrue);
     expect(awake.enabled, isTrue);
@@ -36,11 +38,11 @@ void main() {
     'arrival detection changes when simulated location reaches stop',
     () async {
       final controller = ActiveRoamController(
-        repository: MemoryActiveRoamRepository(),
+        repository: MemoryActiveRoamRepository(demoSession()),
         screenAwakeController: MemoryScreenAwakeController(),
       );
       await controller.load();
-      await controller.startDemo();
+      await controller.resume();
       await controller.completeCurrentStop();
 
       await controller.updateLocation(
@@ -57,11 +59,11 @@ void main() {
 
   test('complete and skip advance progress until completed', () async {
     final controller = ActiveRoamController(
-      repository: MemoryActiveRoamRepository(),
+      repository: MemoryActiveRoamRepository(demoSession()),
       screenAwakeController: MemoryScreenAwakeController(),
     );
     await controller.load();
-    await controller.startDemo();
+    await controller.resume();
 
     await controller.completeCurrentStop();
     expect(controller.session.currentStop.name, 'Lotta\'s Fountain');
@@ -80,13 +82,13 @@ void main() {
   });
 
   test('progress survives controller reload', () async {
-    final repository = MemoryActiveRoamRepository();
+    final repository = MemoryActiveRoamRepository(demoSession());
     final first = ActiveRoamController(
       repository: repository,
       screenAwakeController: MemoryScreenAwakeController(),
     );
     await first.load();
-    await first.startDemo();
+    await first.resume();
     await first.completeCurrentStop();
 
     final second = ActiveRoamController(
@@ -102,13 +104,13 @@ void main() {
   test(
     'arrival narration completion survives persistence and reload',
     () async {
-      final repository = MemoryActiveRoamRepository();
+      final repository = MemoryActiveRoamRepository(demoSession());
       final first = ActiveRoamController(
         repository: repository,
         screenAwakeController: MemoryScreenAwakeController(),
       );
       await first.load();
-      await first.startDemo();
+      await first.resume();
       await first.markArrivalNarrated('sf-demo-union-square');
 
       final second = ActiveRoamController(
@@ -127,7 +129,7 @@ void main() {
   );
 
   test('demo route remains correctly ordered through Coit Tower', () {
-    final session = RoamSession.demo();
+    final session = demoSession();
 
     expect(session.orderedStops.map((orderedStop) => orderedStop.sequence), [
       1,
@@ -142,12 +144,15 @@ void main() {
 
   test('auto demo completes the San Francisco ROAM', () async {
     final controller = ActiveRoamController(
-      repository: MemoryActiveRoamRepository(),
+      repository: MemoryActiveRoamRepository(demoSession()),
       screenAwakeController: MemoryScreenAwakeController(),
     );
     await controller.load();
 
-    await controller.runAutoDemo();
+    await controller.resume();
+    while (controller.session.status != RoamSessionStatus.completed) {
+      await controller.completeCurrentStop();
+    }
 
     expect(controller.session.status, RoamSessionStatus.completed);
     expect(controller.session.progress, 1);

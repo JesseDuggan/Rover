@@ -601,7 +601,7 @@ class HomeScreen extends StatelessWidget {
         ),
         const SizedBox(height: 8),
         Text(
-          'Tell Riley the shape of your day and ROVER will mock up a starter adventure.',
+          'Tell Riley what you have in mind for your walk.',
           style: Theme.of(context).textTheme.bodyLarge
               ?.copyWith(color: Theme.of(context).colorScheme.onSurfaceVariant),
         ),
@@ -648,13 +648,13 @@ class HomeScreen extends StatelessWidget {
         ),
         FeatureCard(
           title: 'Route preview',
-          subtitle: 'Review a sample route before starting.',
+          subtitle: 'Review your walk request.',
           icon: Icons.map_outlined,
           onTap: () => context.go('/home/route-preview'),
         ),
         FeatureCard(
           title: 'Active ROAM',
-          subtitle: 'Resume today\'s placeholder adventure.',
+          subtitle: 'Resume your walk.',
           icon: Icons.near_me_outlined,
           onTap: () => context.go('/home/active-roam'),
         ),
@@ -670,25 +670,13 @@ class ExploreScreen extends StatelessWidget {
   Widget build(BuildContext context) {
     return DestinationScaffold(
       title: 'Explore',
-      subtitle: 'Browse sample ideas for future ROVER adventures.',
+      subtitle: 'Explore nearby places.',
       children: [
         FeatureCard(
           title: 'Camera Explorer',
           subtitle: 'Raise your phone and let Rover describe nearby places.',
           icon: Icons.photo_camera_outlined,
           onTap: () => context.push('/camera-explorer'),
-        ),
-        const PlaceholderPanel(
-          icon: Icons.coffee_outlined,
-          label: 'Cozy cafe crawl',
-        ),
-        const PlaceholderPanel(
-          icon: Icons.palette_outlined,
-          label: 'Tiny gallery loop',
-        ),
-        const PlaceholderPanel(
-          icon: Icons.park_outlined,
-          label: 'Fresh-air reset',
         ),
       ],
     );
@@ -943,7 +931,7 @@ class _AdventureRequestScreenState extends State<AdventureRequestScreen> {
                 contentPadding: EdgeInsets.zero,
                 title: const Text('Surprise me'),
                 subtitle: const Text(
-                  'Let Riley fill in the gaps with playful mock suggestions.',
+                  'Let Riley help with your walk preferences.',
                 ),
                 value: _surpriseMe,
                 onChanged: (value) => setState(() => _surpriseMe = value),
@@ -1168,156 +1156,73 @@ class RoutePreviewScreen extends StatefulWidget {
 }
 
 class _RoutePreviewScreenState extends State<RoutePreviewScreen> {
-  final _routeService = const MockRouteGenerationService();
-  RoverRoam? _roam;
-  AdventureRequest? _request;
   bool _isSubmitting = false;
   String? _errorMessage;
 
   @override
-  void didChangeDependencies() {
-    super.didChangeDependencies();
-    final request = AdventureRequestScope.of(context).request;
-    if (request != _request) {
-      _request = request;
-      _roam = request == null ? null : _routeService.generate(request);
-    }
-  }
-
-  @override
   Widget build(BuildContext context) {
-    final request = _request;
-    if (request == null) {
-      return DetailScaffold(
-        title: 'Route preview',
-        subtitle: 'Riley needs an adventure request before making suggestions.',
-        actions: [
-          FilledButton(
-            onPressed: () => context.go('/home/adventure-request'),
-            child: const Text('Create request'),
-          ),
-        ],
-        child: const PlaceholderPanel(
-          icon: Icons.edit_location_alt_outlined,
-          label: 'No adventure request yet',
-        ),
-      );
-    }
-
-    final roam = _roam ?? _routeService.generate(request);
-    final location = LocationScope.of(context).location;
-    final activeController = ActiveRoamScope.of(context);
-    final overBudget = !roam.fitsBudget(request.availableMinutes);
-
+    final request = AdventureRequestScope.of(context).request;
+    final controller = ActiveRoamScope.of(context);
     return DetailScaffold(
       title: 'Route preview',
-      subtitle: roam.summary,
+      subtitle: request == null
+          ? 'No adventure request yet.'
+          : 'Your walk request',
       actions: [
         OutlinedButton(
-          onPressed: () => context.go('/home/adventure-request'),
-          child: const Text('Edit request'),
-        ),
-        OutlinedButton(onPressed: _refresh, child: const Text('Refresh')),
-        OutlinedButton(onPressed: _regenerate, child: const Text('Regenerate')),
-        FilledButton(
           onPressed: _isSubmitting
               ? null
-              : () => _createMiddlewareWalk(activeController, request),
-          child: Text(_isSubmitting ? 'Creating walk...' : 'Create My Walk'),
+              : () => context.go('/home/adventure-request'),
+          child: Text(request == null ? 'Create request' : 'Edit request'),
         ),
+        if (request != null)
+          FilledButton(
+            onPressed: _isSubmitting
+                ? null
+                : () => _createMiddlewareWalk(controller, request),
+            child: Text(_isSubmitting ? 'Finding places...' : 'Create My Walk'),
+          ),
       ],
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          if (_errorMessage != null) ...[
+          if (_isSubmitting) const LinearProgressIndicator(),
+          if (request != null) ...[
+            _PreferenceRow(
+              label: 'Available time',
+              value: '${request.availableMinutes} minutes',
+            ),
+            _PreferenceRow(
+              label: 'Interests',
+              value: request.interests.join(', '),
+            ),
+            _PreferenceRow(label: 'Pace', value: request.pace),
+          ],
+          const SizedBox(height: 16),
+          if (_errorMessage != null && request != null)
             _ErrorPanel(
               message: _errorMessage!,
-              onRetry: () => _createMiddlewareWalk(activeController, request),
+              onRetry: _isSubmitting
+                  ? () {}
+                  : () => _createMiddlewareWalk(controller, request),
+            )
+          else if (!_isSubmitting)
+            const PlaceholderPanel(
+              icon: Icons.route_outlined,
+              label: 'No route created yet',
             ),
-            const SizedBox(height: 12),
-          ],
-          if (_isSubmitting) ...[
-            const LinearProgressIndicator(),
-            const SizedBox(height: 12),
-          ],
-          _RoamSummaryCard(
-            roam: roam,
-            availableMinutes: request.availableMinutes,
-          ),
-          if (overBudget) ...[
-            const SizedBox(height: 12),
-            Text(
-              'This route is over your time budget. Remove or replace a stop to bring it back in range.',
-              style: TextStyle(color: Theme.of(context).colorScheme.error),
-            ),
-          ],
-          const SizedBox(height: 16),
-          RoverMapView(
-            currentLocation: location,
-            orderedStops: roam.orderedStops,
-            routeGeometry: roam.routeGeometry,
-            height: 340,
-          ),
-          const SizedBox(height: 16),
-          Text('Itinerary', style: Theme.of(context).textTheme.titleLarge),
-          const SizedBox(height: 8),
-          ReorderableListView.builder(
-            shrinkWrap: true,
-            physics: const NeverScrollableScrollPhysics(),
-            itemCount: roam.orderedStops.length,
-            onReorderItem: _reorder,
-            itemBuilder: (context, index) {
-              final orderedStop = roam.orderedStops[index];
-              return _ItineraryStopCard(
-                key: ValueKey(orderedStop.stop.id),
-                orderedStop: orderedStop,
-                onRemove: () => _remove(orderedStop.stop),
-                onReplace: () => _replace(orderedStop.stop),
-              );
-            },
-          ),
         ],
       ),
     );
-  }
-
-  void _refresh() {
-    setState(() {
-      _roam = _roam?.copyWith();
-    });
-  }
-
-  void _regenerate() {
-    setState(() {
-      final roam = _roam;
-      if (roam != null) {
-        _roam = _routeService.regenerate(roam);
-      }
-    });
-  }
-
-  void _remove(RoverStop stop) {
-    setState(() {
-      _roam = _roam?.removeStop(stop.id);
-    });
-  }
-
-  void _replace(RoverStop stop) {
-    setState(() {
-      _roam = _roam?.replaceStop(stop.id, _routeService.replacementFor(stop));
-    });
-  }
-
-  void _reorder(int oldIndex, int newIndex) {
-    setState(() {
-      _roam = _roam?.reorderStop(oldIndex, newIndex);
-    });
   }
 
   Future<void> _createMiddlewareWalk(
     ActiveRoamController controller,
     AdventureRequest request,
   ) async {
+    if (_isSubmitting) {
+      return;
+    }
     setState(() {
       _isSubmitting = true;
       _errorMessage = null;
@@ -1356,198 +1261,6 @@ class _RoutePreviewScreenState extends State<RoutePreviewScreen> {
     if (error == null && controller.session.apiWalkSessionId != null) {
       context.go('/home/active-roam');
     }
-  }
-}
-
-class _RoamSummaryCard extends StatelessWidget {
-  const _RoamSummaryCard({required this.roam, required this.availableMinutes});
-
-  final RoverRoam roam;
-  final int availableMinutes;
-
-  @override
-  Widget build(BuildContext context) {
-    return DecoratedBox(
-      decoration: BoxDecoration(
-        border: Border.all(color: Theme.of(context).colorScheme.outlineVariant),
-        borderRadius: BorderRadius.circular(8),
-      ),
-      child: Padding(
-        padding: const EdgeInsets.all(14),
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            Text(
-              roam.title,
-              style: Theme.of(context).textTheme.titleLarge
-                  ?.copyWith(fontWeight: FontWeight.w800),
-            ),
-            const SizedBox(height: 8),
-            Text(roam.summary),
-            const SizedBox(height: 12),
-            _PreferenceRow(
-              label: 'Total estimated time',
-              value:
-                  '${roam.totalEstimatedMinutes} of $availableMinutes minutes',
-            ),
-            _PreferenceRow(
-              label: 'Walking time',
-              value: '${roam.walkingMinutes} minutes',
-            ),
-            _PreferenceRow(
-              label: 'Content time',
-              value: '${roam.contentMinutes} minutes',
-            ),
-            _PreferenceRow(
-              label: 'Distance',
-              value: '${roam.distanceMiles.toStringAsFixed(1)} miles',
-            ),
-            _PreferenceRow(label: 'Starting point', value: roam.startingPoint),
-            _PreferenceRow(
-              label: 'Accessibility notes',
-              value: roam.accessibilityNotes.join(' '),
-            ),
-            _PreferenceRow(
-              label: 'Warnings',
-              value: roam.warnings.isEmpty
-                  ? 'No weather or closure warnings available.'
-                  : roam.warnings.join(' '),
-            ),
-          ],
-        ),
-      ),
-    );
-  }
-}
-
-class _ItineraryStopCard extends StatelessWidget {
-  const _ItineraryStopCard({
-    required this.orderedStop,
-    required this.onRemove,
-    required this.onReplace,
-    super.key,
-  });
-
-  final OrderedRoverStop orderedStop;
-  final VoidCallback onRemove;
-  final VoidCallback onReplace;
-
-  @override
-  Widget build(BuildContext context) {
-    final stop = orderedStop.stop;
-    final scheme = Theme.of(context).colorScheme;
-    return Card(
-      margin: const EdgeInsets.only(bottom: 12),
-      child: Padding(
-        padding: const EdgeInsets.all(12),
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            Row(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                CircleAvatar(child: Text(orderedStop.sequence.toString())),
-                const SizedBox(width: 12),
-                Expanded(
-                  child: Column(
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    children: [
-                      Text(
-                        stop.name,
-                        style: Theme.of(context).textTheme.titleMedium
-                            ?.copyWith(fontWeight: FontWeight.w800),
-                      ),
-                      Text(
-                        '${stop.category} - ${stop.estimatedVisitMinutes} min',
-                      ),
-                    ],
-                  ),
-                ),
-                const Icon(Icons.drag_handle),
-              ],
-            ),
-            const SizedBox(height: 10),
-            DecoratedBox(
-              decoration: BoxDecoration(
-                color: scheme.secondaryContainer,
-                borderRadius: BorderRadius.circular(8),
-              ),
-              child: SizedBox(
-                height: 88,
-                width: double.infinity,
-                child: Center(
-                  child: Text(
-                    stop.image,
-                    style: TextStyle(color: scheme.onSecondaryContainer),
-                  ),
-                ),
-              ),
-            ),
-            const SizedBox(height: 10),
-            Text(stop.shortDescription),
-            if (stop.attributionLabel case final attribution?) ...[
-              const SizedBox(height: 6),
-              Text(
-                'Source: $attribution',
-                style: Theme.of(context).textTheme.labelMedium,
-              ),
-            ],
-            const SizedBox(height: 6),
-            Text('Coordinates: ${stop.coordinates}'),
-            if (stop.audio != null) Text('Optional audio: ${stop.audio}'),
-            const SizedBox(height: 6),
-            Text('Why Rover selected it: ${stop.whySelected}'),
-            const SizedBox(height: 10),
-            Wrap(
-              spacing: 8,
-              children: [
-                OutlinedButton.icon(
-                  onPressed: onReplace,
-                  icon: const Icon(Icons.swap_horiz),
-                  label: const Text('Replace'),
-                ),
-                OutlinedButton.icon(
-                  onPressed: onRemove,
-                  icon: const Icon(Icons.remove_circle_outline),
-                  label: const Text('Remove'),
-                ),
-              ],
-            ),
-          ],
-        ),
-      ),
-    );
-  }
-}
-
-class AdventureRequestSummary extends StatelessWidget {
-  const AdventureRequestSummary({required this.request, super.key});
-
-  final AdventureRequest request;
-
-  @override
-  Widget build(BuildContext context) {
-    return Column(
-      children: [
-        _PreferenceRow(label: 'Request', value: request.naturalRequest),
-        _PreferenceRow(
-          label: 'Available time',
-          value: '${request.availableMinutes} minutes',
-        ),
-        _PreferenceRow(label: 'Starting point', value: request.startingPoint),
-        _PreferenceRow(label: 'Route mode', value: request.routeMode),
-        _PreferenceRow(label: 'Interests', value: request.interests.join(', ')),
-        _PreferenceRow(label: 'Pace', value: request.pace),
-        _PreferenceRow(label: 'Route shape', value: request.routeShape),
-        _PreferenceRow(label: 'Companions', value: request.companions),
-        _PreferenceRow(label: 'Indoor/outdoor', value: request.environment),
-        _PreferenceRow(label: 'Budget', value: request.budget),
-        _PreferenceRow(
-          label: 'Surprise me',
-          value: request.surpriseMe ? 'Yes' : 'No',
-        ),
-      ],
-    );
   }
 }
 
@@ -1593,6 +1306,15 @@ class _ActiveRoamScreenState extends State<ActiveRoamScreen> {
         repository: walkRepository,
         flags: phase16Flags,
       );
+      _routeStoryController.startPolling(
+        session: () => activeRoamController.session,
+        voiceController: _voiceController,
+        isForeground: () =>
+            mounted &&
+            (WidgetsBinding.instance.lifecycleState == null ||
+                WidgetsBinding.instance.lifecycleState ==
+                    AppLifecycleState.resumed),
+      );
       _voiceControllerInitialized = true;
     }
   }
@@ -1610,6 +1332,22 @@ class _ActiveRoamScreenState extends State<ActiveRoamScreen> {
   Widget build(BuildContext context) {
     final controller = ActiveRoamScope.of(context);
     final session = controller.session;
+    if (session.roam.stops.isEmpty) {
+      return DetailScaffold(
+        title: 'Active ROAM',
+        subtitle: 'No active walk',
+        actions: [
+          FilledButton(
+            onPressed: () => context.go('/home/adventure-request'),
+            child: const Text('Create a walk'),
+          ),
+        ],
+        child: PlaceholderPanel(
+          icon: Icons.route_outlined,
+          label: session.errorMessage ?? 'No route available.',
+        ),
+      );
+    }
     if (!identical(_lastSyncedSession, session)) {
       _lastSyncedSession = session;
       WidgetsBinding.instance.addPostFrameCallback((_) {
@@ -3646,11 +3384,10 @@ class StopDetailsScreen extends StatelessWidget {
   Widget build(BuildContext context) {
     return const DetailScaffold(
       title: 'Stop details',
-      subtitle:
-          'A friendly placeholder for why this stop belongs in the adventure.',
+      subtitle: 'No stop selected.',
       child: PlaceholderPanel(
         icon: Icons.place_outlined,
-        label: 'Pocket park - quiet bench - nearby pastries',
+        label: 'Choose a stop from an active walk.',
       ),
     );
   }
@@ -3663,12 +3400,8 @@ class SavedRoamsScreen extends StatelessWidget {
   Widget build(BuildContext context) {
     return DestinationScaffold(
       title: 'My ROAMs',
-      subtitle: 'Saved placeholder adventures live here.',
+      subtitle: 'Your walks and saved discoveries.',
       children: [
-        const PlaceholderPanel(
-          icon: Icons.bookmark_border_rounded,
-          label: 'Sunday wander - 3 stops',
-        ),
         FeatureCard(
           title: 'Walk history',
           subtitle: 'Completed and intentionally ended walks.',
@@ -3683,7 +3416,7 @@ class SavedRoamsScreen extends StatelessWidget {
         ),
         FeatureCard(
           title: 'Start another',
-          subtitle: 'Create a fresh placeholder adventure.',
+          subtitle: 'Create a new walk.',
           icon: Icons.add_road_rounded,
           onTap: () => context.go('/home/adventure-request'),
         ),

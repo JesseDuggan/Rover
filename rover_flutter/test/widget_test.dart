@@ -1,10 +1,11 @@
+import 'support/location_fixtures.dart';
+
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 
 import 'package:rover/src/active_roam/active_roam_repository.dart';
 import 'package:rover/src/adaptive_stories/route_story_question_dialog.dart';
 import 'package:rover/src/app.dart';
-import 'package:rover/src/location/rover_location.dart';
 import 'package:rover/src/preferences/preferences_repository.dart';
 
 void main() {
@@ -45,13 +46,10 @@ void main() {
     '/onboarding': 'What should Riley call you?',
     '/home': 'What do you want to do?',
     '/home/adventure-request': 'Start casual. Riley will build the walk from your current device location.',
-    '/home/route-preview':
-        'Riley needs an adventure request before making suggestions.',
-    '/home/active-roam':
-        'Create a live walk from your current location to start navigation.',
-    '/home/stop-details':
-        'A friendly placeholder for why this stop belongs in the adventure.',
-    '/roams': 'Saved placeholder adventures live here.',
+    '/home/route-preview': 'No adventure request yet.',
+    '/home/active-roam': 'No active walk',
+    '/home/stop-details': 'No stop selected.',
+    '/roams': 'Your walks and saved discoveries.',
     '/profile': 'Set up Riley so future ROAMs feel more like you.',
     '/profile/settings': 'Riley keeps these on this device for now. No account or backend is connected.',
     '/profile/on-device-ai': 'On-device AI',
@@ -174,17 +172,11 @@ void main() {
 
     await tester.tap(find.text('Explore'));
     await tester.pumpAndSettle();
-    expect(
-      find.text('Browse sample ideas for future ROVER adventures.'),
-      findsOneWidget,
-    );
+    expect(find.text('Explore nearby places.'), findsOneWidget);
 
     await tester.tap(find.text('My ROAMs'));
     await tester.pumpAndSettle();
-    expect(
-      find.text('Saved placeholder adventures live here.'),
-      findsOneWidget,
-    );
+    expect(find.text('Your walks and saved discoveries.'), findsOneWidget);
 
     await tester.tap(find.text('Profile'));
     await tester.pumpAndSettle();
@@ -233,10 +225,7 @@ void main() {
 
     await tester.tap(find.text('Explore'));
     await tester.pumpAndSettle();
-    expect(
-      find.text('Browse sample ideas for future ROVER adventures.'),
-      findsOneWidget,
-    );
+    expect(find.text('Explore nearby places.'), findsOneWidget);
 
     await tester.tap(find.text('Home'));
     await tester.pumpAndSettle();
@@ -265,6 +254,12 @@ void main() {
     await tester.pumpAndSettle();
 
     expect(find.text('Route preview'), findsOneWidget);
+    expect(find.text('No route created yet'), findsOneWidget);
+    expect(find.text('Corner mural'), findsNothing);
+    expect(find.text('Window cafe'), findsNothing);
+    expect(find.text('Pocket park bench'), findsNothing);
+    expect(find.text('Total estimated time'), findsNothing);
+    expect(find.textContaining('mock://'), findsNothing);
 
     await tester.tap(find.widgetWithText(OutlinedButton, 'Edit request'));
     await tester.pumpAndSettle();
@@ -308,43 +303,18 @@ void main() {
     expect(find.textContaining('Device location'), findsWidgets);
   });
 
-  testWidgets('active ROAM exposes accessible critical controls', (
+  testWidgets('empty active ROAM has no demo and offers a new walk', (
     tester,
   ) async {
-    tester.view.physicalSize = const Size(430, 3200);
-    tester.view.devicePixelRatio = 1;
-    addTearDown(tester.view.resetPhysicalSize);
     await tester.pumpWidget(_app(initialLocation: '/home/active-roam'));
     await tester.pumpAndSettle();
-
-    expect(find.textContaining('Stay aware of traffic'), findsOneWidget);
-    expect(
-      find.widgetWithText(FilledButton, 'Create live walk first'),
-      findsOneWidget,
-    );
-    expect(find.textContaining('Current stop: Union Square'), findsOneWidget);
-    expect(find.textContaining('Next Up: Lotta\'s Fountain'), findsOneWidget);
-    expect(find.text('Rover voice'), findsOneWidget);
-  });
-
-  testWidgets('active ROAM explains live walk requirement', (tester) async {
-    tester.view.physicalSize = const Size(430, 3200);
-    tester.view.devicePixelRatio = 1;
-    addTearDown(tester.view.resetPhysicalSize);
-    await tester.pumpWidget(_app(initialLocation: '/home/active-roam'));
+    expect(find.text('No active walk'), findsOneWidget);
+    expect(find.textContaining('Union Square'), findsNothing);
+    expect(find.text('Itinerary'), findsNothing);
+    expect(find.text('Rover voice'), findsNothing);
+    await tester.tap(find.widgetWithText(FilledButton, 'Create a walk'));
     await tester.pumpAndSettle();
-
-    expect(find.text('Itinerary'), findsOneWidget);
-    expect(
-      find.text(
-        'Create a live walk from your current location to start navigation.',
-      ),
-      findsOneWidget,
-    );
-    expect(
-      find.widgetWithText(FilledButton, 'Create live walk first'),
-      findsOneWidget,
-    );
+    expect(find.text('Adventure request'), findsOneWidget);
   });
 
   testWidgets('not-found screen is reachable', (tester) async {

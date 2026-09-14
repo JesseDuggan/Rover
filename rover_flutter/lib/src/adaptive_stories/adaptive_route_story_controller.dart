@@ -41,17 +41,47 @@ class AdaptiveRouteStoryController extends ChangeNotifier {
   final Set<String> _completedStoryIds = {};
   final Set<String> _completedPlaces = {};
   double? _lastSelectionProgressMeters;
+  Timer? _pollTimer;
+  bool _disposed = false;
+
+  void startPolling({
+    required RoamSession Function() session,
+    required RoverVoiceController voiceController,
+    required bool Function() isForeground,
+  }) {
+    _pollTimer?.cancel();
+    if (!enabled || _disposed) return;
+    _pollTimer = Timer.periodic(const Duration(seconds: 5), (_) {
+      if (!isForeground()) return;
+      final current = session();
+      if (current.status == RoamSessionStatus.completed ||
+          current.status == RoamSessionStatus.ended) {
+        return;
+      }
+      unawaited(syncWithSession(current, voiceController));
+    });
+  }
+
+  @override
+  void dispose() {
+    _disposed = true;
+    _pollTimer?.cancel();
+    super.dispose();
+  }
 
   bool get enabled => _flags.enabled;
   bool get isBusy => _syncInFlight || _playbackInFlight;
   AdaptiveRouteStoryPackState? get packState => _packState;
   AdaptiveRouteStoryPack? get pack => _packState?.pack;
   AdaptiveRouteStorySelection? get currentSelection => _currentSelection;
-  String? get errorMessage => _errorMessage;
+  String? get errorMessage => _errorMessage ?? _packState?.error;
   bool get usingOfflinePack => _usingOfflinePack;
   int get queuedEventCount => _deviceCache.queuedEventCount;
   String get researchStatus {
     final currentPack = pack;
+    if (currentPack == null && readinessLabel == 'failed') {
+      return errorMessage ?? 'Route story generation failed.';
+    }
     if (currentPack == null) return 'Local research: waiting for story pack.';
     final count = currentPack.stories
         .where(
@@ -93,8 +123,10 @@ class AdaptiveRouteStoryController extends ChangeNotifier {
     RoamSession session,
     RoverVoiceController voiceController,
   ) async {
-    if (!enabled ||
+    if (_disposed ||
+        !enabled ||
         session.apiWalkSessionId == null ||
+        session.roam.stops.isEmpty ||
         _syncInFlight ||
         _playbackInFlight) {
       return;
@@ -612,13 +644,14 @@ class AdaptiveRouteStoryController extends ChangeNotifier {
       error is RoverApiConnectionException || error is RoverApiTimeoutException;
 
   void _notify() {
+    if (_disposed) return;
     AdaptiveRouteStoryDiagnostics.instance.update(
       _packState,
       isOfflineEligible: offlineEligible,
       isDeviceCached: _deviceCache.packCount > 0,
       usingOfflinePack: _usingOfflinePack,
       queuedEventCount: _deviceCache.queuedEventCount,
-      errorMessage: _errorMessage,
+      errorMessage: errorMessage,
     );
     if (!hasListeners) return;
     notifyListeners();

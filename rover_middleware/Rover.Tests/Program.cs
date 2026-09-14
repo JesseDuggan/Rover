@@ -37,6 +37,7 @@ using Rover.Infrastructure.Walks;
 
 var tests = new List<(string Name, Func<Task> Run)>
 {
+    ("Runtime providers never silently select test fixtures", MockDataIsolationTests.ProductionNeverEnablesFixtures),
     ("Story-led planning validates sourced IDs and structured responses", StoryLedPlanningTests.SelectionValidation),
     ("Story-led planning fails gracefully and preserves cancellation", StoryLedPlanningTests.FailureAndCancellation),
     ("Story-led planning matches only fresh same-place Wikipedia evidence", StoryLedPlanningTests.EvidenceMatching),
@@ -4868,6 +4869,7 @@ internal sealed class RoverApiProcess : IDisposable
         };
 
         startInfo.Environment["ASPNETCORE_ENVIRONMENT"] = "Development";
+        startInfo.Environment["Rover__Testing__AllowMockData"] = "true";
         startInfo.Environment["ASPNETCORE_URLS"] = baseAddress.ToString();
         startInfo.Environment["ROVER_SKIP_ENV_LOCAL"] = "true";
         startInfo.Environment["ROVER_ROUTING_MODE"] = "Mock";

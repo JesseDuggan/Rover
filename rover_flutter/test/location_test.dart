@@ -1,3 +1,5 @@
+import 'support/location_fixtures.dart';
+
 import 'package:flutter_test/flutter_test.dart';
 import 'package:rover/src/location/location_controller.dart';
 import 'package:rover/src/location/rover_location.dart';
@@ -21,27 +23,6 @@ void main() {
     expect(second.location.toString(), isNot(first.location.toString()));
   });
 
-  test(
-    'location controller can switch between fake real and simulator',
-    () async {
-      final realLocation = const RoverLatLng(latitude: 1, longitude: 2);
-      final controller = LocationController(
-        realProvider: _FakeLocationProvider(realLocation),
-        simulatedProvider: SimulatedLocationProvider(
-          route: const [RoverLatLng(latitude: 3, longitude: 4)],
-        ),
-      );
-
-      final simulated = await controller.useSimulatedLocation();
-      expect(simulated.location.toString(), '3.00000, 4.00000');
-      expect(controller.useSimulator, isTrue);
-
-      final real = await controller.useRealDeviceLocation();
-      expect(real.location, realLocation);
-      expect(controller.useSimulator, isFalse);
-    },
-  );
-
   test('location controller defaults to device location', () async {
     final realLocation = const RoverLatLng(
       latitude: 44.678,
@@ -51,13 +32,10 @@ void main() {
       realProvider: _FakeLocationProvider(realLocation),
     );
 
-    expect(controller.useSimulator, isFalse);
-
     final result = await controller.ensureDeviceLocation();
 
     expect(result.location, realLocation);
     expect(controller.location, realLocation);
-    expect(controller.useSimulator, isFalse);
   });
 
   test('permission failures include recovery instructions', () async {

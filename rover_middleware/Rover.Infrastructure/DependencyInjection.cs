@@ -1,5 +1,6 @@
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
+using Microsoft.Extensions.Hosting;
 using Microsoft.Extensions.DependencyInjection.Extensions;
 using Rover.Application.Accounts;
 using Rover.Application.Adaptations;
@@ -366,7 +367,7 @@ public static class DependencyInjection
 
             return mode is NearbyDiscoveryMode.Mapbox or NearbyDiscoveryMode.GooglePlaces
                 ? provider.GetRequiredService<LocalNearbyDiscoveryProvider>()
-                : provider.GetRequiredService<MockNearbyDiscoveryProvider>();
+                : TestFixturesEnabled(provider, configuration) ? provider.GetRequiredService<MockNearbyDiscoveryProvider>() : throw new InvalidOperationException("Live nearby discovery is not configured. Select GooglePlaces or Mapbox; mock discoveries are disabled.");
         });
         services.AddSingleton<IConversationMemory, InMemoryConversationMemory>();
         services.AddSingleton<IAccountRepository, InMemoryAccountRepository>();
@@ -385,12 +386,15 @@ public static class DependencyInjection
         services.AddSingleton<IGeneratedAudioCache>(provider => provider.GetRequiredService<FileGeneratedAudioCache>());
         services.AddSingleton<ISpeechUsageService, InMemorySpeechUsageService>();
         services.AddScoped<ElevenLabsTextToSpeechProvider>();
+        services.AddScoped<UnavailableSpeechProvider>();
         services.AddScoped<ITextToSpeechProvider>(provider =>
         {
             var options = provider.GetRequiredService<ElevenLabsSpeechOptions>();
             return options.Enabled
                 ? provider.GetRequiredService<ElevenLabsTextToSpeechProvider>()
-                : provider.GetRequiredService<DevelopmentFakeSpeechProvider>();
+                : TestFixturesEnabled(provider, configuration)
+                    ? provider.GetRequiredService<DevelopmentFakeSpeechProvider>()
+                    : provider.GetRequiredService<UnavailableSpeechProvider>();
         });
         services.AddScoped<IWalkRouteProvider>(provider =>
         {
@@ -403,7 +407,7 @@ public static class DependencyInjection
             return mode switch
             {
                 RoutingMode.Google => provider.GetRequiredService<GoogleRoutesWalkRouteProvider>(),
-                _ => provider.GetRequiredService<MockWalkRouteProvider>()
+                _ => TestFixturesEnabled(provider, configuration) ? provider.GetRequiredService<MockWalkRouteProvider>() : throw new InvalidOperationException("Live walking routes are not configured. Select Google routing; mock routes are disabled.")
             };
         });
         services.AddScoped<MockWalkRouteProvider>();
@@ -424,7 +428,7 @@ public static class DependencyInjection
                 return provider.GetRequiredService<GooglePlacesLocalDiscoveryProvider>();
             }
 
-            return provider.GetRequiredService<NoOpLocalDiscoveryProvider>();
+            return TestFixturesEnabled(provider, configuration) ? provider.GetRequiredService<NoOpLocalDiscoveryProvider>() : throw new InvalidOperationException("Live place discovery is not configured. Select GooglePlaces or Mapbox; synthetic stops are disabled.");
         });
         services.AddSingleton(new StoryLedPlanningOptions
         {
@@ -449,11 +453,15 @@ public static class DependencyInjection
 
             return mode == ConversationProviderMode.OpenAI
                 ? provider.GetRequiredService<OpenAIRoverConversationProvider>()
-                : provider.GetRequiredService<MockRoverConversationProvider>();
+                : TestFixturesEnabled(provider, configuration) ? provider.GetRequiredService<MockRoverConversationProvider>() : throw new InvalidOperationException("Live conversation is not configured. Select OpenAI; mock answers are disabled.");
         });
 
         return services;
     }
+
+    private static bool TestFixturesEnabled(IServiceProvider provider, IConfiguration configuration) =>
+        provider.GetService<IHostEnvironment>()?.IsDevelopment() == true
+        && configuration.GetValue<bool>("Rover:Testing:AllowMockData");
 
     private static LocationProviderOptions ProviderOptions(
         IConfiguration configuration,

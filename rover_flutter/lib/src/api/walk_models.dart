@@ -190,7 +190,7 @@ class WalkSession {
       warnings: const [
         'Stay aware of traffic, crossings, surfaces, and people around you.',
       ],
-      routeProvider: route?.provider ?? 'Mock',
+      routeProvider: route?.provider ?? 'Unknown',
       routeManeuvers:
           route?.maneuvers
               .map(

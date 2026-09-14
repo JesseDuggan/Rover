@@ -19,7 +19,7 @@ class GoogleRoverMap extends StatefulWidget {
     required this.completedStopIds,
     required this.onStopTap,
     this.currentHeadingDegrees,
-    this.routingProvider = 'Mock',
+    this.routingProvider = 'Unknown',
     this.showDebugOverlay = false,
     this.hasExpandButton = true,
     super.key,
@@ -78,12 +78,17 @@ class _GoogleRoverMapState extends State<GoogleRoverMap> {
 
   @override
   Widget build(BuildContext context) {
+    if (widget.currentLocation == null &&
+        widget.routeGeometry.isEmpty &&
+        widget.orderedStops.isEmpty) {
+      return const Center(child: Text('Map unavailable'));
+    }
     final center = _googleLatLng(
       widget.currentLocation ??
           (widget.routeGeometry.isNotEmpty
               ? widget.routeGeometry.first
               : null) ??
-          const RoverLatLng(latitude: 40.75362, longitude: -73.98323),
+          widget.orderedStops.first.stop.coordinates,
     );
 
     return Stack(
