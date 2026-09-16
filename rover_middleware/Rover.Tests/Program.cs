@@ -1084,6 +1084,32 @@ static async Task Phase16RoutePacksSelectCompleteAndSaveStories()
     await packs.StoreAsync(state, CancellationToken.None);
     AssertEqual(2, story.Claims.Count);
     AssertEqual(fact.FactText, story.Variants.First().Narration);
+    var approachingStory = story with { Intent = RouteStoryIntent.HiddenHistory, OpensAtRouteMeters = 600, ClosesAtRouteMeters = 800 };
+    await packs.StoreAsync(state with { Pack = state.Pack with { Stories = new[] { approachingStory } } }, CancellationToken.None);
+    AssertNotNull(await service.GetNextAsync(session.WalkSessionId,
+        new NextAdaptiveRouteStoryQuery(300, null, null, Array.Empty<string>()), CancellationToken.None),
+        "History can play while walking toward its segment.");
+    foreach (var query in new[] {
+        new NextAdaptiveRouteStoryQuery(299, null, null, Array.Empty<string>()),
+        new NextAdaptiveRouteStoryQuery(300, 10, null, Array.Empty<string>()),
+        new NextAdaptiveRouteStoryQuery(300, null, null, new[] { story.StoryId }) })
+    {
+        AssertNull(await service.GetNextAsync(session.WalkSessionId, query, CancellationToken.None),
+            "Approach playback must respect distance, navigation, and exclusions.");
+    }
+    await packs.StoreAsync(state with { HeardStoryIds = new HashSet<string> { story.StoryId }, Pack = state.Pack with { Stories = new[] { approachingStory } } }, CancellationToken.None);
+    AssertNull(await service.GetNextAsync(session.WalkSessionId,
+        new NextAdaptiveRouteStoryQuery(300, null, null, Array.Empty<string>()), CancellationToken.None), "Heard history cannot replay on approach.");
+    foreach (var ineligible in new[] {
+        approachingStory with { Intent = RouteStoryIntent.GeneralLocationQuestion },
+        approachingStory with { ExpiresUtc = now.AddMinutes(-1) } })
+    {
+        await packs.StoreAsync(state with { Pack = state.Pack with { Stories = new[] { ineligible } } }, CancellationToken.None);
+        AssertNull(await service.GetNextAsync(session.WalkSessionId,
+            new NextAdaptiveRouteStoryQuery(300, null, null, Array.Empty<string>()), CancellationToken.None),
+            "Only fresh history can play before its segment.");
+    }
+    await packs.StoreAsync(state, CancellationToken.None);
     AssertNotNull(await service.GetNextAsync(session.WalkSessionId,
         new NextAdaptiveRouteStoryQuery(story.ClosesAtRouteMeters + 100, null, null, Array.Empty<string>()), CancellationToken.None),
         "Missed history must remain available briefly after its segment.");

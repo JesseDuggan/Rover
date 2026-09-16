@@ -433,7 +433,7 @@ public sealed class AdaptiveRouteStoryPackService : IAdaptiveRouteStoryPackServi
         var candidates = state?.Pack?.Stories
             .Where(candidate => IsFresh(candidate, state!.Pack!))
             .Where(candidate => !state.HeardStoryIds.Contains(candidate.StoryId) && !excluded.Contains(candidate.StoryId))
-            .Where(candidate => query.RouteProgressMeters >= candidate.OpensAtRouteMeters && query.RouteProgressMeters <= PlaybackWindowEnd(candidate))
+            .Where(candidate => query.RouteProgressMeters >= PlaybackWindowStart(candidate) && query.RouteProgressMeters <= PlaybackWindowEnd(candidate))
             .OrderBy(PlaybackWindowEnd)
             .ThenByDescending(candidate => candidate.EvidenceScore)
             .ToArray() ?? Array.Empty<AdaptiveRouteStory>();
@@ -623,10 +623,16 @@ public sealed class AdaptiveRouteStoryPackService : IAdaptiveRouteStoryPackServi
         return stories;
     }
 
-    // Area history remains relevant just after a navigation interruption; visual/live stories do not.
-    private static double PlaybackWindowEnd(AdaptiveRouteStory story) => story.ClosesAtRouteMeters +
-        (story.Intent is RouteStoryIntent.HiddenHistory or RouteStoryIntent.StreetHistory
-            or RouteStoryIntent.NeighbourhoodHistory or RouteStoryIntent.CityHistory ? 300 : 0);
+    // Area history can play on approach or after an interruption; visual/live stories stay in their segment.
+    private static double PlaybackWindowStart(AdaptiveRouteStory story) =>
+        Math.Max(0, story.OpensAtRouteMeters - HistoryWindowAllowance(story));
+
+    private static double PlaybackWindowEnd(AdaptiveRouteStory story) =>
+        story.ClosesAtRouteMeters + HistoryWindowAllowance(story);
+
+    private static double HistoryWindowAllowance(AdaptiveRouteStory story) =>
+        story.Intent is RouteStoryIntent.HiddenHistory or RouteStoryIntent.StreetHistory
+            or RouteStoryIntent.NeighbourhoodHistory or RouteStoryIntent.CityHistory ? 300 : 0;
 
     private static bool ReservedForArrival(LocationPlace candidate, WalkSession session) =>
         session.Stops.Any(stop =>
