@@ -3,6 +3,9 @@ import 'dart:io';
 
 import 'package:camera/camera.dart';
 import 'package:flutter/material.dart';
+import 'package:flutter/foundation.dart';
+import 'package:flutter_compass/flutter_compass.dart';
+import 'package:geolocator/geolocator.dart';
 import 'package:go_router/go_router.dart';
 
 import '../active_roam/active_roam_controller.dart';
@@ -23,6 +26,7 @@ import '../voice/rover_premium_voice.dart';
 import '../voice/rover_voice_controller.dart';
 import 'ar_capability.dart';
 import 'camera_projection.dart';
+import 'camera_heading.dart';
 import 'hotel_rate_sheet.dart';
 import 'lodging_candidate.dart';
 
@@ -52,6 +56,9 @@ class _CameraExplorerScreenState extends State<CameraExplorerScreen>
   bool _lensServiceReady = false;
   CameraController? _cameraController;
   StreamSubscription<RoverLocationReading>? _locationSubscription;
+  StreamSubscription<CompassEvent>? _compassSubscription;
+  DateTime? _lastHeadingRefresh;
+  DateTime? _lastOverlayLog;
 
   RoverLocationReading? _reading;
   double? _smoothedHeading;
@@ -105,6 +112,7 @@ class _CameraExplorerScreenState extends State<CameraExplorerScreen>
   void dispose() {
     WidgetsBinding.instance.removeObserver(this);
     _locationSubscription?.cancel();
+    _compassSubscription?.cancel();
     _cameraController?.dispose();
     if (_lensServiceReady) {
       unawaited(_lensService.cancel());
@@ -132,6 +140,8 @@ class _CameraExplorerScreenState extends State<CameraExplorerScreen>
       unawaited(_deleteCapture(_activeCapturePath));
       _activeCapturePath = null;
       unawaited(_voiceController.stopAll());
+      unawaited(_compassSubscription?.cancel());
+      _compassSubscription = null;
       if (mounted) {
         setState(() {
           _analyzingCapture = false;
@@ -141,12 +151,41 @@ class _CameraExplorerScreenState extends State<CameraExplorerScreen>
     } else if (state == AppLifecycleState.resumed &&
         _cameraController == null) {
       unawaited(_initializeCamera());
+      _initializeCompass();
     }
   }
 
   Future<void> _initialize() async {
     await _initializeCamera();
+    if (!mounted) return;
+    _initializeCompass();
     await _initializeLocation();
+  }
+
+  void _initializeCompass() {
+    _compassSubscription ??= FlutterCompass.events?.listen(
+      (event) {
+        if (!mounted) return;
+        final heading = cameraHeading(event, defaultTargetPlatform);
+        _smoothedHeading = heading == null
+            ? null
+            : _smoothedHeading == null
+            ? heading
+            : smoothHeading(_smoothedHeading!, heading);
+        final now = DateTime.now();
+        if (_lastHeadingRefresh == null ||
+            now.difference(_lastHeadingRefresh!) >=
+                const Duration(milliseconds: 200)) {
+          _lastHeadingRefresh = now;
+          _refreshOverlays();
+        }
+      },
+      onError: (_) {
+        if (!mounted) return;
+        _smoothedHeading = null;
+        _refreshOverlays();
+      },
+    );
   }
 
   Future<void> _initializeCamera() async {
@@ -226,6 +265,7 @@ class _CameraExplorerScreenState extends State<CameraExplorerScreen>
     final requestedFailure = failure?.kind == LocationFailureKind.denied
         ? await _locationProvider.requestForegroundPermission()
         : failure;
+    if (!mounted) return;
     if (requestedFailure != null) {
       FieldDiagnostics.instance.record(
         'camera',
@@ -247,6 +287,36 @@ class _CameraExplorerScreenState extends State<CameraExplorerScreen>
         }
       },
     );
+    // A distance-filtered stream may not emit while the visitor is stationary.
+    try {
+      final position = await Geolocator.getCurrentPosition(
+        locationSettings: const LocationSettings(
+          accuracy: LocationAccuracy.high,
+          timeLimit: Duration(seconds: 15),
+        ),
+      );
+      if (!mounted ||
+          (_reading != null &&
+              !_reading!.recordedAtUtc.isBefore(position.timestamp.toUtc()))) {
+        return;
+      }
+      _handleLocationReading(
+        RoverLocationReading(
+          location: RoverLatLng(
+            latitude: position.latitude,
+            longitude: position.longitude,
+          ),
+          recordedAtUtc: position.timestamp.toUtc(),
+          accuracyMeters: position.accuracy,
+        ),
+      );
+    } catch (_) {
+      if (mounted && _reading == null) {
+        setState(
+          () => _error = 'Waiting for a location fix. Check Location Services.',
+        );
+      }
+    }
   }
 
   void _handleLocationReading(RoverLocationReading reading) {
@@ -254,15 +324,7 @@ class _CameraExplorerScreenState extends State<CameraExplorerScreen>
       return;
     }
 
-    final heading = _validHeading(reading.headingDegrees);
-    final previousHeading = _smoothedHeading;
-    final smoothed = heading == null
-        ? previousHeading
-        : previousHeading == null
-        ? heading
-        : smoothHeading(previousHeading, heading);
     _reading = reading;
-    _smoothedHeading = smoothed;
 
     final shouldRefresh =
         _lastPoiRefreshLocation == null ||
@@ -371,7 +433,7 @@ class _CameraExplorerScreenState extends State<CameraExplorerScreen>
     final heading = _smoothedHeading;
     if (reading == null || heading == null) {
       setState(() {
-        _message = 'Move your phone slowly so Rover can get its bearings.';
+        _message = reading == null ? 'Waiting for a location fix.' : 'Waiting for compass direction. Sign scanning is still available.';
         _overlays = const [];
       });
       return;
@@ -398,10 +460,14 @@ class _CameraExplorerScreenState extends State<CameraExplorerScreen>
       'camera overlay refresh',
       DateTime.now().difference(started),
     );
-    FieldDiagnostics.instance.record(
-      'camera',
-      'overlay ${overlays.length}/${places.length} heading=${heading.round()}',
-    );
+    if (_lastOverlayLog == null ||
+        started.difference(_lastOverlayLog!) >= const Duration(seconds: 5)) {
+      _lastOverlayLog = started;
+      FieldDiagnostics.instance.record(
+        'camera',
+        'overlay ${overlays.length}/${places.length} compass=${heading.round()}',
+      );
+    }
     if (!mounted) {
       return;
     }
@@ -1035,13 +1101,6 @@ class _CameraExplorerScreenState extends State<CameraExplorerScreen>
         repository: _hotelRateRepository,
       ),
     );
-  }
-
-  static double? _validHeading(double? heading) {
-    if (heading == null || heading.isNaN || heading < 0) {
-      return null;
-    }
-    return normalizeDegrees(heading);
   }
 }
 

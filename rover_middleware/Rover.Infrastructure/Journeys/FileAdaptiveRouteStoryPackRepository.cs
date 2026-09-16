@@ -95,6 +95,7 @@ public sealed class FileAdaptiveRouteStoryPackRepository : IAdaptiveRouteStoryPa
             Pack = state.Pack with
             {
                 Stories = durableStories,
+                Collection = durableStories.Length == state.Pack.Stories.Count ? state.Pack.Collection : null,
                 Warnings = durableStories.Length == state.Pack.Stories.Count
                     ? state.Pack.Warnings
                     : state.Pack.Warnings.Append("Provider-restricted stories were excluded from offline storage.").ToArray()

@@ -250,16 +250,20 @@ class AdaptiveRouteStory {
     );
   }
 
-  double get playbackWindowEnd =>
-      closesAtRouteMeters +
-      (const {
-            'HiddenHistory',
-            'StreetHistory',
-            'NeighbourhoodHistory',
-            'CityHistory',
-          }.contains(intent)
-          ? 300
-          : 0);
+  double get playbackWindowStart =>
+      (opensAtRouteMeters - _historyWindowAllowance).clamp(0, double.infinity);
+
+  double get playbackWindowEnd => closesAtRouteMeters + _historyWindowAllowance;
+
+  double get _historyWindowAllowance =>
+      const {
+        'HiddenHistory',
+        'StreetHistory',
+        'NeighbourhoodHistory',
+        'CityHistory',
+      }.contains(intent)
+      ? 300
+      : 0;
 
   Map<String, Object?> toJson() => {
     'storyId': storyId,
@@ -279,6 +283,35 @@ class AdaptiveRouteStory {
   };
 }
 
+class JourneyCollectionSummary {
+  const JourneyCollectionSummary({
+    required this.title,
+    required this.narrationSeconds,
+    required this.walkingSeconds,
+    required this.uncoveredSegmentIds,
+  });
+
+  final String title;
+  final int narrationSeconds;
+  final int walkingSeconds;
+  final List<String> uncoveredSegmentIds;
+
+  factory JourneyCollectionSummary.fromJson(Map<String, dynamic> json) =>
+      JourneyCollectionSummary(
+        title: json['title'] as String? ?? 'Stories along your walk',
+        narrationSeconds: (json['narrationSeconds'] as num?)?.toInt() ?? 0,
+        walkingSeconds: (json['walkingSeconds'] as num?)?.toInt() ?? 0,
+        uncoveredSegmentIds: _strings(json['uncoveredSegmentIds']),
+      );
+
+  Map<String, Object?> toJson() => {
+    'title': title,
+    'narrationSeconds': narrationSeconds,
+    'walkingSeconds': walkingSeconds,
+    'uncoveredSegmentIds': uncoveredSegmentIds,
+  };
+}
+
 class AdaptiveRouteStoryPack {
   const AdaptiveRouteStoryPack({
     required this.schemaVersion,
@@ -292,6 +325,7 @@ class AdaptiveRouteStoryPack {
     required this.expiresUtc,
     required this.stories,
     required this.warnings,
+    this.collection,
   });
 
   final String schemaVersion;
@@ -305,6 +339,7 @@ class AdaptiveRouteStoryPack {
   final DateTime expiresUtc;
   final List<AdaptiveRouteStory> stories;
   final List<String> warnings;
+  final JourneyCollectionSummary? collection;
 
   factory AdaptiveRouteStoryPack.fromJson(Map<String, dynamic> json) =>
       AdaptiveRouteStoryPack(
@@ -325,6 +360,11 @@ class AdaptiveRouteStoryPack {
             .map(AdaptiveRouteStory.fromJson)
             .toList(),
         warnings: _strings(json['warnings']),
+        collection: json['collection'] is Map<String, dynamic>
+            ? JourneyCollectionSummary.fromJson(
+                json['collection'] as Map<String, dynamic>,
+              )
+            : null,
       );
 
   Map<String, Object?> toJson() => {
@@ -339,6 +379,7 @@ class AdaptiveRouteStoryPack {
     'expiresUtc': expiresUtc.toUtc().toIso8601String(),
     'stories': stories.map((story) => story.toJson()).toList(),
     'warnings': warnings,
+    if (collection != null) 'collection': collection!.toJson(),
   };
 }
 

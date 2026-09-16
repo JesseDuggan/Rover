@@ -15,6 +15,7 @@ import '../adventure/adventure_request.dart';
 import '../adventure/adventure_request_controller.dart';
 import '../adventure/roam.dart';
 import '../api/adaptation_models.dart';
+import '../api/adaptive_route_story_models.dart';
 import '../api/beta_models.dart';
 import '../api/local_discovery_options.dart';
 import '../api/location_story_models.dart';
@@ -2680,7 +2681,9 @@ class _AdaptiveRouteStoryPanel extends StatelessWidget {
                 const SizedBox(width: 8),
                 Expanded(
                   child: Text(
-                    'Route stories',
+                    pack?.collection == null
+                        ? 'Route stories'
+                        : 'Journey collection',
                     style: Theme.of(context).textTheme.titleLarge,
                   ),
                 ),
@@ -2704,6 +2707,26 @@ class _AdaptiveRouteStoryPanel extends StatelessWidget {
                         : 'online sources'}',
             ),
             Text(controller.researchStatus),
+            if (pack?.collection case final collection?) ...[
+              Text(
+                '${(collection.narrationSeconds / 60).toStringAsFixed(1)} min of narration available',
+              ),
+              if (collection.uncoveredSegmentIds.isNotEmpty)
+                Text(
+                  '${collection.uncoveredSegmentIds.length} route sections without a story',
+                ),
+            ],
+            for (final story in pack?.stories ?? const <AdaptiveRouteStory>[])
+              ListTile(
+                contentPadding: EdgeInsets.zero,
+                title: Text(story.title),
+                subtitle: Text(controller.automaticStoryStatus(story, session)),
+                trailing: const Icon(Icons.chevron_right),
+                selected: selection?.story.storyId == story.storyId,
+                onTap: controller.isBusy
+                    ? null
+                    : () => controller.selectStory(story.storyId, session),
+              ),
             const SizedBox(height: 8),
             OutlinedButton.icon(
               onPressed: controller.isBusy
@@ -2721,9 +2744,23 @@ class _AdaptiveRouteStoryPanel extends StatelessWidget {
             ],
             if (selection != null) ...[
               const SizedBox(height: 12),
-              Text(
-                selection.story.title,
-                style: Theme.of(context).textTheme.titleMedium,
+              Row(
+                children: [
+                  Expanded(
+                    child: Text(
+                      selection.story.title,
+                      style: Theme.of(context).textTheme.titleMedium,
+                    ),
+                  ),
+                  if (controller.showingManualStory)
+                    IconButton(
+                      tooltip: 'Close story',
+                      onPressed: controller.isBusy || speaking || paused
+                          ? null
+                          : controller.closeStory,
+                      icon: const Icon(Icons.close),
+                    ),
+                ],
               ),
               Text(
                 '${selection.story.intent} - ${selection.variant.estimatedDurationSeconds} sec',

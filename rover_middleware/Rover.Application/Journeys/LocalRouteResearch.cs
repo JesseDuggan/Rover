@@ -9,7 +9,8 @@ public sealed record LocalRouteResearchQuery(
     IReadOnlyList<string> PublicPlaceNames,
     IReadOnlyList<string> Interests,
     string Language,
-    IReadOnlyList<LocalResearchPublicPlace>? PublicPlaces = null);
+    IReadOnlyList<LocalResearchPublicPlace>? PublicPlaces = null,
+    JourneyBrief? Journey = null);
 
 public sealed record LocalResearchPublicPlace(string Name, string? Address, GeoLocation Location);
 

@@ -96,6 +96,8 @@ class AdaptiveRouteStoryDeviceCache extends ChangeNotifier {
           ...state.toJson(),
           'pack': {
             ...pack.toJson(),
+            // The online collection's coverage no longer describes this filtered pack.
+            'collection': null,
             'stories': permitted.map((story) => story.toJson()).toList(),
             'warnings': [
               ...pack.warnings,
@@ -135,7 +137,7 @@ class AdaptiveRouteStoryDeviceCache extends ChangeNotifier {
             )
             .where(
               (story) =>
-                  request.routeProgressMeters >= story.opensAtRouteMeters &&
+                  request.routeProgressMeters >= story.playbackWindowStart &&
                   request.routeProgressMeters <= story.playbackWindowEnd,
             )
             .toList()

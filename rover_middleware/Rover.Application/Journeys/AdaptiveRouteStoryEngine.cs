@@ -12,6 +12,7 @@ namespace Rover.Application.Journeys;
 public sealed class Phase16Options
 {
     public bool Enabled { get; set; }
+    public bool JourneyCollectionsEnabled { get; set; }
     public int MaximumStoriesPerPack { get; set; } = 9;
     public int StorySearchRadiusMeters { get; set; } = 225;
     public int NavigationSafetyBufferSeconds { get; set; } = 15;
@@ -111,7 +112,10 @@ public sealed record AdaptiveRouteStoryPack(
     DateTimeOffset GeneratedUtc,
     DateTimeOffset ExpiresUtc,
     IReadOnlyList<AdaptiveRouteStory> Stories,
-    IReadOnlyList<string> Warnings);
+    IReadOnlyList<string> Warnings)
+{
+    public JourneyCollection? Collection { get; init; }
+}
 
 public sealed record AdaptiveRouteStoryPackState(
     string WalkSessionId,
@@ -290,6 +294,8 @@ public sealed class InMemoryAdaptiveRouteStoryPackRepository : IAdaptiveRouteSto
 
 public sealed class AdaptiveRouteStoryPackService : IAdaptiveRouteStoryPackService
 {
+    // Fixed stripes serialize same-walk generation without retaining session IDs indefinitely.
+    private static readonly SemaphoreSlim[] GenerationGates = Enumerable.Range(0, 64).Select(_ => new SemaphoreSlim(1, 1)).ToArray();
     private readonly Phase16Options _options;
     private readonly IWalkSessionRepository _walks;
     private readonly IRouteStoryPlanService _plans;
@@ -330,11 +336,25 @@ public sealed class AdaptiveRouteStoryPackService : IAdaptiveRouteStoryPackServi
         GenerateAdaptiveRouteStoryPackCommand command,
         CancellationToken cancellationToken)
     {
+        var requestedAt = _timeProvider.GetUtcNow();
+        var gate = GenerationGates[(uint)StringComparer.Ordinal.GetHashCode(walkSessionId) % (uint)GenerationGates.Length];
+        await gate.WaitAsync(cancellationToken);
+        try { return await GenerateCoreAsync(walkSessionId, command, requestedAt, cancellationToken); }
+        finally { gate.Release(); }
+    }
+
+    private async Task<AdaptiveRouteStoryPackState> GenerateCoreAsync(
+        string walkSessionId, GenerateAdaptiveRouteStoryPackCommand command, DateTimeOffset requestedAt,
+        CancellationToken cancellationToken)
+    {
         EnsureEnabled();
         var session = await GetSessionAsync(walkSessionId, cancellationToken);
         var existing = await _packs.GetAsync(walkSessionId, session.RouteRevision, cancellationToken);
-        if (!command.ForceRefresh && existing?.Pack is { } cached && cached.ExpiresUtc > _timeProvider.GetUtcNow()
-            && cached.PromptVersion == _options.PromptVersion)
+        var promptVersion = _options.PromptVersion + (_options.JourneyCollectionsEnabled ? "-journey-v1" : "");
+        var key = IdempotencyKey(session, command, promptVersion);
+        if (existing?.Pack is { } cached && (!command.ForceRefresh || cached.GeneratedUtc >= requestedAt)
+            && cached.ExpiresUtc > _timeProvider.GetUtcNow()
+            && cached.IdempotencyKey == key)
         {
             return existing;
         }
@@ -345,7 +365,7 @@ public sealed class AdaptiveRouteStoryPackService : IAdaptiveRouteStoryPackServi
             session.RouteRevision,
             AdaptiveRouteStoryPackStatus.Generating,
             now,
-            null,
+            existing?.Pack is { } previous && previous.ExpiresUtc > now && previous.IdempotencyKey == key ? previous : null,
             null,
             existing?.HeardStoryIds ?? new HashSet<string>(StringComparer.OrdinalIgnoreCase),
             existing?.LastPlaybackEvent,
@@ -363,7 +383,12 @@ public sealed class AdaptiveRouteStoryPackService : IAdaptiveRouteStoryPackServi
             var warnings = new List<string>();
             var stories = await BuildStoriesAsync(session, plan, command.ProfileId, command.Language ?? "en", warnings, generationToken).WaitAsync(generationToken);
             if (stories.Count == 0) warnings.Add("No sufficiently grounded route stories were found.");
-            var key = IdempotencyKey(session, command, _options.PromptVersion);
+            if (stories.Count == 0 && generating.Pack is { } retained)
+            {
+                stories = retained.Stories.Where(story => IsFresh(story, retained))
+                    .Select(story => story with { ExpiresUtc = story.ExpiresUtc ?? retained.ExpiresUtc }).ToArray();
+                warnings.Add("Refresh found no new evidence; retained unexpired stories.");
+            }
             var pack = new AdaptiveRouteStoryPack(
                 "3.0",
                 $"route-story-{key[..16]}",
@@ -371,17 +396,23 @@ public sealed class AdaptiveRouteStoryPackService : IAdaptiveRouteStoryPackServi
                 session.WalkSessionId,
                 plan.RouteId,
                 session.RouteRevision,
-                _options.PromptVersion,
-                now,
+                promptVersion,
+                _timeProvider.GetUtcNow(),
                 now.AddHours(Math.Clamp(_options.PackRetentionHours, 1, 720)),
                 stories,
-                warnings);
+                warnings)
+            {
+                Collection = _options.JourneyCollectionsEnabled ? JourneyCollectionBuilder.Describe(plan, stories) : null
+            };
             var ready = generating with
             {
                 Status = stories.Count == 0 ? AdaptiveRouteStoryPackStatus.Partial : AdaptiveRouteStoryPackStatus.Ready,
                 UpdatedUtc = _timeProvider.GetUtcNow(),
                 Pack = pack
             };
+            var latest = await _packs.GetAsync(walkSessionId, session.RouteRevision, generationToken);
+            if (latest is not null)
+                ready = ready with { HeardStoryIds = latest.HeardStoryIds, SavedStoryIds = latest.SavedStoryIds, LastPlaybackEvent = latest.LastPlaybackEvent };
             await _packs.StoreAsync(ready, generationToken);
             return ready;
         }
@@ -614,13 +645,16 @@ public sealed class AdaptiveRouteStoryPackService : IAdaptiveRouteStoryPackServi
                 new ApproximateLiveLocation(areaPlace?.City, areaPlace?.Region, areaPlace?.CountryCode, null),
                 session.Stops.Select(stop => stop.Name).ToArray(), session.Interests.ToArray(), language,
                 session.Stops.Where(stop => !string.IsNullOrWhiteSpace(stop.ProviderPlaceId))
-                    .Select(stop => new LocalResearchPublicPlace(stop.Name, stop.Address, stop.Location)).ToArray()), cancellationToken);
+                    .Select(stop => new LocalResearchPublicPlace(stop.Name, stop.Address, stop.Location)).ToArray(),
+                _options.JourneyCollectionsEnabled ? JourneyCollectionBuilder.Brief(session, plan, stories) : null), cancellationToken);
             var known = stories.SelectMany(story => story.Claims).Select(claim => claim.Text.Trim())
                 .ToHashSet(StringComparer.OrdinalIgnoreCase);
             stories.AddRange(research.Stories.Where(story => !story.Claims.Any(claim => known.Contains(claim.Text.Trim()))));
             if (research.Warning is not null) warnings.Add(research.Warning);
         }
-        return stories;
+        return _options.JourneyCollectionsEnabled
+            ? stories.OrderBy(story => story.OpensAtRouteMeters).ThenBy(story => story.StoryId).ToArray()
+            : stories;
     }
 
     // Area history can play on approach or after an interruption; visual/live stories stay in their segment.
@@ -728,7 +762,7 @@ public sealed class AdaptiveRouteStoryPackService : IAdaptiveRouteStoryPackServi
     }
 
     private static string IdempotencyKey(WalkSession session, GenerateAdaptiveRouteStoryPackCommand command, string promptVersion) =>
-        Hash($"{session.WalkSessionId}|{session.RouteRevision}|{command.ProfileId}|{command.Audience}|{command.Language}|{promptVersion}");
+        Hash($"{session.WalkSessionId}|{session.RouteRevision}|{command.ProfileId}|{command.Audience ?? "GeneralTraveller"}|{command.Language ?? "en"}|{promptVersion}");
 
     private static string SourceKey(LocationSource source) => Hash($"{source.ProviderName}|{source.ProviderRecordId}|{source.SourceUrl}")[..20];
     private static string Hash(string value) => Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes(value))).ToLowerInvariant();

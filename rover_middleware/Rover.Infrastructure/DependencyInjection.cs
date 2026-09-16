@@ -181,6 +181,7 @@ public static class DependencyInjection
         services.RemoveAll<Phase16Options>();
         services.AddSingleton(new Phase16Options
         {
+            JourneyCollectionsEnabled = EnvironmentFlag("ROVER_JOURNEY_COLLECTIONS_ENABLED", false),
             Enabled = EnvironmentFlag("ROVER_PHASE16_ENABLED", configuration.GetValue("Rover:Phase16:Enabled", false)),
             MaximumStoriesPerPack = configuration.GetValue("Rover:Phase16:MaximumStoriesPerPack", 9),
             StorySearchRadiusMeters = configuration.GetValue("Rover:Phase16:StorySearchRadiusMeters", 225),
@@ -226,6 +227,7 @@ public static class DependencyInjection
             TimeoutSeconds = configuration.GetValue("Rover:Phase16:LocalResearch:TimeoutSeconds", 60),
             SearchMaxOutputTokens = configuration.GetValue("Rover:Phase16:LocalResearch:SearchMaxOutputTokens", 8192),
             ClassificationMaxOutputTokens = configuration.GetValue("Rover:Phase16:LocalResearch:ClassificationMaxOutputTokens", 4096),
+            MaximumCollectionStories = configuration.GetValue("Rover:Phase16:LocalResearch:MaximumCollectionStories", 8),
             CaptureRejectedResponses = EnvironmentFlag("ROVER_LOCAL_RESEARCH_CAPTURE_REJECTIONS", false)
         });
         services.AddHttpClient<ILocalRouteResearcher, OpenAILocalRouteResearcher>();

@@ -43,6 +43,7 @@ class AdaptiveRouteStoryController extends ChangeNotifier {
   double? _lastSelectionProgressMeters;
   Timer? _pollTimer;
   bool _disposed = false;
+  bool _manualSelection = false;
 
   void startPolling({
     required RoamSession Function() session,
@@ -74,6 +75,7 @@ class AdaptiveRouteStoryController extends ChangeNotifier {
   AdaptiveRouteStoryPackState? get packState => _packState;
   AdaptiveRouteStoryPack? get pack => _packState?.pack;
   AdaptiveRouteStorySelection? get currentSelection => _currentSelection;
+  bool get showingManualStory => _manualSelection && _currentSelection != null;
   String? get errorMessage => _errorMessage ?? _packState?.error;
   bool get usingOfflinePack => _usingOfflinePack;
   int get queuedEventCount => _deviceCache.queuedEventCount;
@@ -142,6 +144,7 @@ class AdaptiveRouteStoryController extends ChangeNotifier {
       _routeRevision = session.routeRevision;
       _packState = null;
       _currentSelection = null;
+      _manualSelection = false;
       _lastSelectionProgressMeters = null;
       _lastSelectionCheckUtc = null;
       _prefetchedStoryIds.clear();
@@ -151,12 +154,13 @@ class AdaptiveRouteStoryController extends ChangeNotifier {
 
     final now = DateTime.now().toUtc();
     final statusDue =
-        _packState?.pack == null &&
+        (_packState?.pack == null || _packState?.status == 'Generating') &&
         (_lastStatusCheckUtc == null ||
             now.difference(_lastStatusCheckUtc!) >= const Duration(seconds: 4));
     final progressMeters = _routeProgressMeters(session);
     final selectionDue =
         session.status == RoamSessionStatus.active &&
+        !(_manualSelection && _currentSelection != null) &&
         _packState?.pack != null &&
         (_lastSelectionProgressMeters == null ||
             (progressMeters - _lastSelectionProgressMeters!).abs() >= 20 ||
@@ -279,6 +283,97 @@ class AdaptiveRouteStoryController extends ChangeNotifier {
     }
   }
 
+  bool selectStory(String storyId, RoamSession session) {
+    if (_disposed ||
+        isBusy ||
+        _walkSessionId != session.apiWalkSessionId ||
+        _routeRevision != session.routeRevision) {
+      return false;
+    }
+    final matches = pack?.stories.where((story) => story.storyId == storyId);
+    if (matches == null || matches.isEmpty) return false;
+    final story = matches.first;
+    final now = DateTime.now().toUtc();
+    if (pack!.expiresUtc.isBefore(now) ||
+        (story.expiresUtc?.isBefore(now) ?? false) ||
+        story.sources.isEmpty) {
+      _errorMessage =
+          'This story has expired or has no sources. Refresh the story pack.';
+      _notify();
+      return false;
+    }
+    final variants =
+        story.variants
+            .where((variant) => variant.narration.trim().isNotEmpty)
+            .toList()
+          ..sort(
+            (a, b) => a.estimatedDurationSeconds.compareTo(
+              b.estimatedDurationSeconds,
+            ),
+          );
+    if (variants.isEmpty) return false;
+    final available = session.storySecondsUntilInterruption;
+    final fitting = variants
+        .where(
+          (variant) =>
+              available == null ||
+              variant.estimatedDurationSeconds <= available - 15,
+        )
+        .toList();
+    final variant =
+        fitting.where((variant) => variant.length == 'Standard').firstOrNull ??
+        fitting.lastOrNull ??
+        variants.first;
+    _currentSelection = AdaptiveRouteStorySelection(
+      story: story,
+      variant: variant,
+      reason: 'Selected by you.',
+    );
+    _manualSelection = true;
+    _errorMessage = null;
+    _notify();
+    return true;
+  }
+
+  void closeStory() {
+    if (_disposed || isBusy || !showingManualStory) return;
+    _currentSelection = null;
+    _manualSelection = false;
+    _lastSelectionProgressMeters = null;
+    _errorMessage = null;
+    _notify();
+  }
+
+  String automaticStoryStatus(AdaptiveRouteStory story, RoamSession session) {
+    final now = DateTime.now().toUtc();
+    if ((pack?.expiresUtc.isBefore(now) ?? true) ||
+        (story.expiresUtc?.isBefore(now) ?? false)) {
+      return 'Expired';
+    }
+    if (_completedStoryIds.contains(story.storyId) ||
+        (_packState?.heardStoryIds.contains(story.storyId) ?? false) ||
+        _completedPlaces.contains('${story.placeId}|${story.intent}')) {
+      return 'Already heard';
+    }
+    final progress = _routeProgressMeters(session);
+    if (progress < story.playbackWindowStart) return 'Ahead on route';
+    if (progress > story.playbackWindowEnd) {
+      return 'Automatic playback window passed';
+    }
+    if (!_safeForContextualStory(session)) {
+      return 'Waiting for turn or arrival to clear';
+    }
+    final seconds = session.storySecondsUntilInterruption;
+    if (!story.variants.any(
+      (variant) =>
+          variant.narration.trim().isNotEmpty &&
+          (seconds == null || variant.estimatedDurationSeconds <= seconds - 15),
+    )) {
+      return 'Waiting for a longer gap before the next turn or arrival';
+    }
+    return 'In playback window';
+  }
+
   Future<void> playCurrent(
     RoamSession session,
     RoverVoiceController voiceController, {
@@ -287,6 +382,14 @@ class AdaptiveRouteStoryController extends ChangeNotifier {
     final selection = _currentSelection;
     final walkSessionId = session.apiWalkSessionId;
     if (selection == null || walkSessionId == null || _playbackInFlight) {
+      return;
+    }
+    final now = DateTime.now().toUtc();
+    if (_manualSelection &&
+        ((pack?.expiresUtc.isBefore(now) ?? true) ||
+            (selection.story.expiresUtc?.isBefore(now) ?? false))) {
+      _errorMessage = 'This story has expired. Refresh the story pack.';
+      _notify();
       return;
     }
     _playbackInFlight = true;
@@ -485,6 +588,7 @@ class AdaptiveRouteStoryController extends ChangeNotifier {
     RoverVoiceController voiceController,
     double progressMeters,
   ) async {
+    if (_manualSelection && _currentSelection != null) return;
     if (!_safeForContextualStory(session)) {
       FieldDiagnostics.instance.record(
         'route-story',
@@ -542,9 +646,18 @@ class AdaptiveRouteStoryController extends ChangeNotifier {
             'stories=${pack?.stories.length ?? 0}; '
             'nextManeuverSeconds=${_secondsUntilNextManeuver(session)}',
       );
+      for (final story in pack?.stories ?? const <AdaptiveRouteStory>[]) {
+        FieldDiagnostics.instance.record(
+          'route-story',
+          '${story.storyId}: ${automaticStoryStatus(story, session)}; '
+              'window=${story.playbackWindowStart.round()}-${story.playbackWindowEnd.round()} m; '
+              'durations=${story.variants.map((variant) => variant.estimatedDurationSeconds).join(",")} sec',
+        );
+      }
       return;
     }
     if (request.excludedStoryIds.contains(selection.story.storyId)) return;
+    _manualSelection = false;
     _currentSelection = selection;
     _notify();
     await playCurrent(session, voiceController, userRequested: false);

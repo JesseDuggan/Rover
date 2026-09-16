@@ -71,6 +71,19 @@ Recommended work:
 
 ### 3. Journey Narration Between Stops
 
+Change recorded 2026-09-16: **Journey Collections - first increment implemented
+locally, deployment/field verification pending**.
+After route acceptance, provide a privacy-filtered start/end, actual walking
+corridor, ordered POIs, segment timings, preferences, and existing evidence to an
+OpenAI-backed curation workflow. Build connected, cited walking/arrival chapters
+and improve narration coverage while retaining navigation priority and bounded
+cost. Extend the existing adaptive story packs rather than adding a competing
+playback scheduler. The original notes below are historical context.
+
+See [Journey Collection Change](../JOURNEY_COLLECTION_CHANGE.md) for required
+inputs, story topics, source validation, playback rules, privacy, cost controls,
+delivery stages, acceptance criteria, rollout flags, and remaining increments.
+
 Current status:
 
 - Location Intelligence can gather verified local context.

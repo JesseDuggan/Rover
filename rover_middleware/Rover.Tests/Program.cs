@@ -708,6 +708,7 @@ static Task Phase16FlagsAreDisabledByDefault()
     var options = new Phase16Options();
 
     AssertTrue(!options.Enabled, "Phase 16 must remain disabled until explicitly enabled.");
+    AssertTrue(!options.JourneyCollectionsEnabled, "Journey collection research must be opt-in.");
     AssertEqual("phase16-story-first-v3", options.PromptVersion);
     return Task.CompletedTask;
 }
@@ -772,6 +773,7 @@ static async Task Phase16RoutePacksAreRevisionScoped()
 
 static async Task LocalRouteResearchValidation()
 {
+    await JourneyCollectionValidation();
     var now = DateTimeOffset.UtcNow;
     var anchor = new GeoLocation(48.856, 2.352);
     var segment = new RouteStorySegment("s", 1, anchor, anchor, anchor, 0, 300, 300, 240, false, []);
@@ -947,6 +949,73 @@ static async Task LocalRouteResearchValidation()
     AssertTrue(disabledResult.Warning?.Contains("disabled") == true, "Disabled research must be visible in pack diagnostics.");
 }
 
+static async Task JourneyCollectionValidation()
+{
+    var session = await CreateSessionAsync();
+    var start = new GeoLocation(44.901234, -76.251234);
+    var end = new GeoLocation(44.923456, -76.223456);
+    session.SetRoute(new WalkRoute("private-route-id", "test", "1", DateTimeOffset.UtcNow,
+        new[] { start, end }, new RouteBounds(new GeoLocation(44.90, -76.26), new GeoLocation(44.93, -76.22)), 3600, 45));
+    var segments = Enumerable.Range(0, 15).Select(i => new RouteStorySegment($"section-{i}", i + 1,
+        start, end, start, i * 240, (i + 1) * 240, 240, 180, false, Array.Empty<StoryOpportunity>())).ToArray();
+    var plan = new RouteStoryPlan(session.WalkSessionId, "private-route-id", 1, RouteStoryTravelMode.Walking, DateTimeOffset.UtcNow, segments);
+    var brief = JourneyCollectionBuilder.Brief(session, plan, Array.Empty<AdaptiveRouteStory>());
+    AssertEqual(44.90, brief.StartArea.Latitude);
+    AssertEqual(44.92, brief.EndArea.Latitude);
+    AssertTrue(!brief.ReturnsToStart, "Point-to-point walks must retain their endpoint.");
+    AssertTrue(brief.Sections.Count <= 12, "Research corridor must stay bounded.");
+    AssertEqual(3600d, brief.Sections.Last().EndRouteMeters);
+    AssertEqual(2700, brief.Sections.Sum(section => section.WalkingSeconds));
+    var query = new LocalRouteResearchQuery(segments, new ApproximateLiveLocation("Perth", "Ontario", "CA", null),
+        Array.Empty<string>(), new[] { "history" }, "en", Journey: brief);
+    var passages = Enumerable.Range(0, 5).Select(i => $"In Perth, archive collection {i} records the community's history. " +
+        string.Join(' ', Enumerable.Repeat("The archive documents local buildings and community life through dated records.", 9))).ToArray();
+    var calls = 0;
+    using var client = new HttpClient(new RoutingHttpMessageHandler(request =>
+    {
+        calls++;
+        var body = request.Content!.ReadAsStringAsync().GetAwaiter().GetResult();
+        using var payload = JsonDocument.Parse(body);
+        AssertTrue(!body.Contains("44.901234") && !body.Contains("private-route-id") && !body.Contains(session.WalkSessionId),
+            "Curation must not transmit private endpoint precision or internal identifiers.");
+        AssertTrue(!payload.RootElement.GetProperty("store").GetBoolean(), "Provider storage must remain off.");
+        if (calls == 1)
+        {
+            AssertEqual(6, payload.RootElement.GetProperty("max_tool_calls").GetInt32());
+            var input = payload.RootElement.GetProperty("input").GetString()!;
+            AssertTrue(input.Contains("startArea") && input.Contains("endArea") && input.Contains("walkingSeconds"), "Research needs the full journey brief.");
+            AssertTrue(payload.RootElement.GetProperty("instructions").GetString()!.Contains("100-180"), "Collections need substantial chapters.");
+            return JsonResponse(HttpStatusCode.OK, JsonSerializer.Serialize(new { status = "completed", output = new[] { new {
+                content = passages.Select(text => new { text = text + " [1]", annotations = new[] { new {
+                    type = "url_citation", start_index = text.Length + 1, end_index = text.Length + 4,
+                    url = "https://archive.example/history", title = "Community archive" } } }).ToArray() } } }));
+        }
+        AssertTrue(!payload.RootElement.TryGetProperty("tools", out _), "Classification must not search again.");
+        var cards = JsonSerializer.Serialize(new { stories = Enumerable.Range(0, 5).Select(i => new {
+            evidenceIndex = i, title = $"Archive chapter {i}", kind = "history", latitude = start.Latitude,
+            longitude = start.Longitude, locationEvidence = "Perth", startsUtc = (string?)null, endsUtc = (string?)null }) });
+        return JsonResponse(HttpStatusCode.OK, JsonSerializer.Serialize(new { status = "completed", output = new[] { new { content = new[] { new { text = cards } } } } }));
+    }));
+    var researcher = new Rover.Infrastructure.Journeys.OpenAILocalRouteResearcher(client,
+        new Rover.Infrastructure.Journeys.LocalRouteResearchOptions { Enabled = true, ApiKey = "test", Model = "gpt-5-mini" }, TimeProvider.System);
+    var result = await researcher.ResearchAsync(query, CancellationToken.None);
+    AssertEqual(2, calls);
+    AssertEqual(5, result.Stories.Count);
+    AssertTrue(result.Stories.All(story => story.Variants.Max(variant => variant.EstimatedDurationSeconds) > 40), "Long chapters must survive citation parsing.");
+    var collection = JourneyCollectionBuilder.Describe(plan, result.Stories);
+    AssertEqual(5, collection.Chapters.Count);
+    AssertEqual(result.Stories.Sum(story => story.Variants.Max(variant => variant.EstimatedDurationSeconds)), collection.NarrationSeconds);
+    AssertEqual(14, collection.UncoveredSegmentIds.Count);
+    calls = 0;
+    var limited = new Rover.Infrastructure.Journeys.OpenAILocalRouteResearcher(client,
+        new Rover.Infrastructure.Journeys.LocalRouteResearchOptions { Enabled = true, ApiKey = "test", Model = "gpt-5-mini", MaximumCollectionStories = 3 }, TimeProvider.System);
+    AssertEqual(3, (await limited.ResearchAsync(query, CancellationToken.None)).Stories.Count);
+    AssertEqual(2, calls);
+    session.SetRoute(new WalkRoute("loop", "test", "1", DateTimeOffset.UtcNow,
+        new[] { start, end, start }, session.Route.Bounds, 3600, 45));
+    AssertTrue(JourneyCollectionBuilder.Brief(session, plan, []).ReturnsToStart, "Loops must be identified from the accepted geometry.");
+}
+
 static Task StoryFirstEvidence()
 {
     var now = DateTimeOffset.UtcNow;
@@ -1029,7 +1098,7 @@ static async Task Phase16RoutePacksSelectCompleteAndSaveStories()
         new Dictionary<string, string> { ["wikipedia"] = "phase16-place" },
         source);
     var packs = new InMemoryAdaptiveRouteStoryPackRepository();
-    var options = new Phase16Options { Enabled = true };
+    var options = new Phase16Options { Enabled = true, JourneyCollectionsEnabled = true };
     var service = new AdaptiveRouteStoryPackService(
         options,
         walks,
@@ -1045,11 +1114,20 @@ static async Task Phase16RoutePacksSelectCompleteAndSaveStories()
         new GenerateAdaptiveRouteStoryPackCommand(null, "GeneralTraveller", "en", false),
         CancellationToken.None);
     var story = state.Pack!.Stories.Single();
+    AssertNotNull(state.Pack.Collection, "Enabled journey collections must be returned with the pack.");
+    AssertEqual(story.Variants.Max(variant => variant.EstimatedDurationSeconds), state.Pack.Collection!.NarrationSeconds);
+    var cachedState = await service.GenerateAsync(session.WalkSessionId,
+        new GenerateAdaptiveRouteStoryPackCommand(null, "GeneralTraveller", "en", false), CancellationToken.None);
+    AssertEqual(state.Pack.GeneratedUtc, cachedState.Pack!.GeneratedUtc);
+    var defaultRequest = await service.GenerateAsync(session.WalkSessionId,
+        new GenerateAdaptiveRouteStoryPackCommand(null, null, null, false), CancellationToken.None);
+    AssertEqual(state.Pack.GeneratedUtc, defaultRequest.Pack!.GeneratedUtc);
     foreach (var cancelRequest in new[] { false, true })
     {
         using var requestCancellation = new CancellationTokenSource();
         var terminalPacks = new InMemoryAdaptiveRouteStoryPackRepository();
-        var boundedOptions = new Phase16Options { Enabled = true, GenerationTimeoutSeconds = 1 };
+        await terminalPacks.StoreAsync(state, CancellationToken.None);
+        var boundedOptions = new Phase16Options { Enabled = true, JourneyCollectionsEnabled = true, GenerationTimeoutSeconds = 1 };
         var bounded = new AdaptiveRouteStoryPackService(boundedOptions, walks, plans,
             new RecordingLocationStoryContextService(Array.Empty<LocationPlace>()), terminalPacks,
             new DeterministicStoryIntentClassifier(), new DeterministicAdaptiveStoryLengthSelector(boundedOptions),
@@ -1058,13 +1136,14 @@ static async Task Phase16RoutePacksSelectCompleteAndSaveStories()
         try
         {
             await bounded.GenerateAsync(session.WalkSessionId,
-                new GenerateAdaptiveRouteStoryPackCommand(null, null, "en", false), requestCancellation.Token);
+                new GenerateAdaptiveRouteStoryPackCommand(null, "GeneralTraveller", "en", true), requestCancellation.Token);
         }
         catch (OperationCanceledException) when (cancelRequest) { failedAsExpected = true; }
         catch (InvalidOperationException) when (!cancelRequest) { failedAsExpected = true; }
         AssertTrue(failedAsExpected, "Generation must terminate on cancellation or timeout.");
         var terminal = await terminalPacks.GetAsync(session.WalkSessionId, session.RouteRevision, CancellationToken.None);
         AssertEqual(AdaptiveRouteStoryPackStatus.Failed, terminal!.Status);
+        AssertEqual(story.StoryId, terminal.Pack!.Stories.Single().StoryId);
         AssertTrue(terminal.Error!.Contains(cancelRequest ? "interrupted" : "timed out"), "Failure must explain why generation stopped.");
     }
     var textAnswer = await service.AskAsync(session.WalkSessionId,
