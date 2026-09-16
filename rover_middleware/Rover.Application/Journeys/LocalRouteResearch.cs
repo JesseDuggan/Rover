@@ -1,4 +1,5 @@
 using Rover.Application.LiveContext;
+using Rover.Domain.Walks;
 
 namespace Rover.Application.Journeys;
 
@@ -7,7 +8,10 @@ public sealed record LocalRouteResearchQuery(
     ApproximateLiveLocation Area,
     IReadOnlyList<string> PublicPlaceNames,
     IReadOnlyList<string> Interests,
-    string Language);
+    string Language,
+    IReadOnlyList<LocalResearchPublicPlace>? PublicPlaces = null);
+
+public sealed record LocalResearchPublicPlace(string Name, string? Address, GeoLocation Location);
 
 public sealed record LocalRouteResearchResult(IReadOnlyList<AdaptiveRouteStory> Stories, string? Warning);
 

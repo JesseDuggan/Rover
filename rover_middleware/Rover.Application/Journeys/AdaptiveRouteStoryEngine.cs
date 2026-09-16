@@ -612,7 +612,9 @@ public sealed class AdaptiveRouteStoryPackService : IAdaptiveRouteStoryPackServi
         {
             var research = await _researcher.ResearchAsync(new LocalRouteResearchQuery(plan.Segments,
                 new ApproximateLiveLocation(areaPlace?.City, areaPlace?.Region, areaPlace?.CountryCode, null),
-                session.Stops.Select(stop => stop.Name).ToArray(), session.Interests.ToArray(), language), cancellationToken);
+                session.Stops.Select(stop => stop.Name).ToArray(), session.Interests.ToArray(), language,
+                session.Stops.Where(stop => !string.IsNullOrWhiteSpace(stop.ProviderPlaceId))
+                    .Select(stop => new LocalResearchPublicPlace(stop.Name, stop.Address, stop.Location)).ToArray()), cancellationToken);
             var known = stories.SelectMany(story => story.Claims).Select(claim => claim.Text.Trim())
                 .ToHashSet(StringComparer.OrdinalIgnoreCase);
             stories.AddRange(research.Stories.Where(story => !story.Claims.Any(claim => known.Contains(claim.Text.Trim()))));

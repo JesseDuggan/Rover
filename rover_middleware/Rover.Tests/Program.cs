@@ -775,7 +775,8 @@ static async Task LocalRouteResearchValidation()
     var now = DateTimeOffset.UtcNow;
     var anchor = new GeoLocation(48.856, 2.352);
     var segment = new RouteStorySegment("s", 1, anchor, anchor, anchor, 0, 300, 300, 240, false, []);
-    var query = new LocalRouteResearchQuery([segment], new ApproximateLiveLocation("Paris", null, "FR", null), ["Public museum"], ["history"], "en");
+    var query = new LocalRouteResearchQuery([segment], new ApproximateLiveLocation("Paris", null, "FR", null), ["Public museum"], ["history"], "en",
+        [new LocalResearchPublicPlace("Public museum", "Museum street, Paris", anchor)]);
     const string passage = "In Paris, this museum preserves local workshop traditions through its collection of tools and accounts of the people who used them.";
     var research = JsonSerializer.Serialize(new { status = "completed", output = new[] { new { content = new[] { new
     {
@@ -794,7 +795,18 @@ static async Task LocalRouteResearchValidation()
             using var payload = JsonDocument.Parse(body);
             AssertEqual(calls == 1 ? 8192 : 4096, payload.RootElement.GetProperty("max_output_tokens").GetInt32());
             AssertEqual("low", payload.RootElement.GetProperty("reasoning").GetProperty("effort").GetString());
-            if (calls == 1) AssertTrue(payload.RootElement.GetProperty("instructions").GetString()!.Contains("at most three"), "Search should request a bounded starter pack.");
+            if (calls == 1)
+            {
+                AssertTrue(payload.RootElement.GetProperty("instructions").GetString()!.Contains("at most three"), "Search should request a bounded starter pack.");
+                var input = payload.RootElement.GetProperty("input").GetString()!;
+                var reader = new System.Text.Json.Utf8JsonReader(System.Text.Encoding.UTF8.GetBytes(input));
+                using var researchContext = JsonDocument.ParseValue(ref reader);
+                AssertEqual(1000, researchContext.RootElement.GetProperty("maximumStoryDistanceMeters").GetInt32());
+                var publicPlace = researchContext.RootElement.GetProperty("publicPlaces")[0];
+                AssertEqual("Museum street, Paris", publicPlace.GetProperty("address").GetString());
+                AssertEqual(Math.Round(anchor.Latitude, 4), publicPlace.GetProperty("latitude").GetDouble());
+                AssertTrue(input.Contains("city is a disambiguator, not the search area"), "Research must target the walking neighbourhood, not citywide attractions.");
+            }
             if (scenario == "failure") return JsonResponse(HttpStatusCode.ServiceUnavailable, "{}");
             if (calls == 1)
             {
@@ -924,6 +936,7 @@ static async Task LocalRouteResearchValidation()
             AssertTrue(entry.Message.Contains("I could not establish a locality.") && entry.Message.Contains("Paris"), "Capture must expose the rejected text and coarse context.");
             AssertTrue(entry.Message.Contains("[truncated]") && entry.Message.Contains("[REDACTED]"), "Capture must bound text and redact credentials.");
             AssertTrue(!entry.Message.Contains(secret) && !entry.Message.Contains("48.856"), "Capture must not disclose the API key or precise query coordinates.");
+            AssertTrue(!entry.Message.Contains("Museum street"), "Capture must not disclose the added public-place address context.");
             AssertTrue(entry.Message.Contains("48.86") && entry.Message.Contains("SearchCalls=0"), "Capture must use rounded request coordinates and record search execution.");
         }
     }
