@@ -28,6 +28,64 @@ import 'package:rover/src/maps/mapbox_config.dart';
 void main() {
   tearDown(() => RoverApiConfig.setDevelopmentOverride(null));
 
+  test(
+    'unheard geofence entry recovers despite a stale server candidate',
+    () async {
+      final locations = StreamController<RoverLocationReading>();
+      final controller = ActiveRoamController(
+        repository: MemoryActiveRoamRepository(),
+        walkRepository: _PendingArrivalRepository(),
+        locationProvider: _StreamingLocationProvider(locations.stream),
+        screenAwakeController: MemoryScreenAwakeController(),
+      );
+      await controller.load();
+      await controller.createWalk(
+        request: _adventureRequest(),
+        location: const RoverLatLng(latitude: 37.7879, longitude: -122.4075),
+      );
+      await controller.startApiWalk();
+      await controller.markArrivalNarrated('union-square-plaza');
+
+      Future<void> reading(int second) async {
+        final recordedAt = DateTime.utc(2026, 9, 17, 12, 0, second);
+        locations.add(
+          RoverLocationReading(
+            location: const RoverLatLng(
+              latitude: 37.7879,
+              longitude: -122.4075,
+            ),
+            recordedAtUtc: recordedAt,
+            accuracyMeters: 5,
+          ),
+        );
+        for (var attempt = 0; attempt < 100; attempt++) {
+          await Future<void>.delayed(const Duration(milliseconds: 10));
+          if (controller.latestLocationReading?.recordedAtUtc == recordedAt &&
+              controller.session.geofenceEntryDebug != null) {
+            return;
+          }
+        }
+        fail('Location update did not finish');
+      }
+
+      await reading(0);
+      expect(controller.session.recentNarrationStopId, 'sponsored-gear-stop');
+      await reading(10);
+      expect(controller.session.recentNarrationStopId, 'sponsored-gear-stop');
+      expect(
+        controller.session.geofenceEntryDebug,
+        contains('recovered entry'),
+      );
+      await controller.markArrivalNarrated('sponsored-gear-stop');
+      await reading(20);
+      expect(controller.session.recentNarrationStopId, isNull);
+
+      await controller.stopLocationTracking();
+      await locations.close();
+      controller.dispose();
+    },
+  );
+
   test('Phase 16 route story requests serialize and packs parse', () {
     const request = NextRouteStoryRequest(
       routeProgressMeters: 125.5,
@@ -424,6 +482,18 @@ void main() {
     expect(stop.requiredAttribution, ['Google Maps']);
     expect(stop.toRoverStop().attributionLabel, 'Google Maps');
   });
+}
+
+class _PendingArrivalRepository extends FakeWalkRepository {
+  @override
+  Future<WalkSession> arriveAtStop(
+    String walkSessionId,
+    String stopId, {
+    double? latitude,
+    double? longitude,
+  }) async {
+    throw const RoverApiException('Confirmation pending', statusCode: 409);
+  }
 }
 
 class _FakeLocationProvider implements RoverLocationProvider {

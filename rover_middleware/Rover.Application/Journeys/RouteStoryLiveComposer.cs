@@ -21,15 +21,18 @@ public static class RouteStoryLiveComposer
                 if (item.AutomaticSpeechPolicy != LiveAutomaticSpeechPolicy.Actionable
                     || !Fresh(item.Source, now) || item.Latitude is not { } lat || item.Longitude is not { } lon
                     || !double.IsFinite(lat) || !double.IsFinite(lon) || Math.Abs(lat) > 90 || Math.Abs(lon) > 180
-                    || item.StartsUtc < now || item.EndsUtc <= now || string.IsNullOrWhiteSpace(item.Name)) continue;
+                    || item.EndsUtc is null || item.StartsUtc >= item.EndsUtc || item.EndsUtc <= now || string.IsNullOrWhiteSpace(item.Name)) continue;
                 var location = new GeoLocation(lat, lon);
                 var segment = segments.OrderBy(segment => RouteMath.DistanceMeters(segment.Anchor, location)).First();
                 if (RouteMath.DistanceMeters(segment.Anchor, location) > 1000) continue;
                 var date = item.StartsUtc.ToUniversalTime().ToString("MMMM d, yyyy 'at' HH:mm 'UTC'", CultureInfo.InvariantCulture);
-                var text = $"Nearby, {item.Name} is scheduled for {date}"
+                var text = (item.StartsUtc <= now
+                    ? $"Nearby, {item.Name} is scheduled to be taking place now"
+                    : $"Nearby, {item.Name} is scheduled for {date}")
                     + (string.IsNullOrWhiteSpace(item.VenueName) ? "." : $" at {item.VenueName}.");
                 stories.Add(Create($"event:{item.EventId}", item.Name, "local events", text, segment,
-                    new[] { item.Source }, new[] { item.Source.ExpiresUtc, context.Events.ExpiresUtc, item.StartsUtc }.Min()));
+                    new[] { item.Source }, new[] { item.Source.ExpiresUtc, context.Events.ExpiresUtc,
+                        item.StartsUtc > now ? item.StartsUtc : item.EndsUtc.Value }.Min()));
                 if (stories.Count == 2) break;
             }
         }

@@ -53,6 +53,7 @@ class RoverPremiumVoiceCoordinator {
   final bool enabled;
   final bool fallbackEnabled;
   final Map<String, Future<RenderedSpeechAudio>> _audioRequests = {};
+  int _playbackGeneration = 0;
 
   String statusMessage = 'Premium Rover voice ready.';
   RenderedSpeechAudio? lastAudio;
@@ -117,6 +118,7 @@ class RoverPremiumVoiceCoordinator {
     String? storyId,
     String? variantId,
   }) async {
+    final generation = ++_playbackGeneration;
     if (!enabled) {
       statusMessage = 'Using device voice.';
       return false;
@@ -143,6 +145,8 @@ class RoverPremiumVoiceCoordinator {
           variantId: variantId,
         ),
       );
+      // A render may finish after navigation or arrival has stopped this story.
+      if (generation != _playbackGeneration) return false;
       lastAudio = audio;
       if (audio.usedFallback) {
         final reason = audio.fallbackReason;
@@ -153,10 +157,12 @@ class RoverPremiumVoiceCoordinator {
       }
 
       await _player.play(audio.bytes);
+      if (generation != _playbackGeneration) return false;
       statusMessage =
           'Using premium Rover voice (${audio.provider}, ${audio.cacheStatus}, ${audio.bytes.length} bytes).';
       return true;
     } catch (error) {
+      if (generation != _playbackGeneration) return false;
       lastPlaybackError = '$error';
       statusMessage =
           'Using device voice. Premium playback/request failed: $error';
@@ -205,5 +211,8 @@ class RoverPremiumVoiceCoordinator {
 
   Future<void> pause() => _player.pause();
   Future<void> resume() => _player.resume();
-  Future<void> stop() => _player.stop();
+  Future<void> stop() {
+    _playbackGeneration++;
+    return _player.stop();
+  }
 }

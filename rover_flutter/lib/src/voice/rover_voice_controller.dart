@@ -178,14 +178,22 @@ class RoverVoiceController extends ChangeNotifier {
 
     unawaited(_prefetchUpcomingNarration(session));
 
-    if (recentStop != null &&
-        session.apiWalkSessionId != null &&
-        session.arrivalCandidateStopId == recentStop.id) {
-      final key = '${session.apiWalkSessionId}:${recentStop.id}';
+    RoverStop? candidateStop;
+    for (final stop in session.roam.stops) {
+      if (stop.id == session.arrivalCandidateStopId) {
+        candidateStop = stop;
+        break;
+      }
+    }
+    if (recentStop != null && recentStop.id == session.arrivalCandidateStopId) {
+      candidateStop = recentStop;
+    }
+    if (candidateStop != null && walkSessionId != null) {
+      final key = '$walkSessionId:${candidateStop.id}';
       await _playAutomaticArrival(
         key,
-        recentStop,
-        completed: session.completedStopIds.contains(recentStop.id),
+        candidateStop,
+        completed: session.completedStopIds.contains(candidateStop.id),
         candidate: true,
       );
       return;
@@ -242,13 +250,14 @@ class RoverVoiceController extends ChangeNotifier {
       );
       return;
     }
-    if (!_arrivalNarrationInFlightKeys.add(key)) {
+    if (_arrivalNarrationInFlightKeys.isNotEmpty) {
       FieldDiagnostics.instance.record(
         'voice',
         'auto arrival narration already in progress stop=${stop.name}',
       );
       return;
     }
+    _arrivalNarrationInFlightKeys.add(key);
 
     FieldDiagnostics.instance.record(
       'voice',
@@ -992,12 +1001,17 @@ class RoverVoiceController extends ChangeNotifier {
       return false;
     }
 
-    await _audioSession.configure();
-    await _textToSpeech.configure(rate: _speechRate);
     final playbackGeneration = ++_playbackGeneration;
+    _activeAudioPriority = _arrivalPriority;
     _setState(RoverAudioState.preparingNarration);
+    await _audioSession.configure();
+    if (playbackGeneration != _playbackGeneration) return false;
+    await _textToSpeech.configure(rate: _speechRate);
+    if (playbackGeneration != _playbackGeneration) return false;
     await _premiumVoice?.stop();
+    if (playbackGeneration != _playbackGeneration) return false;
     await _textToSpeech.stop();
+    if (playbackGeneration != _playbackGeneration) return false;
     _setState(RoverAudioState.speakingNarration);
     final activeStopId = _activeNarrationStopId ?? 'none';
     FieldDiagnostics.instance.record(
@@ -1072,13 +1086,17 @@ class RoverVoiceController extends ChangeNotifier {
       return false;
     }
 
-    await _audioSession.configure();
-    await _textToSpeech.configure(rate: _speechRate);
     final playbackGeneration = ++_playbackGeneration;
-    await _premiumVoice?.stop();
-    await _textToSpeech.stop();
     _activeAudioPriority = priority;
     _setState(RoverAudioState.speakingAnswer);
+    await _audioSession.configure();
+    if (playbackGeneration != _playbackGeneration) return false;
+    await _textToSpeech.configure(rate: _speechRate);
+    if (playbackGeneration != _playbackGeneration) return false;
+    await _premiumVoice?.stop();
+    if (playbackGeneration != _playbackGeneration) return false;
+    await _textToSpeech.stop();
+    if (playbackGeneration != _playbackGeneration) return false;
     final premiumSpoken = localOnly
         ? false
         : await _premiumVoice?.speak(
@@ -1581,6 +1599,7 @@ class RoverVoiceController extends ChangeNotifier {
 
   bool _canStartPriority(int priority) {
     if (_state != RoverAudioState.speakingAnswer &&
+        _state != RoverAudioState.preparingNarration &&
         _state != RoverAudioState.speakingNarration) {
       return true;
     }

@@ -779,14 +779,14 @@ static async Task LocalRouteResearchValidation()
     var segment = new RouteStorySegment("s", 1, anchor, anchor, anchor, 0, 300, 300, 240, false, []);
     var query = new LocalRouteResearchQuery([segment], new ApproximateLiveLocation("Paris", null, "FR", null), ["Public museum"], ["history"], "en",
         [new LocalResearchPublicPlace("Public museum", "Museum street, Paris", anchor)]);
-    const string passage = "In Paris, this museum preserves local workshop traditions through its collection of tools and accounts of the people who used them.";
+    const string passage = "In Paris, Public museum preserves local workshop traditions through its collection of tools and accounts of the people who used them.";
     var research = JsonSerializer.Serialize(new { status = "completed", output = new[] { new { content = new[] { new
     {
         text = passage + " [1]",
         annotations = new[] { new { type = "url_citation", start_index = passage.Length + 1, end_index = passage.Length + 4,
             url = "https://museum.example/history", title = "Museum history" } }
     } } } } });
-    foreach (var scenario in new[] { "valid", "wrapped", "uncited", "missing-annotations", "bad-offset", "bad-url", "short-text", "embedded-url", "far", "undated-event", "invented-event-dates", "unknown-evidence", "unsupported-location", "failure" })
+    foreach (var scenario in new[] { "valid", "culture", "architecture", "venue-anchor", "wrapped", "uncited", "missing-annotations", "bad-offset", "bad-url", "short-text", "embedded-url", "far", "undated-event", "invented-event-dates", "unknown-evidence", "unsupported-location", "failure" })
     {
         var calls = 0;
         using var client = new HttpClient(new RoutingHttpMessageHandler(request =>
@@ -808,6 +808,7 @@ static async Task LocalRouteResearchValidation()
                 AssertEqual("Museum street, Paris", publicPlace.GetProperty("address").GetString());
                 AssertEqual(Math.Round(anchor.Latitude, 4), publicPlace.GetProperty("latitude").GetDouble());
                 AssertTrue(input.Contains("city is a disambiguator, not the search area"), "Research must target the walking neighbourhood, not citywide attractions.");
+                AssertTrue(input.Contains("actively search official neighbourhood") && input.Contains("existing search budget"), "Current events need an explicit bounded search, not incidental discovery.");
             }
             if (scenario == "failure") return JsonResponse(HttpStatusCode.ServiceUnavailable, "{}");
             if (calls == 1)
@@ -844,9 +845,9 @@ static async Task LocalRouteResearchValidation()
             var cards = JsonSerializer.Serialize(new { stories = new[] { new
             {
                 evidenceIndex = scenario == "unknown-evidence" ? 99 : 0,
-                title = "Workshop traditions", kind = scenario is "undated-event" or "invented-event-dates" ? "event" : "history",
-                latitude = scenario == "far" ? 44 : anchor.Latitude, longitude = anchor.Longitude,
-                locationEvidence = scenario == "unsupported-location" ? "Berlin" : "Paris",
+                title = "Workshop traditions", kind = scenario is "undated-event" or "invented-event-dates" ? "event" : scenario is "culture" or "architecture" ? scenario : "history",
+                latitude = scenario is "far" or "venue-anchor" ? 44 : anchor.Latitude, longitude = anchor.Longitude,
+                locationEvidence = scenario == "unsupported-location" ? "Berlin" : scenario == "venue-anchor" ? "Public museum" : "Paris",
                 startsUtc = scenario == "invented-event-dates" ? now.AddDays(1).ToString("O") : null,
                 endsUtc = scenario == "invented-event-dates" ? now.AddDays(1).AddHours(1).ToString("O") : null
             } } });
@@ -855,7 +856,12 @@ static async Task LocalRouteResearchValidation()
         var researcher = new Rover.Infrastructure.Journeys.OpenAILocalRouteResearcher(client,
             new Rover.Infrastructure.Journeys.LocalRouteResearchOptions { Enabled = true, ApiKey = "test", Model = "gpt-5-mini" }, TimeProvider.System);
         var result = await researcher.ResearchAsync(query, CancellationToken.None);
-        AssertEqual(scenario is "valid" or "wrapped" ? 1 : 0, result.Stories.Count);
+        AssertEqual(scenario is "valid" or "wrapped" or "culture" or "architecture" or "venue-anchor" ? 1 : 0, result.Stories.Count);
+        if (scenario is "culture" or "architecture" or "venue-anchor")
+        {
+            AssertEqual(RouteStoryIntent.HiddenHistory, result.Stories.Single().Intent);
+            AssertEqual(anchor, result.Stories.Single().Anchor);
+        }
         AssertTrue(calls <= 2, "Research is bounded to two model calls per pack.");
         var expectedDiagnostic = scenario switch
         {
@@ -1065,6 +1071,11 @@ static async Task RouteStoriesMergeFreshLiveUpdates()
     AssertTrue(stories.All(story => story.Claims.All(claim => claim.SourceIds.Count > 0)), "Every live claim must retain citations.");
     AssertTrue(stories.All(story => story.ExpiresUtc == now.AddMinutes(20)), "Live stories must expire with their sources.");
     AssertEqual(0, RouteStoryLiveComposer.Compose(context, plan.Segments, now.AddMinutes(21)).Count);
+    var ongoing = context with { Events = events with { Items = new[] { item with { StartsUtc = now.AddMinutes(-30), EndsUtc = now.AddMinutes(5) } } } };
+    var ongoingStory = RouteStoryLiveComposer.Compose(ongoing, plan.Segments, now).Single(story => story.Category == "local events");
+    AssertEqual(now.AddMinutes(5), ongoingStory.ExpiresUtc);
+    AssertTrue(ongoingStory.Variants[0].Narration.Contains("taking place now"), "Ongoing events must remain eligible until they end.");
+    AssertEqual(0, RouteStoryLiveComposer.Compose(ongoing, plan.Segments, now.AddMinutes(5)).Count(story => story.Category == "local events"));
 }
 
 static async Task Phase16RoutePacksSelectCompleteAndSaveStories()

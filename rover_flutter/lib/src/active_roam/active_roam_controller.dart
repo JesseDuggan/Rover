@@ -884,11 +884,9 @@ class ActiveRoamController extends ChangeNotifier {
       final threshold = stop.arrivalRadiusMeters + math.min(accuracy ?? 0, 10);
       if (distance <= threshold) {
         currentlyInside.add(stop.id);
-        final missedEntryNeedsRecovery =
-            previouslyInside.contains(stop.id) &&
-            !baseSession.narratedArrivalStopIds.contains(stop.id) &&
-            baseSession.arrivalCandidateStopId == null;
-        if ((!previouslyInside.contains(stop.id) || missedEntryNeedsRecovery) &&
+        // Keep unheard entries eligible even if the server still names another
+        // candidate. The voice controller serializes in-flight arrivals.
+        if (!baseSession.narratedArrivalStopIds.contains(stop.id) &&
             distance < closestNarratableDistance) {
           closestNarratable = stop;
           closestNarratableDistance = distance;

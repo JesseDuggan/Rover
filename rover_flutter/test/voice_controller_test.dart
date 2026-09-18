@@ -25,6 +25,155 @@ import 'package:rover/src/voice/rover_voice_controller.dart';
 import 'package:rover/src/voice/rover_voice_state.dart';
 
 void main() {
+  test(
+    'new candidate narrates even when recent arrival is already heard',
+    () async {
+      final tts = FakeTextToSpeech();
+      final narrated = <String>[];
+      final controller = RoverVoiceController(
+        walkRepository: FakeVoiceWalkRepository(),
+        textToSpeech: tts,
+        speechRecognizer: FakeSpeechRecognizer(),
+        audioSession: FakeAudioSession(),
+        adaptiveRouteStoriesEnabled: true,
+        onArrivalNarrated: (id) async {
+          narrated.add(id);
+        },
+      );
+      final previous = _stop.copyWith(
+        id: 'previous-stop',
+        name: 'Previous cafe',
+      );
+      final session = _session(completedStopIds: {'previous-stop'}).copyWith(
+        roam: _session().roam.copyWith(stops: [previous, _stop]),
+        recentNarrationStopId: previous.id,
+        recentNarrationStopOverride: previous,
+        narratedArrivalStopIds: {previous.id},
+        arrivalCandidate: true,
+        arrivalCandidateStopId: _stop.id,
+      );
+      await controller.syncWithSession(session);
+      await controller.syncWithSession(session);
+      expect(tts.spoken.first, 'You have arrived at Union Square.');
+      expect(tts.spoken, hasLength(3));
+      expect(narrated, [_stop.id]);
+      controller.dispose();
+    },
+  );
+
+  test(
+    'different overlapping arrivals wait without restarting audio',
+    () async {
+      final tts = BlockingTextToSpeech();
+      final narrated = <String>[];
+      final controller = RoverVoiceController(
+        walkRepository: FakeVoiceWalkRepository(),
+        textToSpeech: tts,
+        speechRecognizer: FakeSpeechRecognizer(),
+        audioSession: FakeAudioSession(),
+        adaptiveRouteStoriesEnabled: true,
+        onArrivalNarrated: (id) async {
+          narrated.add(id);
+        },
+      );
+      final second = _stop.copyWith(id: 'second-stop', name: 'Next cafe');
+      final session = _session().copyWith(
+        roam: _session().roam.copyWith(stops: [_stop, second]),
+        arrivalCandidate: true,
+        arrivalCandidateStopId: _stop.id,
+      );
+      final first = controller.syncWithSession(session);
+      await tts.firstSpeakStarted.future;
+      final stopsBefore = tts.stopCount;
+      final next = session.copyWith(arrivalCandidateStopId: second.id);
+      await controller.syncWithSession(next);
+      expect(tts.spoken, ['You have arrived at Union Square.']);
+      expect(tts.stopCount, stopsBefore);
+      tts.releaseFirstSpeak.complete();
+      await first;
+      await controller.syncWithSession(next);
+      expect(narrated, [_stop.id, second.id]);
+      expect(tts.spoken.where((text) => text.startsWith('You have arrived')), [
+        'You have arrived at Union Square.',
+        'You have arrived at Next cafe.',
+      ]);
+      controller.dispose();
+    },
+  );
+
+  test('arrival cancels story still preparing audio', () async {
+    final tts = FakeTextToSpeech();
+    final audio = BlockingAudioSession();
+    final controller = RoverVoiceController(
+      walkRepository: FakeVoiceWalkRepository(),
+      textToSpeech: tts,
+      speechRecognizer: FakeSpeechRecognizer(),
+      audioSession: audio,
+      adaptiveRouteStoriesEnabled: true,
+    );
+    final story = controller.playAdaptiveRouteStory(
+      _adaptiveSelection(),
+      _session(),
+    );
+    await audio.started.future;
+    await controller.syncWithSession(
+      _session().copyWith(
+        arrivalCandidate: true,
+        arrivalCandidateStopId: _stop.id,
+      ),
+    );
+    audio.release.complete();
+    expect(await story, isFalse);
+    expect(tts.spoken, hasLength(3));
+    expect(tts.spoken.first, 'You have arrived at Union Square.');
+    expect(tts.spoken, isNot(contains('First fact.')));
+    controller.dispose();
+  });
+
+  test('stopped premium render never starts stale audio', () async {
+    final repository = DelayedSpeechRepository();
+    final player = RecordingPremiumPlayer();
+    final premium = RoverPremiumVoiceCoordinator(
+      walkRepository: repository,
+      player: player,
+    );
+    final playback = premium.speak(
+      text: 'Old story.',
+      purpose: 'AdaptiveRouteStory',
+    );
+    await repository.started.future;
+    await premium.stop();
+    repository.release.complete(_renderedAudio);
+    expect(await playback, isFalse);
+    expect(player.played, isEmpty);
+    expect(
+      await premium.speak(text: 'Old story.', purpose: 'AdaptiveRouteStory'),
+      isTrue,
+    );
+    expect(player.played, hasLength(1));
+  });
+
+  test('new premium playback supersedes pending render', () async {
+    final repository = DelayedSpeechRepository();
+    final player = RecordingPremiumPlayer();
+    final premium = RoverPremiumVoiceCoordinator(
+      walkRepository: repository,
+      player: player,
+    );
+    final old = premium.speak(
+      text: 'Old story.',
+      purpose: 'AdaptiveRouteStory',
+    );
+    await repository.started.future;
+    expect(
+      await premium.speak(text: 'Arrival.', purpose: 'StopNarration'),
+      isTrue,
+    );
+    repository.release.complete(_renderedAudio);
+    expect(await old, isFalse);
+    expect(player.played, hasLength(1));
+  });
+
   test('departure instruction is not an imminent story interruption', () async {
     final controller = RoverVoiceController(
       walkRepository: FakeVoiceWalkRepository(),
@@ -258,7 +407,8 @@ void main() {
 
     await controller.syncWithSession(session);
 
-    expect(tts.spoken, isEmpty);
+    expect(tts.spoken.first, 'You have arrived at Union Square.');
+    expect(tts.spoken, isNot(contains('Turn left onto Main Street')));
     controller.dispose();
   });
 
@@ -1063,6 +1213,54 @@ class SuccessfulPremiumVoiceCoordinator extends RoverPremiumVoiceCoordinator {
 
   @override
   Future<void> stop() async {}
+}
+
+const _renderedAudio = RenderedSpeechAudio(
+  bytes: [1, 2, 3],
+  contentType: 'audio/mpeg',
+  provider: 'Test',
+  cacheStatus: 'miss',
+  usedFallback: false,
+);
+
+class DelayedSpeechRepository extends FakeVoiceWalkRepository {
+  final started = Completer<void>();
+  final release = Completer<RenderedSpeechAudio>();
+  @override
+  Future<RenderedSpeechAudio> renderSpeech(RenderSpeechRequest request) {
+    if (!started.isCompleted) {
+      started.complete();
+      return release.future;
+    }
+    return Future.value(_renderedAudio);
+  }
+}
+
+class RecordingPremiumPlayer implements RoverPremiumAudioPlayer {
+  final played = <List<int>>[];
+  @override
+  Future<void> play(List<int> bytes) async {
+    played.add(bytes);
+  }
+
+  @override
+  Future<void> pause() async {}
+  @override
+  Future<void> resume() async {}
+  @override
+  Future<void> stop() async {}
+}
+
+class BlockingAudioSession implements RoverAudioSessionCoordinator {
+  final started = Completer<void>();
+  final release = Completer<void>();
+  @override
+  Future<void> configure() async {
+    if (!started.isCompleted) {
+      started.complete();
+      await release.future;
+    }
+  }
 }
 
 class FakeVoiceWalkRepository implements WalkRepository {
