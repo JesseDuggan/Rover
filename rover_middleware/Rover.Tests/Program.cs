@@ -913,6 +913,22 @@ static async Task LocalRouteResearchValidation()
         AssertTrue(!result.Warning.Contains("secret-provider-text") && !result.Warning.Contains("existing stories remain"), "Diagnostics must not echo provider text or promise nonexistent stories.");
         AssertTrue(calls <= 2, "Diagnostics must not trigger extra paid retries.");
     }
+    using (var delayedClient = new HttpClient(new DelayedResearchStageHandler(research)))
+    {
+        var staged = new Rover.Infrastructure.Journeys.OpenAILocalRouteResearcher(delayedClient,
+            new Rover.Infrastructure.Journeys.LocalRouteResearchOptions
+            {
+                Enabled = true, ApiKey = "test", Model = "test", TimeoutSeconds = 10, ClassificationTimeoutSeconds = 10
+            }, TimeProvider.System);
+        var stagedResult = await staged.ResearchAsync(query, CancellationToken.None);
+        AssertEqual(1, stagedResult.Stories.Count);
+        using var cancelled = new CancellationTokenSource();
+        cancelled.Cancel();
+        var propagated = false;
+        try { await staged.ResearchAsync(query, cancelled.Token); }
+        catch (OperationCanceledException) { propagated = true; }
+        AssertTrue(propagated, "Stage budgets must preserve caller cancellation.");
+    }
     foreach (var capture in new[] { false, true })
     {
         const string secret = "private-test-api-key";
@@ -5224,6 +5240,19 @@ internal sealed class SingleHttpClientFactory : IHttpClientFactory
     }
 
     public HttpClient CreateClient(string name) => _client;
+}
+
+internal sealed class DelayedResearchStageHandler(string research) : HttpMessageHandler
+{
+    private int _calls;
+    protected override async Task<HttpResponseMessage> SendAsync(HttpRequestMessage request, CancellationToken cancellationToken)
+    {
+        var search = ++_calls == 1;
+        await Task.Delay(TimeSpan.FromSeconds(search ? 8 : 3), cancellationToken);
+        var cards = """{"stories":[{"evidenceIndex":0,"title":"Museum traditions","kind":"history","latitude":48.856,"longitude":2.352,"locationEvidence":"Paris","startsUtc":null,"endsUtc":null}]}""";
+        var body = search ? research : JsonSerializer.Serialize(new { status = "completed", output = new[] { new { content = new[] { new { text = cards } } } } });
+        return new HttpResponseMessage(HttpStatusCode.OK) { Content = new StringContent(body, System.Text.Encoding.UTF8, "application/json") };
+    }
 }
 
 internal sealed class RoutingHttpMessageHandler : HttpMessageHandler

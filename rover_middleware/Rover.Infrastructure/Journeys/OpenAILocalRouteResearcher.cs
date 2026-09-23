@@ -20,6 +20,7 @@ public sealed class LocalRouteResearchOptions
     public string? ApiKey { get; set; }
     public string? Model { get; set; }
     public int TimeoutSeconds { get; set; } = 60;
+    public int ClassificationTimeoutSeconds { get; set; } = 30;
     public int SearchMaxOutputTokens { get; set; } = 8192;
     public int ClassificationMaxOutputTokens { get; set; } = 4096;
     public int MaximumCollectionStories { get; set; } = 8;
@@ -97,6 +98,10 @@ public sealed class OpenAILocalRouteResearcher(HttpClient client, LocalRouteRese
             }
 
             stage = "story classification";
+            // Searching must not consume the classifier's entire time allowance.
+            // The caller's overall generation deadline still bounds both stages.
+            using var classificationBudget = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
+            classificationBudget.CancelAfter(TimeSpan.FromSeconds(Math.Clamp(options.ClassificationTimeoutSeconds, 10, 60)));
             using var organized = await SendAsync(new
             {
                 model = options.Model, store = false,
@@ -104,7 +109,7 @@ public sealed class OpenAILocalRouteResearcher(HttpClient client, LocalRouteRese
                 input = JsonSerializer.Serialize(new { route = context, evidence = passages.Select((passage, index) => new { evidenceIndex = index, text = passage.Text }) }) + " Apply maximumStoryDistanceMeters to the subject's actual location, not the city centre. Use publicPlaces to disambiguate the neighbourhood. When the passage explicitly names a listed public place as its subject or venue, use that exact name as locationEvidence and its supplied coordinates. Do not borrow a listed place's coordinates for an unrelated subject or move a subject to fit the route. Omit subjects outside the walking neighbourhood.",
                 text = new { format = new { type = "json_schema", name = "route_research", strict = true, schema = Schema() } },
                 max_output_tokens = Math.Clamp(options.ClassificationMaxOutputTokens, 1024, 8192)
-            }, budget.Token);
+            }, classificationBudget.Token);
             stage = "classification parsing";
             var classificationText = OutputText(organized.RootElement);
             if (string.IsNullOrWhiteSpace(classificationText))

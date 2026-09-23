@@ -225,6 +225,7 @@ public static class DependencyInjection
             ApiKey = Environment.GetEnvironmentVariable("OPENAI_API_KEY"),
             Model = Environment.GetEnvironmentVariable("ROVER_LOCAL_RESEARCH_MODEL") ?? currentInformationOptions.Model,
             TimeoutSeconds = configuration.GetValue("Rover:Phase16:LocalResearch:TimeoutSeconds", 60),
+            ClassificationTimeoutSeconds = configuration.GetValue("Rover:Phase16:LocalResearch:ClassificationTimeoutSeconds", 30),
             SearchMaxOutputTokens = configuration.GetValue("Rover:Phase16:LocalResearch:SearchMaxOutputTokens", 8192),
             ClassificationMaxOutputTokens = configuration.GetValue("Rover:Phase16:LocalResearch:ClassificationMaxOutputTokens", 4096),
             MaximumCollectionStories = configuration.GetValue("Rover:Phase16:LocalResearch:MaximumCollectionStories", 8),
