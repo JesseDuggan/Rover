@@ -1265,7 +1265,8 @@ walks.MapPost("/{walkSessionId}/route-story-pack/playback-events", async (
     CancellationToken cancellationToken) =>
 {
     if (string.IsNullOrWhiteSpace(request?.StoryId)
-        || !Enum.TryParse<AdaptiveStoryPlaybackEventKind>(request.Kind, true, out var kind))
+        || !Enum.TryParse<AdaptiveStoryPlaybackEventKind>(request.Kind, true, out var kind)
+        || !Enum.IsDefined(kind))
     {
         return Results.ValidationProblem(new Dictionary<string, string[]> { ["playbackEvent"] = ["A storyId and valid playback event kind are required."] });
     }

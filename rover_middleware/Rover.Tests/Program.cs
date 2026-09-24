@@ -76,6 +76,7 @@ var tests = new List<(string Name, Func<Task> Run)>
     ("Phase 16 story duration preserves navigation time", Phase16StoryDurationPreservesNavigationTime),
     ("Phase 16 route packs are revision scoped", Phase16RoutePacksAreRevisionScoped),
     ("Phase 16 route packs select, complete, and save stories", Phase16RoutePacksSelectCompleteAndSaveStories),
+    ("Playback outcomes distinguish listening from skipped and failed attempts", PlaybackOutcomesDistinguishAttempts),
     ("Route stories merge only fresh, nearby, cited live updates", RouteStoriesMergeFreshLiveUpdates),
     ("Route evidence prioritizes history and provides short cited passages", StoryFirstEvidence),
     ("Local route research discovers cited evidence and rejects invalid cards", LocalRouteResearchValidation),
@@ -673,6 +674,30 @@ static Task Phase15RouteDirectionClassification()
     return Task.CompletedTask;
 }
 
+static Task PlaybackOutcomesDistinguishAttempts()
+{
+    var now = DateTimeOffset.UtcNow;
+    var empty = new AdaptiveStoryPlaybackOutcomes();
+    var outcomes = empty;
+    foreach (var kind in Enum.GetValues<AdaptiveStoryPlaybackEventKind>())
+    {
+        if (kind == AdaptiveStoryPlaybackEventKind.Completed) continue;
+        outcomes = outcomes.Record(new AdaptiveStoryPlaybackEvent("story", kind, now, 3));
+        AssertEqual(0, outcomes.CompletedStoryIds.Count);
+    }
+    AssertTrue(outcomes.SkippedStoryIds.Contains("story"), "Skipped is a distinct outcome.");
+    AssertTrue(outcomes.DismissedStoryIds.Contains("story"), "Dismissed is a distinct outcome.");
+    AssertTrue(outcomes.InterruptedStoryIds.Contains("story"), "Interrupted is a distinct outcome.");
+    AssertTrue(outcomes.FailedStoryIds.Contains("story"), "Failed is a distinct outcome.");
+    outcomes = outcomes.Record(new AdaptiveStoryPlaybackEvent("story", AdaptiveStoryPlaybackEventKind.Completed, now, 20));
+    outcomes = outcomes.Record(new AdaptiveStoryPlaybackEvent("STORY", AdaptiveStoryPlaybackEventKind.Completed, now, 20));
+    AssertEqual(1, outcomes.CompletedStoryIds.Count);
+    AssertEqual(0, empty.CompletedStoryIds.Count);
+    AssertEqual(0, empty.FailedStoryIds.Count);
+    AssertTrue(outcomes.FailedStoryIds.Contains("story"), "A successful retry must not erase earlier failure evidence.");
+    return Task.CompletedTask;
+}
+
 static async Task Phase16FilePacksPersistAndReplace()
 {
     var directory = Path.Combine(Path.GetTempPath(), $"rover-route-pack-test-{Guid.NewGuid():N}");
@@ -695,6 +720,28 @@ static async Task Phase16FilePacksPersistAndReplace()
         var restored = await restarted.GetAsync("walk-test", 1, CancellationToken.None);
         AssertNotNull(restored, "A saved pack must survive repository restart.");
         AssertTrue(restored!.HeardStoryIds.Contains("heard-test"), "Replacement must preserve updated playback state.");
+        AssertEqual(0, restored.PlaybackOutcomes.CompletedStoryIds.Count);
+        var outcomes = new AdaptiveStoryPlaybackOutcomes();
+        foreach (var kind in new[] { AdaptiveStoryPlaybackEventKind.Completed, AdaptiveStoryPlaybackEventKind.Skipped,
+            AdaptiveStoryPlaybackEventKind.Dismissed, AdaptiveStoryPlaybackEventKind.Interrupted, AdaptiveStoryPlaybackEventKind.Failed })
+            outcomes = outcomes.Record(new AdaptiveStoryPlaybackEvent(kind.ToString(), kind, now, null));
+        await repository.StoreAsync(restored with { PlaybackOutcomes = outcomes }, CancellationToken.None);
+        var reloaded = await new Rover.Infrastructure.Journeys.FileAdaptiveRouteStoryPackRepository(options, TimeProvider.System)
+            .GetAsync("walk-test", 1, CancellationToken.None);
+        AssertTrue(reloaded!.PlaybackOutcomes.CompletedStoryIds.Contains("completed"), "Explicit completed outcomes survive restart.");
+        AssertTrue(reloaded.PlaybackOutcomes.SkippedStoryIds.Contains("skipped"), "Skipped outcomes survive restart.");
+        AssertTrue(reloaded.PlaybackOutcomes.DismissedStoryIds.Contains("dismissed"), "Dismissed outcomes survive restart.");
+        AssertTrue(reloaded.PlaybackOutcomes.InterruptedStoryIds.Contains("interrupted"), "Interrupted outcomes survive restart.");
+        AssertTrue(reloaded.PlaybackOutcomes.FailedStoryIds.Contains("failed"), "Failed outcomes survive restart.");
+        var cachePath = Directory.GetFiles(directory, "*.json", SearchOption.AllDirectories).Single();
+        var legacyJson = System.Text.Json.Nodes.JsonNode.Parse(await File.ReadAllTextAsync(cachePath))!.AsObject();
+        legacyJson.Remove("playbackOutcomes");
+        await File.WriteAllTextAsync(cachePath, legacyJson.ToJsonString());
+        var legacy = await new Rover.Infrastructure.Journeys.FileAdaptiveRouteStoryPackRepository(options, TimeProvider.System)
+            .GetAsync("walk-test", 1, CancellationToken.None);
+        AssertNotNull(legacy, "Pre-outcome cache files must still load.");
+        AssertTrue(legacy!.HeardStoryIds.Contains("heard-test"), "Legacy autoplay exclusions remain intact.");
+        AssertEqual(0, legacy.PlaybackOutcomes.CompletedStoryIds.Count);
         AssertEqual(0, Directory.GetFiles(directory, "*.tmp", SearchOption.AllDirectories).Length);
     }
     finally
@@ -1126,11 +1173,12 @@ static async Task Phase16RoutePacksSelectCompleteAndSaveStories()
         source);
     var packs = new InMemoryAdaptiveRouteStoryPackRepository();
     var options = new Phase16Options { Enabled = true, JourneyCollectionsEnabled = true };
+    var playbackContext = new RecordingLocationStoryContextService(new[] { place });
     var service = new AdaptiveRouteStoryPackService(
         options,
         walks,
         plans,
-        new RecordingLocationStoryContextService(new[] { place }),
+        playbackContext,
         packs,
         new DeterministicStoryIntentClassifier(),
         new DeterministicAdaptiveStoryLengthSelector(options),
@@ -1255,6 +1303,46 @@ static async Task Phase16RoutePacksSelectCompleteAndSaveStories()
 
     AssertTrue(updated!.SavedStoryIds!.Contains(story.StoryId), "Saved stories must remain in route-pack state.");
     AssertTrue(updated.HeardStoryIds.Contains(story.StoryId), "Completed stories must not be selected again.");
+    AssertTrue(updated.PlaybackOutcomes.CompletedStoryIds.Contains(story.StoryId), "Completed listening must be explicit.");
+    foreach (var kind in new[] { AdaptiveStoryPlaybackEventKind.Skipped, AdaptiveStoryPlaybackEventKind.Dismissed,
+        AdaptiveStoryPlaybackEventKind.Interrupted, AdaptiveStoryPlaybackEventKind.Failed })
+    {
+        await packs.StoreAsync(state, CancellationToken.None);
+        await service.RecordPlaybackAsync(session.WalkSessionId,
+            new AdaptiveStoryPlaybackEvent(story.StoryId, kind, now, 3), CancellationToken.None);
+        var outcomeState = await service.GetStatusAsync(session.WalkSessionId, CancellationToken.None);
+        AssertEqual(0, outcomeState!.PlaybackOutcomes.CompletedStoryIds.Count);
+        AssertEqual(kind is AdaptiveStoryPlaybackEventKind.Skipped or AdaptiveStoryPlaybackEventKind.Dismissed,
+            outcomeState.HeardStoryIds.Contains(story.StoryId));
+    }
+    await packs.StoreAsync(updated, CancellationToken.None);
+    var refreshed = await service.GenerateAsync(session.WalkSessionId,
+        new GenerateAdaptiveRouteStoryPackCommand(null, "GeneralTraveller", "en", true), CancellationToken.None);
+    AssertTrue(refreshed.PlaybackOutcomes.CompletedStoryIds.Contains(story.StoryId), "Refresh must retain explicit completed outcomes.");
+    foreach (var failRefresh in new[] { false, true })
+    {
+        await packs.StoreAsync(state, CancellationToken.None);
+        playbackContext.BeforeContext = async () =>
+        {
+            await service.RecordPlaybackAsync(session.WalkSessionId,
+                new AdaptiveStoryPlaybackEvent(story.StoryId, AdaptiveStoryPlaybackEventKind.Completed, now, 20), CancellationToken.None);
+            if (failRefresh) throw new InvalidOperationException("Simulated research failure after playback.");
+        };
+        try
+        {
+            if (failRefresh)
+                await AssertThrowsAsync<InvalidOperationException>(() => service.GenerateAsync(session.WalkSessionId,
+                    new GenerateAdaptiveRouteStoryPackCommand(null, "GeneralTraveller", "en", true), CancellationToken.None));
+            else
+                await service.GenerateAsync(session.WalkSessionId,
+                    new GenerateAdaptiveRouteStoryPackCommand(null, "GeneralTraveller", "en", true), CancellationToken.None);
+            var afterRefresh = await service.GetStatusAsync(session.WalkSessionId, CancellationToken.None);
+            AssertTrue(afterRefresh!.PlaybackOutcomes.CompletedStoryIds.Contains(story.StoryId),
+                "Successful and failed refreshes must retain playback reported during research.");
+        }
+        finally { playbackContext.BeforeContext = null; }
+    }
+    await packs.StoreAsync(updated, CancellationToken.None);
     AssertNull(
         await service.GetNextAsync(
             session.WalkSessionId,
@@ -5303,6 +5391,7 @@ internal sealed class StaticLocationProvider : ILocationContextProvider
 internal sealed class RecordingLocationStoryContextService : ILocationStoryContextService
 {
     private readonly IReadOnlyList<LocationPlace> _places;
+    public Func<Task>? BeforeContext { get; set; }
 
     public RecordingLocationStoryContextService(IReadOnlyList<LocationPlace>? places = null)
     {
@@ -5311,13 +5400,14 @@ internal sealed class RecordingLocationStoryContextService : ILocationStoryConte
 
     public List<LocationContextQuery> Queries { get; } = [];
 
-    public Task<LocationStoryContext> GetContextAsync(
+    public async Task<LocationStoryContext> GetContextAsync(
         LocationContextQuery query,
         CancellationToken cancellationToken)
     {
         cancellationToken.ThrowIfCancellationRequested();
+        if (BeforeContext is not null) await BeforeContext();
         Queries.Add(query);
-        return Task.FromResult(new LocationStoryContext(
+        return new LocationStoryContext(
             query.UserLocation,
             query.RadiusMeters,
             query.RouteId,
@@ -5327,7 +5417,7 @@ internal sealed class RecordingLocationStoryContextService : ILocationStoryConte
             null,
             Array.Empty<string>(),
             Array.Empty<LocationProviderStatus>(),
-            new LocationCacheStatus("phase15-test", false, null)));
+            new LocationCacheStatus("phase15-test", false, null));
     }
 
     public Task<LocationStoryResult> CreateStoryAsync(

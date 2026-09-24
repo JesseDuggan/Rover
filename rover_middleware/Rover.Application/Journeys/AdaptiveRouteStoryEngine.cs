@@ -52,7 +52,7 @@ public enum AdaptiveStoryLength { Quick, Short, Standard, Deep }
 [JsonConverter(typeof(JsonStringEnumConverter))]
 public enum AdaptiveRouteStoryPackStatus { Pending, Generating, Ready, Partial, Failed }
 [JsonConverter(typeof(JsonStringEnumConverter))]
-public enum AdaptiveStoryPlaybackEventKind { Started, Paused, Resumed, Completed, Skipped, Replayed, TellMore, Saved, SourcesViewed, Dismissed }
+public enum AdaptiveStoryPlaybackEventKind { Started, Paused, Resumed, Completed, Skipped, Replayed, TellMore, Saved, SourcesViewed, Dismissed, Interrupted, Failed }
 
 public sealed record StoryIntentClassification(
     RouteStoryIntent Intent,
@@ -126,7 +126,12 @@ public sealed record AdaptiveRouteStoryPackState(
     string? Error,
     IReadOnlySet<string> HeardStoryIds,
     AdaptiveStoryPlaybackEventKind? LastPlaybackEvent,
-    IReadOnlySet<string>? SavedStoryIds = null);
+    IReadOnlySet<string>? SavedStoryIds = null)
+{
+    // HeardStoryIds is the legacy autoplay exclusion set, not proof of listening.
+    // Missing outcomes in older packs deliberately remain unknown.
+    public AdaptiveStoryPlaybackOutcomes PlaybackOutcomes { get; init; } = new();
+}
 
 public sealed record GenerateAdaptiveRouteStoryPackCommand(Guid? ProfileId, string? Audience, string? Language, bool ForceRefresh);
 
@@ -296,6 +301,7 @@ public sealed class AdaptiveRouteStoryPackService : IAdaptiveRouteStoryPackServi
 {
     // Fixed stripes serialize same-walk generation without retaining session IDs indefinitely.
     private static readonly SemaphoreSlim[] GenerationGates = Enumerable.Range(0, 64).Select(_ => new SemaphoreSlim(1, 1)).ToArray();
+    private static readonly SemaphoreSlim[] PlaybackGates = Enumerable.Range(0, 64).Select(_ => new SemaphoreSlim(1, 1)).ToArray();
     private readonly Phase16Options _options;
     private readonly IWalkSessionRepository _walks;
     private readonly IRouteStoryPlanService _plans;
@@ -369,8 +375,11 @@ public sealed class AdaptiveRouteStoryPackService : IAdaptiveRouteStoryPackServi
             null,
             existing?.HeardStoryIds ?? new HashSet<string>(StringComparer.OrdinalIgnoreCase),
             existing?.LastPlaybackEvent,
-            existing?.SavedStoryIds ?? new HashSet<string>(StringComparer.OrdinalIgnoreCase));
-        await _packs.StoreAsync(generating, cancellationToken);
+            existing?.SavedStoryIds ?? new HashSet<string>(StringComparer.OrdinalIgnoreCase))
+        {
+            PlaybackOutcomes = existing?.PlaybackOutcomes ?? new()
+        };
+        generating = await StoreGenerationStateAsync(generating, cancellationToken);
 
         using var budget = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
         budget.CancelAfter(TimeSpan.FromSeconds(Math.Clamp(_options.GenerationTimeoutSeconds, 1, 300)));
@@ -410,11 +419,7 @@ public sealed class AdaptiveRouteStoryPackService : IAdaptiveRouteStoryPackServi
                 UpdatedUtc = _timeProvider.GetUtcNow(),
                 Pack = pack
             };
-            var latest = await _packs.GetAsync(walkSessionId, session.RouteRevision, generationToken);
-            if (latest is not null)
-                ready = ready with { HeardStoryIds = latest.HeardStoryIds, SavedStoryIds = latest.SavedStoryIds, LastPlaybackEvent = latest.LastPlaybackEvent };
-            await _packs.StoreAsync(ready, generationToken);
-            return ready;
+            return await StoreGenerationStateAsync(ready, generationToken);
         }
         catch (OperationCanceledException)
         {
@@ -422,7 +427,7 @@ public sealed class AdaptiveRouteStoryPackService : IAdaptiveRouteStoryPackServi
                 ? "Route story generation was interrupted. Please retry."
                 : "Route story generation timed out. Please retry.";
             // The request token is cancelled; terminal state must still be recorded.
-            await _packs.StoreAsync(generating with
+            await StoreGenerationStateAsync(generating with
             {
                 Status = AdaptiveRouteStoryPackStatus.Failed,
                 UpdatedUtc = _timeProvider.GetUtcNow(),
@@ -439,7 +444,7 @@ public sealed class AdaptiveRouteStoryPackService : IAdaptiveRouteStoryPackServi
                 UpdatedUtc = _timeProvider.GetUtcNow(),
                 Error = exception.Message
             };
-            await _packs.StoreAsync(failed, cancellationToken);
+            await StoreGenerationStateAsync(failed, cancellationToken);
             throw;
         }
     }
@@ -525,6 +530,14 @@ public sealed class AdaptiveRouteStoryPackService : IAdaptiveRouteStoryPackServi
 
     public async Task RecordPlaybackAsync(string walkSessionId, AdaptiveStoryPlaybackEvent playbackEvent, CancellationToken cancellationToken)
     {
+        var gate = PlaybackGate(walkSessionId);
+        await gate.WaitAsync(cancellationToken);
+        try { await RecordPlaybackCoreAsync(walkSessionId, playbackEvent, cancellationToken); }
+        finally { gate.Release(); }
+    }
+
+    private async Task RecordPlaybackCoreAsync(string walkSessionId, AdaptiveStoryPlaybackEvent playbackEvent, CancellationToken cancellationToken)
+    {
         var state = await GetStatusAsync(walkSessionId, cancellationToken)
             ?? throw new InvalidOperationException("A route story pack has not been generated.");
         if (state.Pack?.Stories.All(story => !story.StoryId.Equals(playbackEvent.StoryId, StringComparison.OrdinalIgnoreCase)) != false)
@@ -548,9 +561,36 @@ public sealed class AdaptiveRouteStoryPackService : IAdaptiveRouteStoryPackServi
             UpdatedUtc = _timeProvider.GetUtcNow(),
             HeardStoryIds = heard,
             SavedStoryIds = saved,
+            PlaybackOutcomes = state.PlaybackOutcomes.Record(playbackEvent),
             LastPlaybackEvent = playbackEvent.Kind
         }, cancellationToken);
     }
+
+    // Serialize short state updates, not network research, so refresh cannot erase playback.
+    private async Task<AdaptiveRouteStoryPackState> StoreGenerationStateAsync(
+        AdaptiveRouteStoryPackState state, CancellationToken cancellationToken)
+    {
+        var gate = PlaybackGate(state.WalkSessionId);
+        await gate.WaitAsync(cancellationToken);
+        try
+        {
+            var latest = await _packs.GetAsync(state.WalkSessionId, state.RouteRevision, cancellationToken);
+            if (latest is not null)
+                state = state with
+                {
+                    HeardStoryIds = latest.HeardStoryIds,
+                    SavedStoryIds = latest.SavedStoryIds,
+                    LastPlaybackEvent = latest.LastPlaybackEvent,
+                    PlaybackOutcomes = latest.PlaybackOutcomes
+                };
+            await _packs.StoreAsync(state, cancellationToken);
+            return state;
+        }
+        finally { gate.Release(); }
+    }
+
+    private static SemaphoreSlim PlaybackGate(string walkSessionId) =>
+        PlaybackGates[(uint)StringComparer.OrdinalIgnoreCase.GetHashCode(walkSessionId) % (uint)PlaybackGates.Length];
 
     private async Task<IReadOnlyList<AdaptiveRouteStory>> BuildStoriesAsync(
         WalkSession session,
