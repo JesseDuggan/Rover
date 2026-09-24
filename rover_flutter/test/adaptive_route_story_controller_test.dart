@@ -360,6 +360,16 @@ void main() {
         );
         expect(repository.selections, 4);
         expect(repository.lastRequest?.secondsUntilNextManeuver, 36);
+        await controller.syncWithSession(
+          near.copyWith(
+            routeProgressPercentage: 85,
+            arrivalCandidate: true,
+            arrivalCandidateStopId: stop.id,
+            narratedArrivalStopIds: {stop.id},
+          ),
+          voice,
+        );
+        expect(repository.selections, 5);
       } finally {
         controller.dispose();
         voice.dispose();

@@ -664,9 +664,7 @@ class AdaptiveRouteStoryController extends ChangeNotifier {
   }
 
   bool _safeForContextualStory(RoamSession session) {
-    if (session.isOffRoute || session.arrivalCandidate) return false;
-    if (session.arrivalCandidateStopId != null ||
-        session.isNearRecentNarrationStop) {
+    if (session.isOffRoute || session.hasPendingArrivalNarration()) {
       return false;
     }
     final distance = session.distanceToNextStopMeters;

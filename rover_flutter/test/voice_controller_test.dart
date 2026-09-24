@@ -314,6 +314,46 @@ void main() {
     expect(tts.spoken, isEmpty);
     controller.dispose();
   });
+  test('heard arrival cannot renew the gate on repeated GPS updates', () async {
+    final tts = FakeTextToSpeech();
+    final controller = RoverVoiceController(
+      walkRepository: FakeVoiceWalkRepository(),
+      textToSpeech: tts,
+      speechRecognizer: FakeSpeechRecognizer(),
+      audioSession: FakeAudioSession(),
+    );
+    final session = _session(completedStopIds: {'stop-1'}).copyWith(
+      recentNarrationStopId: 'stop-1',
+      arrivalCandidate: true,
+      arrivalCandidateStopId: 'stop-1',
+      distanceToNextStopMeters: 500,
+    );
+    await controller.syncWithSession(session);
+    final spoken = tts.spoken.length;
+    await controller.syncWithSession(session);
+    await controller.syncWithSession(session);
+    expect(tts.spoken.length, spoken);
+    expect(
+      controller.canPlayAdaptiveRouteStory(_adaptiveSelection(), session),
+      isTrue,
+    );
+    final persisted = session.copyWith(narratedArrivalStopIds: {'stop-1'});
+    expect(persisted.hasPendingArrivalNarration(), isFalse);
+    expect(
+      persisted
+          .copyWith(arrivalCandidateStopId: 'stop-2')
+          .hasPendingArrivalNarration(),
+      isTrue,
+    );
+    expect(
+      controller.canPlayAdaptiveRouteStory(
+        _adaptiveSelection(),
+        persisted.copyWith(distanceToNextStopMeters: 20),
+      ),
+      isFalse,
+    );
+    controller.dispose();
+  });
   test('narration triggers once after confirmed arrival', () async {
     final tts = FakeTextToSpeech();
     final narratedStops = <String>[];

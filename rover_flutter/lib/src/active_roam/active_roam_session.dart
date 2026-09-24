@@ -97,6 +97,16 @@ class RoamSession {
 
   RoverStop get currentStop => roam.stops[currentStopIndex];
 
+  bool hasPendingArrivalNarration({bool Function(String)? hasNarrated}) {
+    bool heard(String id) =>
+        narratedArrivalStopIds.contains(id) || (hasNarrated?.call(id) ?? false);
+    final candidate = arrivalCandidateStopId;
+    if (candidate != null && !heard(candidate)) return true;
+    if (arrivalCandidate && candidate == null) return true;
+    final recent = recentNarrationStop;
+    return recent != null && isNearRecentNarrationStop && !heard(recent.id);
+  }
+
   double get storyArrivalBoundaryMeters =>
       currentStop.arrivalRadiusMeters +
       (currentGpsAccuracyMeters ?? 0).clamp(0, 25);

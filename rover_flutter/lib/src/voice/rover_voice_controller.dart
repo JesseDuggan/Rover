@@ -188,7 +188,9 @@ class RoverVoiceController extends ChangeNotifier {
     if (recentStop != null && recentStop.id == session.arrivalCandidateStopId) {
       candidateStop = recentStop;
     }
-    if (candidateStop != null && walkSessionId != null) {
+    if (candidateStop != null &&
+        walkSessionId != null &&
+        !_autoNarratedStopKeys.contains('$walkSessionId:${candidateStop.id}')) {
       final key = '$walkSessionId:${candidateStop.id}';
       await _playAutomaticArrival(
         key,
@@ -202,6 +204,7 @@ class RoverVoiceController extends ChangeNotifier {
     if (recentStop != null &&
         session.apiWalkSessionId != null &&
         session.isNearRecentNarrationStop &&
+        !_autoNarratedStopKeys.contains('$walkSessionId:${recentStop.id}') &&
         session.completedStopIds.contains(recentStop.id)) {
       final key = '${session.apiWalkSessionId}:${recentStop.id}';
       await _playAutomaticArrival(
@@ -272,6 +275,7 @@ class RoverVoiceController extends ChangeNotifier {
       final played = await replayNarration(stop, withArrivalAnnouncement: true);
       if (played) {
         _autoNarratedStopKeys.add(key);
+        _arrivalAudioGateUntil = null;
         await _onArrivalNarrated?.call(stop.id);
         FieldDiagnostics.instance.record(
           'voice',
@@ -1554,15 +1558,10 @@ class RoverVoiceController extends ChangeNotifier {
   }
 
   bool _isArrivalSensitiveSession(RoamSession session) {
-    if (session.arrivalCandidate || session.arrivalCandidateStopId != null) {
-      return true;
-    }
-
-    final recentStop = session.recentNarrationStop;
-    if (recentStop != null &&
-        session.isNearRecentNarrationStop &&
-        (session.completedStopIds.contains(recentStop.id) ||
-            session.arrivalCandidateStopId == recentStop.id)) {
+    if (session.hasPendingArrivalNarration(
+      hasNarrated: (id) =>
+          _autoNarratedStopKeys.contains('${session.apiWalkSessionId}:$id'),
+    )) {
       return true;
     }
 
