@@ -126,6 +126,8 @@ var tests = new List<(string Name, Func<Task> Run)>
     ("learning opt-out reset and deletion", LearningOptOutResetAndDeletion),
     ("account guest link export and isolation", AccountGuestLinkExportAndIsolation),
     ("speech generation validation cache and fallback", SpeechGenerationValidationCacheAndFallback),
+    ("beta speech authentication and shared quota", BetaSpeechAuthenticationAndSharedQuota),
+    ("beta speech outside development preserves account authorization", BetaSpeechOutsideDevelopment),
     ("Phase 15 audio cache enforces eligibility and expiry", Phase15AudioCacheEnforcesEligibilityAndExpiry),
     ("beta diagnostics redaction and configuration", BetaDiagnosticsRedactionAndConfiguration),
     ("environment variables override local discovery config", EnvironmentVariablesOverrideLocalDiscoveryConfig),
@@ -1197,6 +1199,28 @@ static async Task Phase16RoutePacksSelectCompleteAndSaveStories()
     var defaultRequest = await service.GenerateAsync(session.WalkSessionId,
         new GenerateAdaptiveRouteStoryPackCommand(null, null, null, false), CancellationToken.None);
     AssertEqual(state.Pack.GeneratedUtc, defaultRequest.Pack!.GeneratedUtc);
+    var refillPacks = new InMemoryAdaptiveRouteStoryPackRepository();
+    await refillPacks.StoreAsync(state, CancellationToken.None);
+    session.RecordLocation(session.StartingLocation, now, 500, 70, 20, false, 0, null);
+    var fullPlan = await plans.GetAsync(session.WalkSessionId, session.RouteRevision, CancellationToken.None);
+    var progress = fullPlan!.Segments.Max(segment => segment.EndRouteMeters) * 0.7;
+    var refiller = new AdaptiveRouteStoryPackService(options, walks, plans,
+        new RecordingLocationStoryContextService(Array.Empty<LocationPlace>()), refillPacks,
+        new DeterministicStoryIntentClassifier(), new DeterministicAdaptiveStoryLengthSelector(options), TimeProvider.System,
+        researcher: new CapturingRouteResearcher(query =>
+        {
+            AssertTrue(query.Segments.All(segment => segment.EndRouteMeters >= progress), "Refill must research the remaining route.");
+            AssertTrue(query.Journey!.CoveredTopics.Contains(story.Title), "Refill must avoid existing chapters.");
+            var segment = query.Segments.First();
+            return new LocalRouteResearchResult(new[] { story with { StoryId = "refill-story", Title = "Another sourced chapter",
+                SegmentId = segment.SegmentId, OpensAtRouteMeters = segment.StartRouteMeters, ClosesAtRouteMeters = segment.EndRouteMeters } }, null);
+        }));
+    var refilled = await refiller.GenerateAsync(session.WalkSessionId,
+        new GenerateAdaptiveRouteStoryPackCommand(null, null, null, true), CancellationToken.None);
+    AssertEqual(2, refilled.Pack!.Stories.Count);
+    AssertEqual(story.ExpiresUtc ?? state.Pack.ExpiresUtc, refilled.Pack.Stories.Single(item => item.StoryId == story.StoryId).ExpiresUtc);
+    AssertTrue(refilled.Pack.Stories.Any(item => item.StoryId == "refill-story"), "Refill should append rather than replace.");
+    session.RecordLocation(session.StartingLocation, now, 500, 0, 90, false, 0, null);
     foreach (var cancelRequest in new[] { false, true })
     {
         using var requestCancellation = new CancellationTokenSource();
@@ -2412,6 +2436,46 @@ static async Task AccountGuestLinkExportAndIsolation()
     AssertTrue(!await accountService.CanAccessProfileAsync(other.AccountId, profile.ProfileId, CancellationToken.None), "Other account should not access linked profile.");
     var export = await accountService.ExportAsync(account.AccountId, CancellationToken.None);
     AssertNotNull(export, "Account export should return a machine-readable object.");
+}
+
+static async Task BetaSpeechAuthenticationAndSharedQuota()
+{
+    using var api = await RoverApiProcess.StartAsync(betaSpeechTest: true, useDevelopmentFixtures: true);
+    using var client = new HttpClient { BaseAddress = api.BaseAddress };
+    var payload = new { text = "A local story.", purpose = "StopNarration" };
+    AssertEqual(HttpStatusCode.Unauthorized, (await client.PostAsJsonAsync("/api/speech/render", payload)).StatusCode);
+    client.DefaultRequestHeaders.Add("X-Rover-Beta-Key", "wrong-key");
+    AssertEqual(HttpStatusCode.Unauthorized, (await client.PostAsJsonAsync("/api/speech/render", payload)).StatusCode);
+    client.DefaultRequestHeaders.Remove("X-Rover-Beta-Key");
+    client.DefaultRequestHeaders.Add("X-Rover-Beta-Key", "speech-test-key");
+    var first = await client.PostAsJsonAsync("/api/speech/render", payload);
+    AssertEqual(HttpStatusCode.OK, first.StatusCode);
+    AssertEqual("false", first.Headers.GetValues("X-Rover-Speech-Fallback").Single());
+    AssertEqual(HttpStatusCode.BadRequest, (await client.PostAsJsonAsync("/api/speech/render", new { text = "text", purpose = "999" })).StatusCode);
+    // A different client and bearer form still share the same quota identity.
+    using var secondClient = new HttpClient { BaseAddress = api.BaseAddress };
+    secondClient.DefaultRequestHeaders.Authorization = new System.Net.Http.Headers.AuthenticationHeaderValue("Bearer", "speech-test-key");
+    var second = await secondClient.PostAsJsonAsync("/api/speech/render", payload);
+    AssertEqual(HttpStatusCode.OK, second.StatusCode);
+    AssertEqual("true", second.Headers.GetValues("X-Rover-Speech-Fallback").Single());
+    AssertEqual(HttpStatusCode.OK, (await secondClient.PostAsJsonAsync("/api/speech/render",
+        new { text = "A sourced chapter.", purpose = "AdaptiveRouteStory" })).StatusCode);
+    AssertEqual(HttpStatusCode.Unauthorized, (await secondClient.GetAsync("/api/accounts/export")).StatusCode);
+}
+
+static async Task BetaSpeechOutsideDevelopment()
+{
+    using var api = await RoverApiProcess.StartAsync(betaSpeechTest: true);
+    using var client = new HttpClient { BaseAddress = api.BaseAddress };
+    client.DefaultRequestHeaders.Add("X-Rover-Dev-User", "must-not-authenticate");
+    var payload = new { text = "A local story.", purpose = "StopNarration" };
+    AssertEqual(HttpStatusCode.Unauthorized, (await client.PostAsJsonAsync("/api/speech/render", payload)).StatusCode);
+    client.DefaultRequestHeaders.Add("X-Rover-Beta-Key", "speech-test-key");
+    var response = await client.PostAsJsonAsync("/api/speech/render", payload);
+    AssertEqual(HttpStatusCode.OK, response.StatusCode);
+    // No live provider is configured: device fallback, not an authentication error.
+    AssertEqual("true", response.Headers.GetValues("X-Rover-Speech-Fallback").Single());
+    AssertEqual(HttpStatusCode.Unauthorized, (await client.GetAsync("/api/accounts/export")).StatusCode);
 }
 
 static async Task SpeechGenerationValidationCacheAndFallback()
@@ -5087,7 +5151,7 @@ internal sealed class RoverApiProcess : IDisposable
     public Process Process { get; }
     public Uri BaseAddress { get; }
 
-    public static async Task<RoverApiProcess> StartAsync()
+    public static async Task<RoverApiProcess> StartAsync(bool betaSpeechTest = false, bool useDevelopmentFixtures = false)
     {
         var apiExe = Path.Combine(AppContext.BaseDirectory, "Rover.Api.exe");
         var port = 5397;
@@ -5101,7 +5165,13 @@ internal sealed class RoverApiProcess : IDisposable
             UseShellExecute = false
         };
 
-        startInfo.Environment["ASPNETCORE_ENVIRONMENT"] = "Development";
+        startInfo.Environment["ASPNETCORE_ENVIRONMENT"] = betaSpeechTest && !useDevelopmentFixtures ? "Testing" : "Development";
+        if (betaSpeechTest)
+        {
+            startInfo.Environment["ROVER_BETA_API_KEY"] = "speech-test-key";
+            startInfo.Environment["ElevenLabs__Enabled"] = "false";
+            startInfo.Environment["ElevenLabs__DailyCharacterLimitPerUser"] = "20";
+        }
         startInfo.Environment["Rover__Testing__AllowMockData"] = "true";
         startInfo.Environment["ASPNETCORE_URLS"] = baseAddress.ToString();
         startInfo.Environment["ROVER_SKIP_ENV_LOCAL"] = "true";

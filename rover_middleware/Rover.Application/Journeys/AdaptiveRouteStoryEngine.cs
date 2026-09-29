@@ -390,8 +390,27 @@ public sealed class AdaptiveRouteStoryPackService : IAdaptiveRouteStoryPackServi
                 ?? await _plans.RefreshAsync(session, generationToken).WaitAsync(generationToken)
                 ?? throw new InvalidOperationException("Phase 15 route corridor planning must be enabled before Phase 16 route stories can be generated.");
             var warnings = new List<string>();
-            var stories = await BuildStoriesAsync(session, plan, command.ProfileId, command.Language ?? "en", warnings, generationToken).WaitAsync(generationToken);
+            var retainedStories = generating.Pack is { } prior
+                ? prior.Stories.Where(story => IsFresh(story, prior))
+                    .Select(story => story with { ExpiresUtc = story.ExpiresUtc ?? prior.ExpiresUtc }).ToArray()
+                : Array.Empty<AdaptiveRouteStory>();
+            var researchPlan = plan;
+            if (_options.JourneyCollectionsEnabled && command.ForceRefresh)
+            {
+                var progress = plan.Segments.Select(segment => segment.EndRouteMeters).DefaultIfEmpty(0).Max()
+                    * session.TrackingState.RouteProgressPercentage / 100d;
+                researchPlan = plan with { Segments = plan.Segments.Where(segment => segment.EndRouteMeters >= progress).ToArray() };
+            }
+            var stories = await BuildStoriesAsync(session, researchPlan, command.ProfileId, command.Language ?? "en", warnings, generationToken,
+                _options.JourneyCollectionsEnabled ? retainedStories : []).WaitAsync(generationToken);
             if (stories.Count == 0) warnings.Add("No sufficiently grounded route stories were found.");
+            if (_options.JourneyCollectionsEnabled && retainedStories.Length > 0)
+            {
+                // Refresh adds chapters without removing playable stories or renewing their expiry.
+                stories = retainedStories.Concat(stories).DistinctBy(story => story.StoryId, StringComparer.OrdinalIgnoreCase)
+                    .DistinctBy(story => story.Title, StringComparer.OrdinalIgnoreCase).Take(120)
+                    .OrderBy(story => story.OpensAtRouteMeters).ToArray();
+            }
             if (stories.Count == 0 && generating.Pack is { } retained)
             {
                 stories = retained.Stories.Where(story => IsFresh(story, retained))
@@ -598,10 +617,11 @@ public sealed class AdaptiveRouteStoryPackService : IAdaptiveRouteStoryPackServi
         Guid? profileId,
         string language,
         List<string> warnings,
-        CancellationToken cancellationToken)
+        CancellationToken cancellationToken,
+        IReadOnlyList<AdaptiveRouteStory> existingStories)
     {
         var stories = new List<AdaptiveRouteStory>();
-        var usedPlaces = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        var usedPlaces = existingStories.Select(story => story.PlaceId).ToHashSet(StringComparer.OrdinalIgnoreCase);
         string? previousCategory = null;
         LocationPlace? areaPlace = null;
         foreach (var segment in plan.Segments.Take(Math.Clamp(_options.MaximumStoriesPerPack * 2, 1, 24)))
@@ -624,7 +644,7 @@ public sealed class AdaptiveRouteStoryPackService : IAdaptiveRouteStoryPackServi
             warnings.AddRange(context.SourceWarnings.Where(warning => !warnings.Contains(warning)));
             areaPlace ??= context.RankedPlaces.FirstOrDefault(place => !string.IsNullOrWhiteSpace(place.City));
             if (query.RadiusMeters < 1000 && !context.RankedPlaces.Any(place =>
-                !ReservedForArrival(place, session) && place.Facts.Any(IsSubstantiveFact)))
+                (_options.JourneyCollectionsEnabled || !ReservedForArrival(place, session)) && place.Facts.Any(IsSubstantiveFact)))
             {
                 // Nearby area history is a separate place, not a claim about a business.
                 var area = await _locationStories.GetContextAsync(query with { RadiusMeters = 1000 }, cancellationToken);
@@ -636,7 +656,7 @@ public sealed class AdaptiveRouteStoryPackService : IAdaptiveRouteStoryPackServi
             }
             var place = context.RankedPlaces
                 .Where(candidate => !usedPlaces.Contains(candidate.CanonicalId))
-                .Where(candidate => !ReservedForArrival(candidate, session))
+                .Where(candidate => _options.JourneyCollectionsEnabled || !ReservedForArrival(candidate, session))
                 .Where(candidate => candidate.Facts.Any(IsSubstantiveFact))
                 .OrderByDescending(candidate => candidate.Facts.Select(RouteStoryEvidence.Priority).DefaultIfEmpty(0).Max())
                 .ThenBy(candidate => string.Equals(candidate.Categories.FirstOrDefault(), previousCategory, StringComparison.OrdinalIgnoreCase))
@@ -686,7 +706,7 @@ public sealed class AdaptiveRouteStoryPackService : IAdaptiveRouteStoryPackServi
                 session.Stops.Select(stop => stop.Name).ToArray(), session.Interests.ToArray(), language,
                 session.Stops.Where(stop => !string.IsNullOrWhiteSpace(stop.ProviderPlaceId))
                     .Select(stop => new LocalResearchPublicPlace(stop.Name, stop.Address, stop.Location)).ToArray(),
-                _options.JourneyCollectionsEnabled ? JourneyCollectionBuilder.Brief(session, plan, stories) : null), cancellationToken);
+                _options.JourneyCollectionsEnabled ? JourneyCollectionBuilder.Brief(session, plan, existingStories.Concat(stories).ToArray()) : null), cancellationToken);
             var known = stories.SelectMany(story => story.Claims).Select(claim => claim.Text.Trim())
                 .ToHashSet(StringComparer.OrdinalIgnoreCase);
             stories.AddRange(research.Stories.Where(story => !story.Claims.Any(claim => known.Contains(claim.Text.Trim()))));

@@ -3,6 +3,7 @@ using System.Net;
 using System.Threading.RateLimiting;
 using Microsoft.AspNetCore.RateLimiting;
 using Microsoft.AspNetCore.Mvc;
+using Rover.Api;
 using Rover.Api.Contracts;
 using Rover.Api.Mapping;
 using Rover.Api.Responses;
@@ -502,10 +503,12 @@ speech.MapPost("/render", async (
     IAccountService accountService,
     IRoverSpeechService speechService,
     IWebHostEnvironment environment,
+    IConfiguration configuration,
     CancellationToken cancellationToken) =>
 {
     var user = await ResolveUserAsync(httpContext, accountService, environment, cancellationToken);
-    if (user is null)
+    var betaSpeech = user is null && HasValidBetaKey(httpContext, configuration);
+    if (user is null && !betaSpeech)
     {
         return UnauthorizedProblem();
     }
@@ -515,18 +518,20 @@ speech.MapPost("/render", async (
         return Results.ValidationProblem(new Dictionary<string, string[]> { ["text"] = new[] { "Speech text is required." } });
     }
 
-    if (!Enum.TryParse<SpeechPurpose>(request.Purpose, ignoreCase: true, out var purpose))
+    if (!Enum.TryParse<SpeechPurpose>(request.Purpose, ignoreCase: true, out var purpose) || !Enum.IsDefined(purpose))
     {
-        return Results.ValidationProblem(new Dictionary<string, string[]> { ["purpose"] = new[] { "Speech purpose is required and must be StopNarration, AskRoverAnswer, WalkIntroduction, WalkRecap, or DiscoveryDescription." } });
+        return Results.ValidationProblem(new Dictionary<string, string[]> { ["purpose"] = new[] { "Speech purpose is required and must be StopNarration, AskRoverAnswer, WalkIntroduction, WalkRecap, DiscoveryDescription, or AdaptiveRouteStory." } });
     }
 
+    // Serialize the shared beta bucket so concurrent calls cannot bypass its daily quota.
+    if (betaSpeech) await BetaSpeechQuota.Gate.WaitAsync(cancellationToken);
     try
     {
         var correlationId = httpContext.Response.Headers.TryGetValue("X-Correlation-ID", out var value)
             ? value.ToString()
             : Guid.NewGuid().ToString("n");
         var rendered = await speechService.RenderAsync(
-            new RenderSpeechCommand(user.AccountId, request.Text, purpose, request.Locale, request.WalkSessionId, request.StopId, request.IdempotencyKey)
+            new RenderSpeechCommand(user?.AccountId ?? BetaSpeechQuota.AccountId, request.Text, purpose, request.Locale, request.WalkSessionId, request.StopId, request.IdempotencyKey)
             {
                 CacheEligible = request.CacheEligible == true,
                 CacheExpiresUtc = request.CacheExpiresUtc,
@@ -553,6 +558,10 @@ speech.MapPost("/render", async (
     catch (InvalidOperationException exception)
     {
         return ConfigurationProblem(exception.Message);
+    }
+    finally
+    {
+        if (betaSpeech) BetaSpeechQuota.Gate.Release();
     }
 });
 
@@ -1724,6 +1733,11 @@ static bool IsAuthorizedBetaRequest(HttpContext context, IWebHostEnvironment env
         return true;
     }
 
+    return HasValidBetaKey(context, configuration);
+}
+
+static bool HasValidBetaKey(HttpContext context, IConfiguration configuration)
+{
     var configuredKey = Environment.GetEnvironmentVariable("ROVER_BETA_API_KEY")
         ?? configuration["Rover:Authentication:BetaApiKey"];
     if (string.IsNullOrWhiteSpace(configuredKey))
