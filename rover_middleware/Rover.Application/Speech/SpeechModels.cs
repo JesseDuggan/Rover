@@ -6,7 +6,8 @@ public enum SpeechPurpose
     AskRoverAnswer,
     WalkIntroduction,
     WalkRecap,
-    DiscoveryDescription
+    DiscoveryDescription,
+    AdaptiveRouteStory
 }
 
 public sealed record RenderSpeechCommand(

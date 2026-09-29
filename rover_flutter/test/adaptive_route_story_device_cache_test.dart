@@ -34,6 +34,40 @@ void main() {
     expect(selected?.variant.length, 'Standard');
   });
 
+  test('explicit outcomes survive offline events and restart without inferring legacy completion', () async {
+    final cache = AdaptiveRouteStoryDeviceCache(file: file);
+    final state = _state(provider: 'Wikipedia');
+    await cache.store(state);
+    for (final kind in ['Interrupted', 'Failed', 'Skipped']) {
+      await cache.applyEvent(
+        'walk-1',
+        3,
+        RouteStoryPlaybackEventRequest(
+          storyId: 'story-1',
+          kind: kind,
+          occurredUtc: DateTime.now().toUtc(),
+        ),
+        queueForSync: true,
+      );
+    }
+    final restored = AdaptiveRouteStoryDeviceCache(file: file);
+    final outcomes = (await restored.get('walk-1', 3))!.playbackOutcomes;
+    expect(outcomes.completedStoryIds, isEmpty);
+    expect(outcomes.skippedStoryIds, ['story-1']);
+    expect(outcomes.interruptedStoryIds, ['story-1']);
+    expect(outcomes.failedStoryIds, ['story-1']);
+    final legacy = state.toJson()..remove('playbackOutcomes');
+    legacy['heardStoryIds'] = ['story-1'];
+    expect(
+      AdaptiveRouteStoryPackState.fromJson(legacy)
+          .playbackOutcomes
+          .completedStoryIds,
+      isEmpty,
+    );
+    cache.dispose();
+    restored.dispose();
+  });
+
   test('Google-sourced route packs are never persisted', () async {
     final cache = AdaptiveRouteStoryDeviceCache(file: file);
 

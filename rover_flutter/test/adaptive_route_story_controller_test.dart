@@ -1,6 +1,7 @@
 import 'support/route_fixtures.dart';
 
 import 'dart:io';
+import 'dart:async';
 
 import 'package:flutter/services.dart';
 
@@ -10,6 +11,7 @@ import 'package:rover/src/adaptive_stories/adaptive_route_story_controller.dart'
 import 'package:rover/src/adaptive_stories/adaptive_route_story_device_cache.dart';
 import 'package:rover/src/api/adaptive_route_story_models.dart';
 import 'package:rover/src/api/walk_repository.dart';
+import 'package:rover/src/api/problem_details.dart';
 import 'package:rover/src/location/rover_location.dart';
 import 'package:rover/src/voice/rover_voice_controller.dart';
 
@@ -20,6 +22,243 @@ void main() {
         const MethodChannel('ai.myrover.rover/voice'),
         (_) async => null,
       );
+  test('low coverage replenishes without blocking selection and rejects stale route results', () async {
+    final directory = await Directory.systemTemp.createTemp('story-refill');
+    final repository = _StoryRepository();
+    final pending = Completer<AdaptiveRouteStoryPackState>();
+    repository.generationResult = pending.future;
+    final cache = AdaptiveRouteStoryDeviceCache(
+      file: File('${directory.path}/cache.json'),
+    );
+    var now = DateTime.now().toUtc();
+    final controller = AdaptiveRouteStoryController(
+      repository: repository,
+      deviceCache: cache,
+      nowUtc: () => now,
+    );
+    final voice = _PlaybackVoice();
+    final session = demoSession().copyWith(
+      apiWalkSessionId: 'walk-test',
+      status: RoamSessionStatus.active,
+      distanceToNextStopMeters: 500,
+      routeProgressPercentage: 0,
+    );
+    try {
+      await controller.syncWithSession(session, voice);
+      expect(repository.generations, 0);
+      now = now.add(const Duration(minutes: 4));
+      await controller.syncWithSession(
+        session.copyWith(routeProgressPercentage: 20),
+        voice,
+      );
+      expect(repository.generations, 1);
+      final selected = repository.selections;
+      await controller.syncWithSession(
+        session.copyWith(routeProgressPercentage: 30),
+        voice,
+      );
+      expect(repository.selections, greaterThan(selected));
+      expect(repository.generations, 1);
+      await controller.syncWithSession(
+        session.copyWith(routeRevision: 2, routeProgressPercentage: 40),
+        voice,
+      );
+      final newState = controller.packState;
+      pending.complete(await repository.getRouteStoryPackStatus('walk-test'));
+      await Future<void>.delayed(Duration.zero);
+      expect(identical(controller.packState, newState), isTrue);
+    } finally {
+      controller.dispose();
+      voice.dispose();
+      cache.dispose();
+      await directory.delete(recursive: true);
+    }
+  });
+
+  test('automatic replenishment backs off and is capped per walk', () async {
+    final directory = await Directory.systemTemp.createTemp(
+      'story-refill-budget',
+    );
+    final repository = _StoryRepository();
+    final cache = AdaptiveRouteStoryDeviceCache(
+      file: File('${directory.path}/cache.json'),
+    );
+    var now = DateTime.now().toUtc();
+    final controller = AdaptiveRouteStoryController(
+      repository: repository,
+      deviceCache: cache,
+      nowUtc: () => now,
+    );
+    final voice = _PlaybackVoice();
+    final session = demoSession().copyWith(
+      apiWalkSessionId: 'walk-test',
+      status: RoamSessionStatus.active,
+      distanceToNextStopMeters: 500,
+      routeProgressPercentage: 0,
+    );
+    try {
+      await controller.syncWithSession(session, voice);
+      for (var i = 1; i <= 10; i++) {
+        now = now.add(const Duration(minutes: 4));
+        await controller.syncWithSession(
+          session.copyWith(routeProgressPercentage: i * 10.0),
+          voice,
+        );
+        await Future<void>.delayed(Duration.zero);
+      }
+      expect(repository.generations, 6);
+    } finally {
+      controller.dispose();
+      voice.dispose();
+      cache.dispose();
+      await directory.delete(recursive: true);
+    }
+  });
+  for (final scenario in [
+    (150.0, false, false),
+    (251.0, false, false),
+    (150.0, true, false),
+    (150.0, false, true),
+  ]) {
+    final (distance, expired, skipped) = scenario;
+    test(
+      'navigation-held story catch-up at $distance metres, expired=$expired, skipped=$skipped',
+      () async {
+        final directory = await Directory.systemTemp.createTemp(
+          'story-catch-up',
+        );
+        final story = AdaptiveRouteStory.fromJson({
+          'storyId': 'delayed',
+          'opensAtRouteMeters': 0,
+          'closesAtRouteMeters': 100,
+          if (expired)
+            'expiresUtc': DateTime.now()
+                .toUtc()
+                .subtract(const Duration(minutes: 1))
+                .toIso8601String(),
+          'sources': [
+            {'sourceId': 'source', 'url': 'https://example.org/story'},
+          ],
+          'variants': [
+            {
+              'length': 'Quick',
+              'estimatedDurationSeconds': 5,
+              'narration': 'A local fact.',
+            },
+          ],
+        });
+        final repository = _StoryRepository()..stories = [story];
+        final cache = AdaptiveRouteStoryDeviceCache(
+          file: File('${directory.path}/cache.json'),
+        );
+        final controller = AdaptiveRouteStoryController(
+          repository: repository,
+          deviceCache: cache,
+        );
+        final voice = _PlaybackVoice();
+        final session = demoSession().copyWith(
+          apiWalkSessionId: 'walk-test',
+          status: RoamSessionStatus.active,
+          distanceToNextStopMeters: 500,
+        );
+        final maneuverDistance = session.roam.routeManeuvers.fold<int>(
+          0,
+          (sum, item) => sum + item.distanceMeters,
+        );
+        final total = maneuverDistance > 0
+            ? maneuverDistance.toDouble()
+            : session.roam.distanceMiles * 1609.344;
+        try {
+          await controller.syncWithSession(
+            session.copyWith(
+              routeProgressPercentage: 50 / total * 100,
+              isOffRoute: true,
+            ),
+            voice,
+          );
+          expect(voice.plays, 0);
+          if (skipped) {
+            expect(controller.selectStory(story.storyId, session), isTrue);
+            await controller.skipCurrent(session);
+          }
+          await controller.syncWithSession(
+            session.copyWith(
+              routeProgressPercentage: distance / total * 100,
+              isOffRoute: false,
+            ),
+            voice,
+          );
+          expect(voice.plays, distance <= 250 && !expired && !skipped ? 1 : 0);
+          expect(
+            controller.automaticStoryStatus(
+              story,
+              session.copyWith(routeProgressPercentage: distance / total * 100),
+            ),
+            expired
+                ? 'Expired'
+                : skipped
+                ? 'Skipped'
+                : distance <= 250
+                ? 'Played'
+                : 'Automatic playback window passed',
+          );
+        } finally {
+          controller.dispose();
+          voice.dispose();
+          cache.dispose();
+          await directory.delete(recursive: true);
+        }
+      },
+    );
+  }
+
+  test(
+    'outcome labels distinguish completed, skipped and legacy exclusions',
+    () async {
+      final directory = await Directory.systemTemp.createTemp('story-labels');
+      final stories = ['played', 'skipped', 'legacy']
+          .map(
+            (id) => AdaptiveRouteStory.fromJson({
+              'storyId': id,
+              'closesAtRouteMeters': 10000,
+            }),
+          )
+          .toList();
+      final repository = _StoryRepository()
+        ..stories = stories
+        ..heard = ['played', 'skipped', 'legacy']
+        ..outcomes = const AdaptiveStoryPlaybackOutcomes(
+          completedStoryIds: ['played'],
+          skippedStoryIds: ['skipped'],
+        );
+      final cache = AdaptiveRouteStoryDeviceCache(
+        file: File('${directory.path}/cache.json'),
+      );
+      final controller = AdaptiveRouteStoryController(
+        repository: repository,
+        deviceCache: cache,
+      );
+      final voice = _PlaybackVoice();
+      final session = demoSession().copyWith(
+        apiWalkSessionId: 'walk-test',
+        status: RoamSessionStatus.notStarted,
+      );
+      try {
+        await controller.syncWithSession(session, voice);
+        expect(
+          stories.map(
+            (story) => controller.automaticStoryStatus(story, session),
+          ),
+          ['Played', 'Skipped', 'Previously handled'],
+        );
+      } finally {
+        controller.dispose();
+        voice.dispose();
+        cache.dispose();
+        await directory.delete(recursive: true);
+      }
+    },
+  );
   test(
     'ready stories can be read outside their automatic window without playback',
     () async {
@@ -113,7 +352,102 @@ void main() {
     },
   );
 
-  test('manual story selection preserves arrival audio priority', () async {
+  for (final offline in [false, true]) {
+    for (final outcome in [
+      AdaptiveStoryPlaybackResult.interrupted,
+      AdaptiveStoryPlaybackResult.failed,
+      AdaptiveStoryPlaybackResult.blocked,
+      AdaptiveStoryPlaybackResult.paused,
+    ]) {
+      test('reports $outcome without completion, offline=$offline', () async {
+        final directory = await Directory.systemTemp.createTemp(
+          'story-outcome',
+        );
+        final file = File('${directory.path}/cache.json');
+        final story = AdaptiveRouteStory.fromJson({
+          'storyId': 'outcome-story',
+          'sources': [
+            {'sourceId': 'source', 'url': 'https://example.org/history'},
+          ],
+          'variants': [
+            {
+              'length': 'Quick',
+              'estimatedDurationSeconds': 5,
+              'narration': 'A sourced fact.',
+            },
+          ],
+        });
+        final repository = _StoryRepository()..stories = [story];
+        final cache = AdaptiveRouteStoryDeviceCache(file: file);
+        final controller = AdaptiveRouteStoryController(
+          repository: repository,
+          deviceCache: cache,
+        );
+        final voice = _PlaybackVoice()..result = outcome;
+        final session = demoSession().copyWith(
+          apiWalkSessionId: 'walk-test',
+          status: RoamSessionStatus.notStarted,
+          distanceToNextStopMeters: 500,
+        );
+        try {
+          await controller.syncWithSession(session, voice);
+          expect(controller.selectStory(story.storyId, session), isTrue);
+          repository.offlineEvents = offline;
+          await controller.playCurrent(session, voice);
+          final expected = [
+            'Started',
+            if (outcome == AdaptiveStoryPlaybackResult.interrupted)
+              'Interrupted',
+            if (outcome == AdaptiveStoryPlaybackResult.failed) 'Failed',
+          ];
+          if (offline) {
+            final restored = AdaptiveRouteStoryDeviceCache(file: file);
+            final sent = <String>[];
+            await restored.flushEvents((event) async {
+              expect(event.walkSessionId, 'walk-test');
+              expect(event.request.storyId, story.storyId);
+              sent.add(event.request.kind);
+            });
+            expect(sent, expected);
+            expect(restored.queuedEventCount, 0);
+            restored.dispose();
+          } else {
+            expect(repository.events, expected);
+          }
+          expect(controller.currentSelection, isNotNull);
+          expect(controller.isBusy, isFalse);
+          if (outcome == AdaptiveStoryPlaybackResult.failed) {
+            expect(controller.errorMessage, contains('could not be played'));
+          }
+          if (outcome == AdaptiveStoryPlaybackResult.paused) {
+            await controller.syncWithSession(
+              session.copyWith(
+                status: RoamSessionStatus.active,
+                routeProgressPercentage: 75,
+              ),
+              voice,
+            );
+            expect(voice.plays, 1);
+          }
+          repository.offlineEvents = false;
+          voice.result = AdaptiveStoryPlaybackResult.completed;
+          await controller.playCurrent(session, voice);
+          expect(
+            repository.events.where((event) => event == 'Completed'),
+            hasLength(1),
+          );
+          expect(controller.currentSelection, isNull);
+        } finally {
+          controller.dispose();
+          voice.dispose();
+          cache.dispose();
+          await directory.delete(recursive: true);
+        }
+      });
+    }
+  }
+
+  test('routine arrival does not block story selection', () async {
     final directory = await Directory.systemTemp.createTemp(
       'story-arrival-test',
     );
@@ -140,7 +474,7 @@ void main() {
       repository: repository,
       deviceCache: cache,
     );
-    final voice = RoverVoiceController(walkRepository: _WalkRepository());
+    final voice = _PlaybackVoice();
     final session = demoSession().copyWith(
       apiWalkSessionId: 'walk-test',
       status: RoamSessionStatus.active,
@@ -151,13 +485,13 @@ void main() {
       await controller.syncWithSession(session, voice);
       expect(
         controller.automaticStoryStatus(story, session),
-        'Waiting for turn or arrival to clear',
+        'In playback window',
       );
       expect(controller.selectStory(story.storyId, session), isTrue);
       await controller.playCurrent(session, voice);
-      expect(controller.errorMessage, contains('waiting for enough time'));
-      expect(controller.currentSelection!.variant.narration, 'Sourced text.');
-      expect(repository.events, isEmpty);
+      expect(controller.errorMessage, isNull);
+      expect(controller.currentSelection, isNull);
+      expect(repository.events, ['Started', 'Completed']);
     } finally {
       controller.dispose();
       voice.dispose();
@@ -298,86 +632,84 @@ void main() {
       await directory.delete(recursive: true);
     }
   });
-  test(
-    'selection retries after arrival clears without progress changing',
-    () async {
-      final directory = await Directory.systemTemp.createTemp(
-        'route-retry-test',
+  test('selection continues through routine arrival and nearby stop', () async {
+    final directory = await Directory.systemTemp.createTemp('route-retry-test');
+    final repository = _StoryRepository();
+    final cache = AdaptiveRouteStoryDeviceCache(
+      file: File('${directory.path}/cache.json'),
+    );
+    final controller = AdaptiveRouteStoryController(
+      repository: repository,
+      deviceCache: cache,
+    );
+    final voice = RoverVoiceController(walkRepository: _WalkRepository());
+    try {
+      final safe = demoSession().copyWith(
+        apiWalkSessionId: 'walk-test',
+        status: RoamSessionStatus.active,
+        distanceToNextStopMeters: 500,
+        routeProgressPercentage: 25,
       );
-      final repository = _StoryRepository();
-      final cache = AdaptiveRouteStoryDeviceCache(
-        file: File('${directory.path}/cache.json'),
+      await controller.syncWithSession(safe, voice);
+      expect(repository.selections, 1);
+      await controller.syncWithSession(
+        safe.copyWith(routeProgressPercentage: 50, arrivalCandidate: true),
+        voice,
       );
-      final controller = AdaptiveRouteStoryController(
-        repository: repository,
-        deviceCache: cache,
+      expect(repository.selections, 2);
+      await controller.syncWithSession(
+        safe.copyWith(routeProgressPercentage: 50),
+        voice,
       );
-      final voice = RoverVoiceController(walkRepository: _WalkRepository());
-      try {
-        final safe = demoSession().copyWith(
-          apiWalkSessionId: 'walk-test',
-          status: RoamSessionStatus.active,
-          distanceToNextStopMeters: 500,
-          routeProgressPercentage: 25,
-        );
-        await controller.syncWithSession(safe, voice);
-        expect(repository.selections, 1);
-        await controller.syncWithSession(
-          safe.copyWith(routeProgressPercentage: 50, arrivalCandidate: true),
-          voice,
-        );
-        expect(repository.selections, 1);
-        await controller.syncWithSession(
-          safe.copyWith(routeProgressPercentage: 50),
-          voice,
-        );
-        expect(repository.selections, 2);
-        final stop = safe.currentStop;
-        final near = safe.copyWith(
-          routeProgressPercentage: 75,
-          recentNarrationStopId: stop.id,
-          simulatedLocation: stop.coordinates,
-        );
-        await controller.syncWithSession(near, voice);
-        expect(repository.selections, 2);
-        await controller.syncWithSession(
-          near.copyWith(
-            simulatedLocation: RoverLatLng(
-              latitude: stop.coordinates.latitude + 0.01,
-              longitude: stop.coordinates.longitude,
-            ),
+      expect(repository.selections, 2);
+      final stop = safe.currentStop;
+      final near = safe.copyWith(
+        routeProgressPercentage: 75,
+        recentNarrationStopId: stop.id,
+        simulatedLocation: stop.coordinates,
+      );
+      await controller.syncWithSession(near, voice);
+      expect(repository.selections, 3);
+      await controller.syncWithSession(
+        near.copyWith(
+          simulatedLocation: RoverLatLng(
+            latitude: stop.coordinates.latitude + 0.01,
+            longitude: stop.coordinates.longitude,
           ),
-          voice,
-        );
-        expect(repository.selections, 3);
-        await controller.syncWithSession(
-          safe.copyWith(
-            routeProgressPercentage: 80,
-            distanceToNextStopMeters: 95,
-            currentGpsAccuracyMeters: 8,
-          ),
-          voice,
-        );
-        expect(repository.selections, 4);
-        expect(repository.lastRequest?.secondsUntilNextManeuver, 36);
-        await controller.syncWithSession(
-          near.copyWith(
-            routeProgressPercentage: 85,
-            arrivalCandidate: true,
-            arrivalCandidateStopId: stop.id,
-            narratedArrivalStopIds: {stop.id},
-          ),
-          voice,
-        );
-        expect(repository.selections, 5);
-      } finally {
-        controller.dispose();
-        voice.dispose();
-        cache.dispose();
-        await directory.delete(recursive: true);
-      }
-    },
-  );
+        ),
+        voice,
+      );
+      expect(repository.selections, 3);
+      await controller.syncWithSession(
+        safe.copyWith(
+          routeProgressPercentage: 80,
+          distanceToNextStopMeters: 95,
+          currentGpsAccuracyMeters: 8,
+        ),
+        voice,
+      );
+      expect(repository.selections, 4);
+      expect(
+        repository.lastRequest?.secondsUntilNextManeuver,
+        safe.storySecondsUntilNavigation,
+      );
+      await controller.syncWithSession(
+        near.copyWith(
+          routeProgressPercentage: 85,
+          arrivalCandidate: true,
+          arrivalCandidateStopId: stop.id,
+          narratedArrivalStopIds: {stop.id},
+        ),
+        voice,
+      );
+      expect(repository.selections, 5);
+    } finally {
+      controller.dispose();
+      voice.dispose();
+      cache.dispose();
+      await directory.delete(recursive: true);
+    }
+  });
 }
 
 class _WalkRepository implements WalkRepository {
@@ -386,10 +718,25 @@ class _WalkRepository implements WalkRepository {
 }
 
 class _StoryRepository implements AdaptiveRouteStoryRepository {
+  int generations = 0;
+  Future<AdaptiveRouteStoryPackState>? generationResult;
+  @override
+  Future<AdaptiveRouteStoryPackState> generateRouteStoryPack(
+    String id,
+    GenerateRouteStoryPackRequest request,
+  ) {
+    generations++;
+    return generationResult ?? getRouteStoryPackStatus(id);
+  }
+
+  List<String> heard = const [];
+  AdaptiveStoryPlaybackOutcomes outcomes =
+      const AdaptiveStoryPlaybackOutcomes();
   List<AdaptiveRouteStory> stories = const [];
   final List<String> events = [];
   String? statusOverride;
   bool refreshing = false;
+  bool offlineEvents = false;
   int statusChecks = 0;
   AdaptiveRouteStorySelection? selection;
   int selections = 0;
@@ -414,7 +761,8 @@ class _StoryRepository implements AdaptiveRouteStoryRepository {
       routeRevision: 1,
       status: refreshing ? 'Generating' : 'Ready',
       updatedUtc: now,
-      heardStoryIds: const [],
+      heardStoryIds: heard,
+      playbackOutcomes: outcomes,
       savedStoryIds: const [],
       pack: AdaptiveRouteStoryPack(
         schemaVersion: '3.0',
@@ -447,6 +795,7 @@ class _StoryRepository implements AdaptiveRouteStoryRepository {
     String id,
     RouteStoryPlaybackEventRequest request,
   ) async {
+    if (offlineEvents) throw const RoverApiConnectionException('Offline');
     events.add(request.kind);
   }
 
@@ -457,6 +806,10 @@ class _StoryRepository implements AdaptiveRouteStoryRepository {
 class _PlaybackVoice extends RoverVoiceController {
   _PlaybackVoice() : super(walkRepository: _WalkRepository());
   int plays = 0;
+  AdaptiveStoryPlaybackResult result = AdaptiveStoryPlaybackResult.completed;
+  @override
+  bool hasInterruptedAdaptiveStory(String storyId) =>
+      result == AdaptiveStoryPlaybackResult.paused;
   @override
   bool canPlayAdaptiveRouteStory(
     AdaptiveRouteStorySelection selection,
@@ -464,12 +817,12 @@ class _PlaybackVoice extends RoverVoiceController {
     bool userRequested = false,
   }) => true;
   @override
-  Future<bool> playAdaptiveRouteStory(
+  Future<AdaptiveStoryPlaybackResult> playAdaptiveRouteStoryWithResult(
     AdaptiveRouteStorySelection selection,
     RoamSession session, {
     bool userRequested = false,
   }) async {
     plays++;
-    return true;
+    return result;
   }
 }

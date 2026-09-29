@@ -125,6 +125,11 @@ class RoamSession {
     return distance == null ? null : (distance / 1.3).floor();
   }
 
+  int? get storySecondsUntilNavigation {
+    final distance = storyNavigationGuidance?.distanceMeters;
+    return distance == null ? null : (distance / 1.3).floor();
+  }
+
   bool get isNearRecentNarrationStop {
     final stop = recentNarrationStop;
     if (stop == null) return false;

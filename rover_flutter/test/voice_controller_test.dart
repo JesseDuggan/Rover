@@ -26,6 +26,50 @@ import 'package:rover/src/voice/rover_voice_state.dart';
 
 void main() {
   test(
+    'story mode ignores arrival proximity but respects turns and quiet',
+    () async {
+      final controller = RoverVoiceController(
+        walkRepository: FakeVoiceWalkRepository(),
+        textToSpeech: FakeTextToSpeech(),
+        speechRecognizer: FakeSpeechRecognizer(),
+        audioSession: FakeAudioSession(),
+        adaptiveRouteStoriesEnabled: true,
+      );
+      final near = _session().copyWith(
+        arrivalCandidate: true,
+        arrivalCandidateStopId: _stop.id,
+        distanceToNextStopMeters: 5,
+      );
+      expect(
+        controller.canPlayAdaptiveRouteStory(_adaptiveSelection(), near),
+        isTrue,
+      );
+      expect(
+        controller.canPlayAdaptiveRouteStory(
+          _adaptiveSelection(),
+          _googleNavigationSession(),
+        ),
+        isFalse,
+      );
+      await controller.applyStoryControl(
+        const RoverStoryControlCommand(RoverStoryControlAction.quietTenMinutes),
+      );
+      expect(
+        controller.canPlayAdaptiveRouteStory(_adaptiveSelection(), near),
+        isFalse,
+      );
+      expect(
+        controller.canPlayAdaptiveRouteStory(
+          _adaptiveSelection(),
+          near,
+          userRequested: true,
+        ),
+        isTrue,
+      );
+      controller.dispose();
+    },
+  );
+  test(
     'new candidate narrates even when recent arrival is already heard',
     () async {
       final tts = FakeTextToSpeech();
@@ -35,7 +79,6 @@ void main() {
         textToSpeech: tts,
         speechRecognizer: FakeSpeechRecognizer(),
         audioSession: FakeAudioSession(),
-        adaptiveRouteStoriesEnabled: true,
         onArrivalNarrated: (id) async {
           narrated.add(id);
         },
@@ -71,7 +114,6 @@ void main() {
         textToSpeech: tts,
         speechRecognizer: FakeSpeechRecognizer(),
         audioSession: FakeAudioSession(),
-        adaptiveRouteStoriesEnabled: true,
         onArrivalNarrated: (id) async {
           narrated.add(id);
         },
@@ -101,34 +143,36 @@ void main() {
     },
   );
 
-  test('arrival cancels story still preparing audio', () async {
-    final tts = FakeTextToSpeech();
-    final audio = BlockingAudioSession();
-    final controller = RoverVoiceController(
-      walkRepository: FakeVoiceWalkRepository(),
-      textToSpeech: tts,
-      speechRecognizer: FakeSpeechRecognizer(),
-      audioSession: audio,
-      adaptiveRouteStoriesEnabled: true,
-    );
-    final story = controller.playAdaptiveRouteStory(
-      _adaptiveSelection(),
-      _session(),
-    );
-    await audio.started.future;
-    await controller.syncWithSession(
-      _session().copyWith(
-        arrivalCandidate: true,
-        arrivalCandidateStopId: _stop.id,
-      ),
-    );
-    audio.release.complete();
-    expect(await story, isFalse);
-    expect(tts.spoken, hasLength(3));
-    expect(tts.spoken.first, 'You have arrived at Union Square.');
-    expect(tts.spoken, isNot(contains('First fact.')));
-    controller.dispose();
-  });
+  test(
+    'story mode preserves preparing audio across a routine arrival',
+    () async {
+      final tts = FakeTextToSpeech();
+      final audio = BlockingAudioSession();
+      final controller = RoverVoiceController(
+        walkRepository: FakeVoiceWalkRepository(),
+        textToSpeech: tts,
+        speechRecognizer: FakeSpeechRecognizer(),
+        audioSession: audio,
+        adaptiveRouteStoriesEnabled: true,
+      );
+      final story = controller.playAdaptiveRouteStory(
+        _adaptiveSelection(),
+        _session(),
+      );
+      await audio.started.future;
+      await controller.syncWithSession(
+        _session().copyWith(
+          arrivalCandidate: true,
+          arrivalCandidateStopId: _stop.id,
+        ),
+      );
+      audio.release.complete();
+      expect(await story, isTrue);
+      expect(tts.spoken, ['First fact.', 'Second fact.']);
+      expect(tts.spoken, isNot(contains('You have arrived at Union Square.')));
+      controller.dispose();
+    },
+  );
 
   test('stopped premium render never starts stale audio', () async {
     final repository = DelayedSpeechRepository();
@@ -825,11 +869,19 @@ void main() {
     );
     final selection = _adaptiveSelection();
 
-    final playback = controller.playAdaptiveRouteStory(selection, _session());
+    final playback = controller.playAdaptiveRouteStoryWithResult(
+      selection,
+      _session(),
+    );
     await tts.firstSpeakStarted.future;
-    await controller.syncWithSession(_googleNavigationSession());
+    await controller.syncWithSession(
+      _googleNavigationSession().copyWith(
+        arrivalCandidate: true,
+        arrivalCandidateStopId: _stop.id,
+      ),
+    );
     tts.releaseFirstSpeak.complete();
-    expect(await playback, isFalse);
+    expect(await playback, AdaptiveStoryPlaybackResult.interrupted);
     expect(
       controller.hasAutomaticallyResumableAdaptiveStory('adaptive-1'),
       isTrue,
@@ -878,6 +930,104 @@ void main() {
       controller.dispose();
     },
   );
+
+  test('adaptive story completes when premium is unavailable but device audio succeeds', () async {
+    final repository = FakeVoiceWalkRepository();
+    final premium = SuccessfulPremiumVoiceCoordinator(repository)
+      ..succeeds = false;
+    final tts = FakeTextToSpeech();
+    final controller = RoverVoiceController(
+      walkRepository: repository,
+      textToSpeech: tts,
+      speechRecognizer: FakeSpeechRecognizer(),
+      audioSession: FakeAudioSession(),
+      premiumVoice: premium,
+    );
+    try {
+      expect(
+        await controller.playAdaptiveRouteStoryWithResult(
+          _adaptiveSelection(),
+          _session(),
+        ),
+        AdaptiveStoryPlaybackResult.completed,
+      );
+      expect(tts.spoken, ['First fact.', 'Second fact.']);
+      expect(controller.errorMessage, isNull);
+    } finally {
+      controller.dispose();
+    }
+  });
+
+  test(
+    'adaptive playback failure releases audio state and can retry',
+    () async {
+      final tts = FailOnceTextToSpeech();
+      final controller = RoverVoiceController(
+        walkRepository: FakeVoiceWalkRepository(),
+        textToSpeech: tts,
+        speechRecognizer: FakeSpeechRecognizer(),
+        audioSession: FakeAudioSession(),
+      );
+      try {
+        expect(
+          await controller.playAdaptiveRouteStoryWithResult(
+            _adaptiveSelection(),
+            _session(),
+          ),
+          AdaptiveStoryPlaybackResult.failed,
+        );
+        expect(controller.state, RoverAudioState.idle);
+        expect(controller.errorMessage, contains('could not be played'));
+        expect(controller.hasInterruptedAdaptiveStory('adaptive-1'), isFalse);
+        expect(
+          await controller.playAdaptiveRouteStoryWithResult(
+            _adaptiveSelection(),
+            _session(),
+          ),
+          AdaptiveStoryPlaybackResult.completed,
+        );
+        expect(controller.errorMessage, isNull);
+        expect(tts.spoken, ['First fact.', 'Second fact.']);
+      } finally {
+        controller.dispose();
+      }
+    },
+  );
+
+  test('user pause is not a failure and resumes only on request', () async {
+    final tts = BlockingTextToSpeech();
+    final controller = RoverVoiceController(
+      walkRepository: FakeVoiceWalkRepository(),
+      textToSpeech: tts,
+      speechRecognizer: FakeSpeechRecognizer(),
+      audioSession: FakeAudioSession(),
+    );
+    try {
+      final playback = controller.playAdaptiveRouteStoryWithResult(
+        _adaptiveSelection(),
+        _session(),
+      );
+      await tts.firstSpeakStarted.future;
+      await controller.pauseAdaptiveRouteStory();
+      tts.releaseFirstSpeak.complete();
+      expect(await playback, AdaptiveStoryPlaybackResult.paused);
+      expect(
+        controller.hasAutomaticallyResumableAdaptiveStory('adaptive-1'),
+        isFalse,
+      );
+      expect(
+        await controller.playAdaptiveRouteStoryWithResult(
+          _adaptiveSelection(),
+          _session(),
+          userRequested: true,
+        ),
+        AdaptiveStoryPlaybackResult.completed,
+      );
+      expect(tts.spoken[1], startsWith('Continuing the story.'));
+    } finally {
+      controller.dispose();
+    }
+  });
 
   test(
     'successful premium story never also invokes Android fallback',
@@ -1221,6 +1371,7 @@ class SuccessfulPremiumVoiceCoordinator extends RoverPremiumVoiceCoordinator {
 
   final spoken = <String>[];
   final prefetched = <String>[];
+  bool succeeds = true;
 
   @override
   Future<void> prefetch({
@@ -1248,7 +1399,7 @@ class SuccessfulPremiumVoiceCoordinator extends RoverPremiumVoiceCoordinator {
     String? variantId,
   }) async {
     spoken.add(text);
-    return true;
+    return succeeds;
   }
 
   @override

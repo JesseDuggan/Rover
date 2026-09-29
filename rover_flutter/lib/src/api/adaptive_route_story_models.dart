@@ -383,6 +383,51 @@ class AdaptiveRouteStoryPack {
   };
 }
 
+class AdaptiveStoryPlaybackOutcomes {
+  const AdaptiveStoryPlaybackOutcomes({
+    this.completedStoryIds = const [],
+    this.skippedStoryIds = const [],
+    this.dismissedStoryIds = const [],
+    this.interruptedStoryIds = const [],
+    this.failedStoryIds = const [],
+  });
+
+  final List<String> completedStoryIds;
+  final List<String> skippedStoryIds;
+  final List<String> dismissedStoryIds;
+  final List<String> interruptedStoryIds;
+  final List<String> failedStoryIds;
+
+  factory AdaptiveStoryPlaybackOutcomes.fromJson(Map<String, dynamic> json) =>
+      AdaptiveStoryPlaybackOutcomes(
+        completedStoryIds: _strings(json['completedStoryIds']),
+        skippedStoryIds: _strings(json['skippedStoryIds']),
+        dismissedStoryIds: _strings(json['dismissedStoryIds']),
+        interruptedStoryIds: _strings(json['interruptedStoryIds']),
+        failedStoryIds: _strings(json['failedStoryIds']),
+      );
+
+  Map<String, Object?> toJson() => {
+    'completedStoryIds': completedStoryIds,
+    'skippedStoryIds': skippedStoryIds,
+    'dismissedStoryIds': dismissedStoryIds,
+    'interruptedStoryIds': interruptedStoryIds,
+    'failedStoryIds': failedStoryIds,
+  };
+
+  AdaptiveStoryPlaybackOutcomes record(String storyId, String kind) {
+    List<String> add(List<String> ids, String event) =>
+        kind == event ? {...ids, storyId}.toList() : ids;
+    return AdaptiveStoryPlaybackOutcomes(
+      completedStoryIds: add(completedStoryIds, 'Completed'),
+      skippedStoryIds: add(skippedStoryIds, 'Skipped'),
+      dismissedStoryIds: add(dismissedStoryIds, 'Dismissed'),
+      interruptedStoryIds: add(interruptedStoryIds, 'Interrupted'),
+      failedStoryIds: add(failedStoryIds, 'Failed'),
+    );
+  }
+}
+
 class AdaptiveRouteStoryPackState {
   const AdaptiveRouteStoryPackState({
     required this.walkSessionId,
@@ -394,6 +439,7 @@ class AdaptiveRouteStoryPackState {
     this.pack,
     this.error,
     this.lastPlaybackEvent,
+    this.playbackOutcomes = const AdaptiveStoryPlaybackOutcomes(),
   });
 
   final String walkSessionId;
@@ -405,6 +451,7 @@ class AdaptiveRouteStoryPackState {
   final List<String> heardStoryIds;
   final List<String> savedStoryIds;
   final String? lastPlaybackEvent;
+  final AdaptiveStoryPlaybackOutcomes playbackOutcomes;
 
   factory AdaptiveRouteStoryPackState.fromJson(Map<String, dynamic> json) =>
       AdaptiveRouteStoryPackState(
@@ -423,6 +470,9 @@ class AdaptiveRouteStoryPackState {
         heardStoryIds: _strings(json['heardStoryIds']),
         savedStoryIds: _strings(json['savedStoryIds']),
         lastPlaybackEvent: json['lastPlaybackEvent'] as String?,
+        playbackOutcomes: AdaptiveStoryPlaybackOutcomes.fromJson(
+          json['playbackOutcomes'] as Map<String, dynamic>? ?? const {},
+        ),
       );
 
   Map<String, Object?> toJson() => {
@@ -435,6 +485,7 @@ class AdaptiveRouteStoryPackState {
     'heardStoryIds': heardStoryIds,
     'savedStoryIds': savedStoryIds,
     'lastPlaybackEvent': lastPlaybackEvent,
+    'playbackOutcomes': playbackOutcomes.toJson(),
   };
 }
 

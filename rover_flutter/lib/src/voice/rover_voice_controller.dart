@@ -20,6 +20,14 @@ import 'rover_audio_services.dart';
 import 'rover_premium_voice.dart';
 import 'rover_voice_state.dart';
 
+enum AdaptiveStoryPlaybackResult {
+  completed,
+  interrupted,
+  paused,
+  blocked,
+  failed,
+}
+
 class RoverVoiceController extends ChangeNotifier {
   static const int _contextualPriority = 30;
   static const int _funFactPriority = 35;
@@ -160,6 +168,17 @@ class RoverVoiceController extends ChangeNotifier {
       }
     }
     _latestRouteRevision = session.routeRevision;
+
+    // Story mode keeps routine arrivals on screen; only navigation takes the audio floor.
+    if (_adaptiveRouteStoriesEnabled) {
+      if (session.status == RoamSessionStatus.completed ||
+          session.status == RoamSessionStatus.ended) {
+        await stopAll();
+      } else if (session.status == RoamSessionStatus.active) {
+        await _considerNavigationGuidance(session);
+      }
+      return;
+    }
 
     final recentStop = session.recentNarrationStop;
     final isArrivalSensitive = _isArrivalSensitiveSession(session);
@@ -305,8 +324,8 @@ class RoverVoiceController extends ChangeNotifier {
     final guidance = session.navigationGuidance;
     if (guidance == null ||
         guidance.distanceMeters > 45 ||
-        _arrivalAudioGateActive ||
-        _isArrivalSensitiveSession(session)) {
+        (!_adaptiveRouteStoriesEnabled &&
+            (_arrivalAudioGateActive || _isArrivalSensitiveSession(session)))) {
       return false;
     }
 
@@ -836,19 +855,42 @@ class RoverVoiceController extends ChangeNotifier {
     AdaptiveRouteStorySelection selection,
     RoamSession session, {
     bool userRequested = false,
+  }) async =>
+      await playAdaptiveRouteStoryWithResult(
+        selection,
+        session,
+        userRequested: userRequested,
+      ) ==
+      AdaptiveStoryPlaybackResult.completed;
+
+  Future<AdaptiveStoryPlaybackResult> playAdaptiveRouteStoryWithResult(
+    AdaptiveRouteStorySelection selection,
+    RoamSession session, {
+    bool userRequested = false,
   }) async {
-    if (selection.story.expiresUtc?.isAfter(DateTime.now().toUtc()) == false)
-      return false;
+    if (_isDisposed ||
+        selection.story.expiresUtc?.isAfter(DateTime.now().toUtc()) == false) {
+      return AdaptiveStoryPlaybackResult.blocked;
+    }
     if (!canPlayAdaptiveRouteStory(
       selection,
       session,
       userRequested: userRequested,
     )) {
-      return false;
+      return AdaptiveStoryPlaybackResult.blocked;
+    }
+    final priority = userRequested
+        ? _userRequestedPriority
+        : _contextualPriority;
+    if (!_canStartPriority(priority) || _activeAdaptiveStory != null) {
+      return AdaptiveStoryPlaybackResult.blocked;
     }
     final interrupted = _interruptedAdaptiveStory;
     final playback =
-        interrupted?.selection.story.storyId == selection.story.storyId
+        interrupted?.selection.story.storyId == selection.story.storyId &&
+            interrupted?.selection.variant.length == selection.variant.length &&
+            interrupted?.walkSessionId == session.apiWalkSessionId &&
+            interrupted?.routeRevision == session.routeRevision
         ? interrupted!
         : _AdaptiveRouteStoryPlayback(
             selection: selection,
@@ -857,10 +899,9 @@ class RoverVoiceController extends ChangeNotifier {
             segments: _storySegments(selection.variant.narration),
           );
     _interruptedAdaptiveStory = null;
+    if (playback.segments.isEmpty) return AdaptiveStoryPlaybackResult.blocked;
     _activeAdaptiveStory = playback;
-    final priority = userRequested
-        ? _userRequestedPriority
-        : _contextualPriority;
+    _errorMessage = null;
     _lastTurn = RoverVoiceTurn(
       questionText: userRequested
           ? 'Route story: ${selection.story.title}'
@@ -874,41 +915,67 @@ class RoverVoiceController extends ChangeNotifier {
     final audioCacheEligible = selection.story.sources.every(
       (source) => source.canCache,
     );
-    while (playback.segmentIndex < playback.segments.length) {
-      if (selection.story.expiresUtc?.isAfter(DateTime.now().toUtc()) == false)
-        return false;
-      final prefix = playback.wasInterrupted ? 'Continuing the story. ' : '';
-      playback.wasInterrupted = false;
-      final nextIndex = playback.segmentIndex + 1;
-      final premium = _premiumVoice;
-      if (premium != null && nextIndex < playback.segments.length) {
-        unawaited(
-          premium.prefetch(
-            text: playback.segments[nextIndex],
-            purpose: 'AdaptiveRouteStory',
-            audioCacheEligible: audioCacheEligible,
-            cacheExpiresUtc: selection.story.expiresUtc,
-            storyId: selection.story.storyId,
-            variantId:
-                '${selection.story.storyId}:${selection.variant.length.toLowerCase()}:$nextIndex',
-          ),
+    try {
+      while (playback.segmentIndex < playback.segments.length) {
+        if (_isDisposed ||
+            selection.story.expiresUtc?.isAfter(DateTime.now().toUtc()) ==
+                false) {
+          return AdaptiveStoryPlaybackResult.interrupted;
+        }
+        final prefix = playback.wasInterrupted ? 'Continuing the story. ' : '';
+        playback.wasInterrupted = false;
+        final nextIndex = playback.segmentIndex + 1;
+        final premium = _premiumVoice;
+        if (premium != null && nextIndex < playback.segments.length) {
+          unawaited(
+            premium.prefetch(
+              text: playback.segments[nextIndex],
+              purpose: 'AdaptiveRouteStory',
+              audioCacheEligible: audioCacheEligible,
+              cacheExpiresUtc: selection.story.expiresUtc,
+              storyId: selection.story.storyId,
+              variantId:
+                  '${selection.story.storyId}:${selection.variant.length.toLowerCase()}:$nextIndex',
+            ),
+          );
+        }
+        final played = await _speakAnswer(
+          '$prefix${playback.segments[playback.segmentIndex]}',
+          priority: priority,
+          purpose: 'AdaptiveRouteStory',
+          audioCacheEligible: audioCacheEligible,
+          cacheExpiresUtc: selection.story.expiresUtc,
+          storyId: selection.story.storyId,
+          variantId:
+              '${selection.story.storyId}:${selection.variant.length.toLowerCase()}:${playback.segmentIndex}',
         );
+        if (!played || _isDisposed) {
+          return playback.userPaused
+              ? AdaptiveStoryPlaybackResult.paused
+              : AdaptiveStoryPlaybackResult.interrupted;
+        }
+        playback.segmentIndex++;
       }
-      final played = await _speakAnswer(
-        '$prefix${playback.segments[playback.segmentIndex]}',
-        priority: priority,
-        purpose: 'AdaptiveRouteStory',
-        audioCacheEligible: audioCacheEligible,
-        cacheExpiresUtc: selection.story.expiresUtc,
-        storyId: selection.story.storyId,
-        variantId:
-            '${selection.story.storyId}:${selection.variant.length.toLowerCase()}:${playback.segmentIndex}',
+      return AdaptiveStoryPlaybackResult.completed;
+    } catch (_) {
+      // A stopped platform request may fail after higher-priority audio takes over.
+      if (!identical(_activeAdaptiveStory, playback) || _isDisposed) {
+        return playback.userPaused
+            ? AdaptiveStoryPlaybackResult.paused
+            : AdaptiveStoryPlaybackResult.interrupted;
+      }
+      _activeAudioPriority = 0;
+      _setState(
+        hasNarration ? RoverAudioState.narrationPaused : RoverAudioState.idle,
       );
-      if (!played) return false;
-      playback.segmentIndex++;
+      _errorMessage = 'Story audio could not be played. Please try again.';
+      _notify();
+      return AdaptiveStoryPlaybackResult.failed;
+    } finally {
+      if (identical(_activeAdaptiveStory, playback)) {
+        _activeAdaptiveStory = null;
+      }
     }
-    _activeAdaptiveStory = null;
-    return true;
   }
 
   bool hasInterruptedAdaptiveStory(String storyId) =>
@@ -925,12 +992,16 @@ class RoverVoiceController extends ChangeNotifier {
     RoamSession session, {
     bool userRequested = false,
   }) {
-    final availableSeconds = session.storySecondsUntilInterruption;
+    if (!userRequested && storiesAreQuiet) return false;
+    final availableSeconds = _adaptiveRouteStoriesEnabled
+        ? session.storySecondsUntilNavigation
+        : session.storySecondsUntilInterruption;
     if (availableSeconds != null &&
         selection.variant.estimatedDurationSeconds > availableSeconds - 15) {
       return false;
     }
-    if (_isArrivalSensitiveSession(session) ||
+    if ((!_adaptiveRouteStoriesEnabled &&
+            _isArrivalSensitiveSession(session)) ||
         (session.storyNavigationGuidance?.distanceMeters ?? 9999) <= 45) {
       return false;
     }

@@ -19,12 +19,19 @@ class AdaptiveRouteStoryController extends ChangeNotifier {
     required AdaptiveRouteStoryRepository repository,
     RoverPhase16Flags? flags,
     AdaptiveRouteStoryDeviceCache? deviceCache,
+    DateTime Function()? nowUtc,
   }) : _repository = repository,
        _flags = flags ?? RoverPhase16Flags.fromEnvironment(),
-       _deviceCache = deviceCache ?? AdaptiveRouteStoryDeviceCache.instance;
+       _deviceCache = deviceCache ?? AdaptiveRouteStoryDeviceCache.instance,
+       _nowUtc = nowUtc ?? (() => DateTime.now().toUtc());
 
   final AdaptiveRouteStoryRepository _repository;
   final RoverPhase16Flags _flags;
+  final DateTime Function() _nowUtc;
+  bool _replenishing = false;
+  DateTime? _lastReplenishAt;
+  double? _lastReplenishProgress;
+  int _replenishAttempts = 0;
   final AdaptiveRouteStoryDeviceCache _deviceCache;
 
   AdaptiveRouteStoryPackState? _packState;
@@ -40,6 +47,9 @@ class AdaptiveRouteStoryController extends ChangeNotifier {
   final Set<String> _prefetchedStoryIds = {};
   final Set<String> _completedStoryIds = {};
   final Set<String> _completedPlaces = {};
+  final Set<String> _deferredStoryIds = {};
+  final Map<String, String> _localPlaybackStates = {};
+  static const double _catchUpMeters = 150;
   double? _lastSelectionProgressMeters;
   Timer? _pollTimer;
   bool _disposed = false;
@@ -139,6 +149,10 @@ class AdaptiveRouteStoryController extends ChangeNotifier {
       if (_walkSessionId != session.apiWalkSessionId) {
         _completedStoryIds.clear();
         _completedPlaces.clear();
+        _localPlaybackStates.clear();
+        _lastReplenishAt = null;
+        _lastReplenishProgress = null;
+        _replenishAttempts = 0;
       }
       _walkSessionId = session.apiWalkSessionId;
       _routeRevision = session.routeRevision;
@@ -148,6 +162,7 @@ class AdaptiveRouteStoryController extends ChangeNotifier {
       _lastSelectionProgressMeters = null;
       _lastSelectionCheckUtc = null;
       _prefetchedStoryIds.clear();
+      _deferredStoryIds.clear();
       _lastStatusCheckUtc = null;
       _notify();
     }
@@ -158,6 +173,7 @@ class AdaptiveRouteStoryController extends ChangeNotifier {
         (_lastStatusCheckUtc == null ||
             now.difference(_lastStatusCheckUtc!) >= const Duration(seconds: 4));
     final progressMeters = _routeProgressMeters(session);
+    _rememberDeferredStories(progressMeters);
     final selectionDue =
         session.status == RoamSessionStatus.active &&
         !(_manualSelection && _currentSelection != null) &&
@@ -169,9 +185,20 @@ class AdaptiveRouteStoryController extends ChangeNotifier {
                 const Duration(seconds: 5));
     final interruptedStory = _currentSelection;
     if (interruptedStory != null &&
+        voiceController.hasInterruptedAdaptiveStory(
+          interruptedStory.story.storyId,
+        ) &&
+        !voiceController.hasAutomaticallyResumableAdaptiveStory(
+          interruptedStory.story.storyId,
+        )) {
+      return;
+    }
+    if (interruptedStory != null &&
         voiceController.hasAutomaticallyResumableAdaptiveStory(
           interruptedStory.story.storyId,
         ) &&
+        _canCatchUp(interruptedStory.story, progressMeters) &&
+        session.status == RoamSessionStatus.active &&
         _safeForContextualStory(session)) {
       await playCurrent(session, voiceController, userRequested: false);
       return;
@@ -213,6 +240,9 @@ class AdaptiveRouteStoryController extends ChangeNotifier {
             ..sort(
               (a, b) => a.opensAtRouteMeters.compareTo(b.opensAtRouteMeters),
             );
+      if (!voiceController.storiesAreQuiet) {
+        _maybeReplenish(session, progressMeters);
+      }
       for (final story in upcoming.take(2)) {
         if (_prefetchedStoryIds.add(story.storyId)) {
           unawaited(voiceController.prefetchAdaptiveRouteStory(story));
@@ -261,7 +291,9 @@ class AdaptiveRouteStoryController extends ChangeNotifier {
 
   Future<void> refreshPack(RoamSession session) async {
     final walkSessionId = session.apiWalkSessionId;
-    if (!enabled || walkSessionId == null || _syncInFlight) return;
+    if (!enabled || walkSessionId == null || _syncInFlight || _replenishing) {
+      return;
+    }
     _syncInFlight = true;
     _notify();
     try {
@@ -312,7 +344,7 @@ class AdaptiveRouteStoryController extends ChangeNotifier {
             ),
           );
     if (variants.isEmpty) return false;
-    final available = session.storySecondsUntilInterruption;
+    final available = session.storySecondsUntilNavigation;
     final fitting = variants
         .where(
           (variant) =>
@@ -350,28 +382,81 @@ class AdaptiveRouteStoryController extends ChangeNotifier {
         (story.expiresUtc?.isBefore(now) ?? false)) {
       return 'Expired';
     }
-    if (_completedStoryIds.contains(story.storyId) ||
-        (_packState?.heardStoryIds.contains(story.storyId) ?? false) ||
-        _completedPlaces.contains('${story.placeId}|${story.intent}')) {
-      return 'Already heard';
+    final id = story.storyId;
+    final outcomes = _packState?.playbackOutcomes;
+    final local = _localPlaybackStates[id];
+    if (local == 'Started' || local == 'Resumed') return 'Playing';
+    if (local == 'Paused') return 'Paused';
+    if (_completedStoryIds.contains(id) ||
+        (outcomes?.completedStoryIds.contains(id) ?? false)) {
+      return 'Played';
     }
+    if (local == 'Skipped' ||
+        (outcomes?.skippedStoryIds.contains(id) ?? false)) {
+      return 'Skipped';
+    }
+    if (local == 'Dismissed' ||
+        (outcomes?.dismissedStoryIds.contains(id) ?? false)) {
+      return 'Dismissed';
+    }
+    if (_isExcluded(story)) return 'Previously handled';
     final progress = _routeProgressMeters(session);
     if (progress < story.playbackWindowStart) return 'Ahead on route';
-    if (progress > story.playbackWindowEnd) {
+    if (progress > story.playbackWindowEnd && !_canCatchUp(story, progress)) {
       return 'Automatic playback window passed';
     }
-    if (!_safeForContextualStory(session)) {
-      return 'Waiting for turn or arrival to clear';
+    if (local == 'Interrupted' ||
+        (outcomes?.interruptedStoryIds.contains(id) ?? false)) {
+      return 'Interrupted - waiting to resume';
     }
-    final seconds = session.storySecondsUntilInterruption;
+    if (local == 'Failed' || (outcomes?.failedStoryIds.contains(id) ?? false)) {
+      return 'Audio failed - waiting to retry';
+    }
+    if (!_safeForContextualStory(session)) {
+      return 'Waiting for navigation to clear';
+    }
+    final seconds = session.storySecondsUntilNavigation;
     if (!story.variants.any(
       (variant) =>
           variant.narration.trim().isNotEmpty &&
           (seconds == null || variant.estimatedDurationSeconds <= seconds - 15),
     )) {
-      return 'Waiting for a longer gap before the next turn or arrival';
+      return 'Waiting for a longer gap before the next turn';
     }
-    return 'In playback window';
+    return progress > story.playbackWindowEnd
+        ? 'Waiting to catch up'
+        : 'In playback window';
+  }
+
+  bool _isExcluded(AdaptiveRouteStory story) =>
+      _completedStoryIds.contains(story.storyId) ||
+      (_packState?.heardStoryIds.contains(story.storyId) ?? false) ||
+      const {
+        'Completed',
+        'Skipped',
+        'Dismissed',
+      }.contains(_localPlaybackStates[story.storyId]) ||
+      _completedPlaces.contains('${story.placeId}|${story.intent}');
+
+  bool _canCatchUp(AdaptiveRouteStory story, double progress) {
+    final now = DateTime.now().toUtc();
+    return _deferredStoryIds.contains(story.storyId) &&
+        !_isExcluded(story) &&
+        (pack?.expiresUtc.isAfter(now) ?? false) &&
+        (story.expiresUtc?.isAfter(now) ?? true) &&
+        progress >= story.playbackWindowStart &&
+        progress <= story.playbackWindowEnd + _catchUpMeters;
+  }
+
+  void _rememberDeferredStories(double progress) {
+    // Only stories encountered in their original window get a catch-up opportunity.
+    for (final story in pack?.stories ?? const <AdaptiveRouteStory>[]) {
+      if (progress >= story.playbackWindowStart &&
+          progress <= story.playbackWindowEnd &&
+          !_isExcluded(story)) {
+        _deferredStoryIds.add(story.storyId);
+      }
+    }
   }
 
   Future<void> playCurrent(
@@ -385,9 +470,8 @@ class AdaptiveRouteStoryController extends ChangeNotifier {
       return;
     }
     final now = DateTime.now().toUtc();
-    if (_manualSelection &&
-        ((pack?.expiresUtc.isBefore(now) ?? true) ||
-            (selection.story.expiresUtc?.isBefore(now) ?? false))) {
+    if ((pack?.expiresUtc.isBefore(now) ?? true) ||
+        (selection.story.expiresUtc?.isBefore(now) ?? false)) {
       _errorMessage = 'This story has expired. Refresh the story pack.';
       _notify();
       return;
@@ -412,12 +496,31 @@ class AdaptiveRouteStoryController extends ChangeNotifier {
             'story=${selection.story.storyId} intent=${selection.story.intent}',
       );
       await _record(walkSessionId, selection.story.storyId, 'Started');
-      final played = await voiceController.playAdaptiveRouteStory(
+      final result = await voiceController.playAdaptiveRouteStoryWithResult(
         selection,
         session,
         userRequested: userRequested,
       );
-      if (played) {
+      if (result == AdaptiveStoryPlaybackResult.blocked) {
+        _localPlaybackStates[selection.story.storyId] = 'Waiting';
+      } else if (result == AdaptiveStoryPlaybackResult.paused) {
+        _localPlaybackStates[selection.story.storyId] = 'Paused';
+      }
+      if (result == AdaptiveStoryPlaybackResult.interrupted ||
+          result == AdaptiveStoryPlaybackResult.failed) {
+        final kind = result == AdaptiveStoryPlaybackResult.interrupted
+            ? 'Interrupted'
+            : 'Failed';
+        if (result == AdaptiveStoryPlaybackResult.failed) {
+          _errorMessage = 'Story audio could not be played. Please try again.';
+        }
+        await _record(walkSessionId, selection.story.storyId, kind);
+        FieldDiagnostics.instance.record(
+          'route-story',
+          'playback outcome=$kind story=${selection.story.storyId}',
+        );
+      }
+      if (result == AdaptiveStoryPlaybackResult.completed) {
         // Remember audible completion before a slow or failed acknowledgement can permit a replay.
         _completedStoryIds.add(selection.story.storyId);
         if (selection.story.placeId.isNotEmpty) {
@@ -589,6 +692,7 @@ class AdaptiveRouteStoryController extends ChangeNotifier {
     double progressMeters,
   ) async {
     if (_manualSelection && _currentSelection != null) return;
+    _rememberDeferredStories(progressMeters);
     if (!_safeForContextualStory(session)) {
       FieldDiagnostics.instance.record(
         'route-story',
@@ -604,6 +708,43 @@ class AdaptiveRouteStoryController extends ChangeNotifier {
     }
     _lastSelectionProgressMeters = progressMeters;
     _lastSelectionCheckUtc = DateTime.now().toUtc();
+    final catchUp =
+        (pack?.stories ?? const <AdaptiveRouteStory>[])
+            .where(
+              (story) =>
+                  progressMeters > story.playbackWindowEnd &&
+                  _canCatchUp(story, progressMeters),
+            )
+            .toList()
+          ..sort((a, b) => a.playbackWindowEnd.compareTo(b.playbackWindowEnd));
+    for (final story in catchUp) {
+      final variants =
+          story.variants
+              .where((variant) => variant.narration.trim().isNotEmpty)
+              .toList()
+            ..sort(
+              (a, b) => a.estimatedDurationSeconds.compareTo(
+                b.estimatedDurationSeconds,
+              ),
+            );
+      for (final variant in variants) {
+        final selection = AdaptiveRouteStorySelection(
+          story: story,
+          variant: variant,
+          reason: 'Catching up after a navigation or audio hold.',
+        );
+        if (!voiceController.canPlayAdaptiveRouteStory(
+          selection,
+          session,
+          userRequested: false,
+        )) {
+          continue;
+        }
+        _currentSelection = selection;
+        await playCurrent(session, voiceController, userRequested: false);
+        return;
+      }
+    }
     final request = NextRouteStoryRequest(
       routeProgressMeters: progressMeters,
       secondsUntilNextManeuver: _secondsUntilNextManeuver(session),
@@ -657,6 +798,8 @@ class AdaptiveRouteStoryController extends ChangeNotifier {
       return;
     }
     if (request.excludedStoryIds.contains(selection.story.storyId)) return;
+    if (_isExcluded(selection.story)) return;
+    _deferredStoryIds.add(selection.story.storyId);
     _manualSelection = false;
     _currentSelection = selection;
     _notify();
@@ -664,11 +807,7 @@ class AdaptiveRouteStoryController extends ChangeNotifier {
   }
 
   bool _safeForContextualStory(RoamSession session) {
-    if (session.isOffRoute || session.hasPendingArrivalNarration()) {
-      return false;
-    }
-    final distance = session.distanceToNextStopMeters;
-    if (distance != null && distance <= session.storyArrivalBoundaryMeters) {
+    if (session.isOffRoute) {
       return false;
     }
     return (session.storyNavigationGuidance?.distanceMeters ?? 9999) > 45;
@@ -688,7 +827,90 @@ class AdaptiveRouteStoryController extends ChangeNotifier {
   }
 
   static int? _secondsUntilNextManeuver(RoamSession session) {
-    return session.storySecondsUntilInterruption;
+    return session.storySecondsUntilNavigation;
+  }
+
+  void _maybeReplenish(RoamSession session, double progress) {
+    if (_replenishing ||
+        _usingOfflinePack ||
+        _replenishAttempts >= 6 ||
+        session.status != RoamSessionStatus.active ||
+        session.isOffRoute ||
+        pack == null ||
+        _packState?.status == 'Generating') {
+      return;
+    }
+    final now = _nowUtc();
+    _lastReplenishAt ??= now;
+    if (now.difference(_lastReplenishAt!) < const Duration(minutes: 3) ||
+        (_lastReplenishProgress != null &&
+            progress < _lastReplenishProgress! + 150)) {
+      return;
+    }
+    final remainingSeconds = pack!.expiresUtc.isAfter(now)
+        ? pack!.stories
+              .where(
+                (story) =>
+                    !_isExcluded(story) &&
+                    (story.expiresUtc?.isAfter(now) ?? true) &&
+                    story.playbackWindowEnd >= progress &&
+                    story.playbackWindowStart <= progress + 800,
+              )
+              .fold<int>(
+                0,
+                (sum, story) =>
+                    sum +
+                    story.variants.fold<int>(
+                      0,
+                      (longest, variant) =>
+                          variant.estimatedDurationSeconds > longest
+                          ? variant.estimatedDurationSeconds
+                          : longest,
+                    ),
+              )
+        : 0;
+    if (remainingSeconds >= 180) return;
+    _lastReplenishAt = now;
+    _lastReplenishProgress = progress;
+    _replenishAttempts++;
+    _replenishing = true;
+    FieldDiagnostics.instance.record(
+      'route-story',
+      'replenish started remainingSeconds=$remainingSeconds attempt=$_replenishAttempts',
+    );
+    unawaited(_replenish(session.apiWalkSessionId!, session.routeRevision));
+  }
+
+  Future<void> _replenish(String walkId, int revision) async {
+    try {
+      final result = await _repository.generateRouteStoryPack(
+        walkId,
+        const GenerateRouteStoryPackRequest(forceRefresh: true),
+      );
+      if (_disposed ||
+          _walkSessionId != walkId ||
+          _routeRevision != revision ||
+          result.routeRevision != revision ||
+          result.walkSessionId != walkId) {
+        return;
+      }
+      _packState = result;
+      await _deviceCache.store(result);
+      _lastSelectionProgressMeters = null;
+      FieldDiagnostics.instance.record(
+        'route-story',
+        'replenish finished stories=${result.pack?.stories.length ?? 0}',
+      );
+    } catch (_) {
+      // Keep the playable queue and back off; a failed refresh is not an audio failure.
+      FieldDiagnostics.instance.record(
+        'route-story',
+        'replenish unavailable; retained current stories',
+      );
+    } finally {
+      _replenishing = false;
+      _notify();
+    }
   }
 
   Future<void> _record(
@@ -697,6 +919,18 @@ class AdaptiveRouteStoryController extends ChangeNotifier {
     String kind,
   ) async {
     if (walkSessionId == null) return;
+    if (const {
+      'Started',
+      'Resumed',
+      'Paused',
+      'Completed',
+      'Skipped',
+      'Dismissed',
+      'Interrupted',
+      'Failed',
+    }.contains(kind)) {
+      _localPlaybackStates[storyId] = kind;
+    }
     final request = RouteStoryPlaybackEventRequest(
       storyId: storyId,
       kind: kind,

@@ -187,6 +187,10 @@ class AdaptiveRouteStoryDeviceCache extends ChangeNotifier {
         pack: state.pack,
         error: state.error,
         lastPlaybackEvent: request.kind,
+        playbackOutcomes: state.playbackOutcomes.record(
+          request.storyId,
+          request.kind,
+        ),
       );
     }
     if (queueForSync) {
