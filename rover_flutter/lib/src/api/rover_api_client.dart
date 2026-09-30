@@ -309,6 +309,23 @@ class RoverApiClient {
     return LocationObservationResolution.fromJson(json);
   }
 
+  Future<LocationObservationResolution> identifyPhoto({
+    required String imageBase64,
+    required double latitude,
+    required double longitude,
+  }) async {
+    final json = await _sendJson(
+      'POST',
+      '/api/location-observations/identify-photo',
+      body: {
+        'imageBase64': imageBase64,
+        'latitude': latitude,
+        'longitude': longitude,
+      },
+    );
+    return LocationObservationResolution.fromJson(json);
+  }
+
   Future<LocationStoryContext> getLocationContext({
     required double latitude,
     required double longitude,

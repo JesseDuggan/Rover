@@ -1,4 +1,5 @@
 import 'dart:async';
+import 'dart:convert';
 import 'dart:io';
 
 import 'package:camera/camera.dart';
@@ -15,6 +16,7 @@ import '../api/location_observation_models.dart';
 import '../api/hotel_rate_repository.dart';
 import '../api/problem_details.dart';
 import '../api/walk_repository.dart';
+import '../api/rover_api_client.dart';
 import '../diagnostics/field_diagnostics.dart';
 import '../diagnostics/performance_diagnostics.dart';
 import '../location/rover_location.dart';
@@ -29,6 +31,8 @@ import 'camera_projection.dart';
 import 'camera_heading.dart';
 import 'hotel_rate_sheet.dart';
 import 'lodging_candidate.dart';
+import 'identification_photo.dart';
+import 'photo_identification_sheet.dart';
 
 class CameraExplorerScreen extends StatefulWidget {
   const CameraExplorerScreen({this.hotelRateRepository, super.key});
@@ -577,7 +581,8 @@ class _CameraExplorerScreenState extends State<CameraExplorerScreen>
   Widget build(BuildContext context) {
     final session = ActiveRoamScope.of(context).session;
     final controller = _cameraController;
-    final recognitionEnabled = _recognitionEnabled;
+    final recognitionEnabled =
+        controller != null && controller.value.isInitialized;
     return Scaffold(
       backgroundColor: Colors.black,
       body: SafeArea(
@@ -620,7 +625,7 @@ class _CameraExplorerScreenState extends State<CameraExplorerScreen>
                   }
                   unawaited(_voiceController.stopAll());
                 },
-                onRecognize: () => unawaited(_whatAmILookingAt()),
+                onRecognize: () => unawaited(_chooseIdentification()),
               ),
             ),
             Positioned(
@@ -648,7 +653,7 @@ class _CameraExplorerScreenState extends State<CameraExplorerScreen>
                       ? () => _startWalkFromCameraPlace(_selected!)
                       : () => unawaited(_addToWalk(_selected!)),
                   onOpenMap: () => context.go('/home/active-roam'),
-                  onWhatAmILookingAt: () => unawaited(_whatAmILookingAt()),
+                  onWhatAmILookingAt: () => unawaited(_chooseIdentification()),
                   onCheckRates:
                       isLodgingCandidate(
                         category: _selected!.place.category,
@@ -667,7 +672,7 @@ class _CameraExplorerScreenState extends State<CameraExplorerScreen>
                   child: _CameraScanControl(
                     enabled: recognitionEnabled,
                     recognizing: _analyzingCapture,
-                    onPressed: () => unawaited(_whatAmILookingAt()),
+                    onPressed: () => unawaited(_chooseIdentification()),
                   ),
                 ),
               ),
@@ -766,6 +771,115 @@ class _CameraExplorerScreenState extends State<CameraExplorerScreen>
   void _startWalkFromCameraPlace(CameraOverlayCandidate overlay) {
     final place = Uri.encodeComponent(overlay.place.name);
     context.go('/home/adventure-request?nearby=true&cameraPlace=$place');
+  }
+
+  Future<void> _chooseIdentification() async {
+    if (_analyzingCapture) return;
+    final usePhoto = await showModalBottomSheet<bool>(
+      context: context,
+      showDragHandle: true,
+      builder: (context) => SafeArea(
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            ListTile(
+              leading: const Icon(Icons.photo_camera),
+              title: const Text('Identify an object'),
+              subtitle: const Text('Review a photo before sending'),
+              onTap: () => Navigator.pop(context, true),
+            ),
+            ListTile(
+              enabled: _recognitionEnabled,
+              leading: const Icon(Icons.document_scanner),
+              title: const Text('Read a sign'),
+              subtitle: const Text('Photo stays on this device'),
+              onTap: _recognitionEnabled
+                  ? () => Navigator.pop(context, false)
+                  : null,
+            ),
+          ],
+        ),
+      ),
+    );
+    if (!mounted || usePhoto == null) return;
+    if (usePhoto) {
+      await _identifyObject();
+    } else {
+      await _whatAmILookingAt();
+    }
+  }
+
+  Future<void> _identifyObject() async {
+    final controller = _cameraController;
+    final reading = _reading;
+    if (_analyzingCapture ||
+        controller == null ||
+        !controller.value.isInitialized) {
+      return;
+    }
+    if (reading == null ||
+        (reading.accuracyMeters ?? double.infinity) > 100 ||
+        DateTime.now().toUtc().difference(reading.recordedAtUtc).inSeconds >
+            120) {
+      setState(
+        () => _message = 'Waiting for a more accurate location before identifying nearby objects.',
+      );
+      return;
+    }
+    final revision = ++_captureRevision;
+    String? capturePath;
+    setState(() => _analyzingCapture = true);
+    final client = RoverApiClient();
+    try {
+      final capture = await controller.takePicture();
+      capturePath = capture.path;
+      _activeCapturePath = capturePath;
+      final photo = await prepareIdentificationPhoto(
+        await capture.readAsBytes(),
+      );
+      await _deleteCapture(capturePath);
+      _activeCapturePath = null;
+      if (!mounted || revision != _captureRevision) return;
+      final chosen = await showModalBottomSheet<LocationObservationCandidate>(
+        context: context,
+        isScrollControlled: true,
+        showDragHandle: true,
+        builder: (context) => PhotoIdentificationSheet(
+          photo: photo,
+          identify: () {
+            if (!mounted || revision != _captureRevision) {
+              throw const RoverApiException(
+                'Camera session ended. Retake the photo.',
+              );
+            }
+            return client.identifyPhoto(
+              imageBase64: base64Encode(photo),
+              latitude: reading.location.latitude,
+              longitude: reading.location.longitude,
+            );
+          },
+        ),
+      );
+      if (chosen != null && mounted && revision == _captureRevision) {
+        setState(() {
+          _selected = _overlayForResolvedPlace(chosen.place, reading.location);
+          _message = 'Place confirmed. Hear its sourced story below.';
+        });
+      }
+    } catch (_) {
+      if (mounted && revision == _captureRevision) {
+        setState(
+          () => _message = 'Could not prepare the photo. Please try again.',
+        );
+      }
+    } finally {
+      client.close(force: true);
+      await _deleteCapture(capturePath);
+      if (mounted && revision == _captureRevision) {
+        _activeCapturePath = null;
+        setState(() => _analyzingCapture = false);
+      }
+    }
   }
 
   Future<void> _whatAmILookingAt() async {
