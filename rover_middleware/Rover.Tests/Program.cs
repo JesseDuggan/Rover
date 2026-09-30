@@ -75,6 +75,7 @@ var tests = new List<(string Name, Func<Task> Run)>
     ("Phase 16 intent classification is deterministic and injection resistant", Phase16IntentClassificationIsDeterministic),
     ("Phase 16 story duration preserves navigation time", Phase16StoryDurationPreservesNavigationTime),
     ("Phase 16 route packs are revision scoped", Phase16RoutePacksAreRevisionScoped),
+    ("Route revisions retain fresh nearby stories and listening history", RouteStoryContinuity),
     ("Phase 16 route packs select, complete, and save stories", Phase16RoutePacksSelectCompleteAndSaveStories),
     ("Playback outcomes distinguish listening from skipped and failed attempts", PlaybackOutcomesDistinguishAttempts),
     ("Route stories merge only fresh, nearby, cited live updates", RouteStoriesMergeFreshLiveUpdates),
@@ -804,6 +805,47 @@ static Task Phase16StoryDurationPreservesNavigationTime()
     return Task.CompletedTask;
 }
 
+static async Task RouteStoryContinuity()
+{
+    var session = await CreateSessionAsync(start: true);
+    var now = DateTimeOffset.UtcNow;
+    var walks = new InMemoryWalkSessionRepository();
+    await walks.AddAsync(session, CancellationToken.None);
+    var packs = new InMemoryAdaptiveRouteStoryPackRepository();
+    var story = new AdaptiveRouteStory("retained", "old-segment", "place", "Local history", RouteStoryIntent.HiddenHistory,
+        "history", session.Route.Coordinates[0], 9000, 9500,
+        [new(AdaptiveStoryLength.Standard, 20, "A sourced local story.", ["claim"])],
+        [new("claim", "A sourced local story.", ["source"], 0.9)],
+        [new("source", "archive", "Archive", "https://example.org/history", "Archive", now, 0.9)], 0.9, now.AddHours(1));
+    var oldPack = new AdaptiveRouteStoryPack("3.0", "old", "old", session.WalkSessionId, "old", 1, "test", now,
+        now.AddHours(2), [story, story with { StoryId = "expired", ExpiresUtc = now.AddMinutes(-1) },
+            story with { StoryId = "distant", Anchor = new GeoLocation(0, 0) }], []);
+    await packs.StoreAsync(new(session.WalkSessionId, 1, AdaptiveRouteStoryPackStatus.Ready, now, oldPack, null,
+        new HashSet<string> { "retained" }, AdaptiveStoryPlaybackEventKind.Completed)
+        { PlaybackOutcomes = new() { CompletedStoryIds = new HashSet<string> { "retained" } } }, CancellationToken.None);
+    session.ApplyAdaptation(new WalkAdaptationProposal("reroute", session.WalkSessionId, WalkAdaptationType.RejoinRoute,
+        "Rejoin", "Rejoin", 0, 0, 60, [], [], [], [], session.Route, session.Stops.ToArray(), 1, now, now.AddMinutes(5)), now);
+    var phase15 = new Phase15Options { Enabled = true, CorridorEnabled = true };
+    var plans = new RouteStoryPlanService(phase15, new DeterministicRouteStoryPlanner(phase15), new InMemoryRouteStoryPlanRepository(), TimeProvider.System);
+    var options = new Phase16Options { Enabled = true, JourneyCollectionsEnabled = true };
+    var service = new AdaptiveRouteStoryPackService(options, walks, plans,
+        new RecordingLocationStoryContextService(Array.Empty<LocationPlace>()), packs,
+        new DeterministicStoryIntentClassifier(), new DeterministicAdaptiveStoryLengthSelector(options), TimeProvider.System,
+        researcher: new CapturingRouteResearcher(_ =>
+        {
+            var during = packs.GetAsync(session.WalkSessionId, 2, CancellationToken.None).GetAwaiter().GetResult()!;
+            AssertEqual(AdaptiveRouteStoryPackStatus.Generating, during.Status);
+            AssertEqual(1, during.Pack!.Stories.Count);
+            return new([], "No new local research.");
+        }));
+    var result = await service.GenerateAsync(session.WalkSessionId, new(null, null, "en", false), CancellationToken.None);
+    AssertEqual(1, result.Pack!.Stories.Count);
+    AssertTrue(result.Pack.Stories[0].OpensAtRouteMeters < 9000, "Old route windows must be recalculated.");
+    AssertEqual(story.ExpiresUtc, result.Pack.Stories[0].ExpiresUtc);
+    AssertTrue(result.HeardStoryIds.Contains("retained") && result.PlaybackOutcomes.CompletedStoryIds.Contains("retained"), "Rerouting must preserve listening history.");
+    AssertEqual(3, (await packs.GetAsync(session.WalkSessionId, 1, CancellationToken.None))!.Pack!.Stories.Count);
+}
+
 static async Task Phase16RoutePacksAreRevisionScoped()
 {
     var repository = new InMemoryAdaptiveRouteStoryPackRepository();
@@ -828,14 +870,15 @@ static async Task LocalRouteResearchValidation()
     var segment = new RouteStorySegment("s", 1, anchor, anchor, anchor, 0, 300, 300, 240, false, []);
     var query = new LocalRouteResearchQuery([segment], new ApproximateLiveLocation("Paris", null, "FR", null), ["Public museum"], ["history"], "en",
         [new LocalResearchPublicPlace("Public museum", "Museum street, Paris", anchor)]);
-    const string passage = "In Paris, Public museum preserves local workshop traditions through its collection of tools and accounts of the people who used them.";
+    var passage = $"In Paris, Public museum preserves local workshop traditions through its collection of tools and accounts of the people who used them. Published {now:yyyy-MM-dd}.";
     var research = JsonSerializer.Serialize(new { status = "completed", output = new[] { new { content = new[] { new
     {
         text = passage + " [1]",
         annotations = new[] { new { type = "url_citation", start_index = passage.Length + 1, end_index = passage.Length + 4,
             url = "https://museum.example/history", title = "Museum history" } }
     } } } } });
-    foreach (var scenario in new[] { "valid", "culture", "architecture", "venue-anchor", "wrapped", "uncited", "missing-annotations", "bad-offset", "bad-url", "short-text", "embedded-url", "far", "undated-event", "invented-event-dates", "unknown-evidence", "unsupported-location", "failure" })
+    var additionalKinds = new[] { "fun_fact", "people", "then_and_now", "food", "legend", "nature", "hidden_gem", "local_life", "pop_culture", "look_closer", "news" };
+    foreach (var scenario in new[] { "valid", "culture", "architecture", "venue-anchor", "wrapped", "uncited", "missing-annotations", "bad-offset", "bad-url", "short-text", "embedded-url", "far", "undated-event", "invented-event-dates", "unknown-evidence", "unsupported-location", "failure", "undated-news", "old-news" }.Concat(additionalKinds))
     {
         var calls = 0;
         using var client = new HttpClient(new RoutingHttpMessageHandler(request =>
@@ -894,10 +937,10 @@ static async Task LocalRouteResearchValidation()
             var cards = JsonSerializer.Serialize(new { stories = new[] { new
             {
                 evidenceIndex = scenario == "unknown-evidence" ? 99 : 0,
-                title = "Workshop traditions", kind = scenario is "undated-event" or "invented-event-dates" ? "event" : scenario is "culture" or "architecture" ? scenario : "history",
+                title = "Workshop traditions", kind = scenario is "undated-event" or "invented-event-dates" ? "event" : scenario is "undated-news" or "old-news" ? "news" : additionalKinds.Contains(scenario) || scenario is "culture" or "architecture" ? scenario : "history",
                 latitude = scenario is "far" or "venue-anchor" ? 44 : anchor.Latitude, longitude = anchor.Longitude,
                 locationEvidence = scenario == "unsupported-location" ? "Berlin" : scenario == "venue-anchor" ? "Public museum" : "Paris",
-                startsUtc = scenario == "invented-event-dates" ? now.AddDays(1).ToString("O") : null,
+                startsUtc = scenario == "invented-event-dates" ? now.AddDays(1).ToString("O") : scenario == "news" ? now.ToString("O") : scenario == "old-news" ? now.AddDays(-10).ToString("O") : null,
                 endsUtc = scenario == "invented-event-dates" ? now.AddDays(1).AddHours(1).ToString("O") : null
             } } });
             return JsonResponse(HttpStatusCode.OK, JsonSerializer.Serialize(new { status = "completed", output = new[] { new { content = new[] { new { text = cards } } } } }));
@@ -905,7 +948,7 @@ static async Task LocalRouteResearchValidation()
         var researcher = new Rover.Infrastructure.Journeys.OpenAILocalRouteResearcher(client,
             new Rover.Infrastructure.Journeys.LocalRouteResearchOptions { Enabled = true, ApiKey = "test", Model = "gpt-5-mini" }, TimeProvider.System);
         var result = await researcher.ResearchAsync(query, CancellationToken.None);
-        AssertEqual(scenario is "valid" or "wrapped" or "culture" or "architecture" or "venue-anchor" ? 1 : 0, result.Stories.Count);
+        AssertEqual(additionalKinds.Contains(scenario) || scenario is "valid" or "wrapped" or "culture" or "architecture" or "venue-anchor" ? 1 : 0, result.Stories.Count);
         if (scenario is "culture" or "architecture" or "venue-anchor")
         {
             AssertEqual(RouteStoryIntent.HiddenHistory, result.Stories.Single().Intent);

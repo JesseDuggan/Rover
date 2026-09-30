@@ -12,6 +12,15 @@ public sealed record AdaptiveStoryPlaybackOutcomes
     public IReadOnlySet<string> InterruptedStoryIds { get; init; } = new HashSet<string>();
     public IReadOnlySet<string> FailedStoryIds { get; init; } = new HashSet<string>();
 
+    public AdaptiveStoryPlaybackOutcomes Merge(AdaptiveStoryPlaybackOutcomes other) => new()
+    {
+        CompletedStoryIds = CompletedStoryIds.Concat(other.CompletedStoryIds).ToHashSet(StringComparer.OrdinalIgnoreCase),
+        SkippedStoryIds = SkippedStoryIds.Concat(other.SkippedStoryIds).ToHashSet(StringComparer.OrdinalIgnoreCase),
+        DismissedStoryIds = DismissedStoryIds.Concat(other.DismissedStoryIds).ToHashSet(StringComparer.OrdinalIgnoreCase),
+        InterruptedStoryIds = InterruptedStoryIds.Concat(other.InterruptedStoryIds).ToHashSet(StringComparer.OrdinalIgnoreCase),
+        FailedStoryIds = FailedStoryIds.Concat(other.FailedStoryIds).ToHashSet(StringComparer.OrdinalIgnoreCase)
+    };
+
     public AdaptiveStoryPlaybackOutcomes Record(AdaptiveStoryPlaybackEvent playbackEvent) => playbackEvent.Kind switch
     {
         AdaptiveStoryPlaybackEventKind.Completed => this with { CompletedStoryIds = Add(CompletedStoryIds, playbackEvent.StoryId) },

@@ -389,6 +389,28 @@ public sealed class AdaptiveRouteStoryPackService : IAdaptiveRouteStoryPackServi
             var plan = await _plans.GetAsync(walkSessionId, session.RouteRevision, generationToken).WaitAsync(generationToken)
                 ?? await _plans.RefreshAsync(session, generationToken).WaitAsync(generationToken)
                 ?? throw new InvalidOperationException("Phase 15 route corridor planning must be enabled before Phase 16 route stories can be generated.");
+            if (_options.JourneyCollectionsEnabled && generating.Pack is null)
+            {
+                // A reroute changes distance windows, not the evidence or listening history.
+                for (var revision = session.RouteRevision - 1; revision >= Math.Max(1, session.RouteRevision - 20); revision--)
+                {
+                    var previousState = await _packs.GetAsync(walkSessionId, revision, generationToken);
+                    if (previousState?.Pack is not { } previousPack) continue;
+                    var carried = JourneyCollectionBuilder.Rebase(previousPack, plan, session.Route, now);
+                    generating = generating with
+                    {
+                        Pack = previousPack with { RouteRevision = session.RouteRevision, RouteId = plan.RouteId,
+                            PackId = $"route-story-{key[..16]}", IdempotencyKey = key, Stories = carried,
+                            Collection = JourneyCollectionBuilder.Describe(plan, carried) },
+                        HeardStoryIds = previousState.HeardStoryIds,
+                        SavedStoryIds = previousState.SavedStoryIds,
+                        PlaybackOutcomes = previousState.PlaybackOutcomes,
+                        LastPlaybackEvent = previousState.LastPlaybackEvent
+                    };
+                    generating = await StoreGenerationStateAsync(generating, generationToken);
+                    break;
+                }
+            }
             var warnings = new List<string>();
             var retainedStories = generating.Pack is { } prior
                 ? prior.Stories.Where(story => IsFresh(story, prior))
@@ -597,10 +619,10 @@ public sealed class AdaptiveRouteStoryPackService : IAdaptiveRouteStoryPackServi
             if (latest is not null)
                 state = state with
                 {
-                    HeardStoryIds = latest.HeardStoryIds,
-                    SavedStoryIds = latest.SavedStoryIds,
-                    LastPlaybackEvent = latest.LastPlaybackEvent,
-                    PlaybackOutcomes = latest.PlaybackOutcomes
+                    HeardStoryIds = state.HeardStoryIds.Concat(latest.HeardStoryIds).ToHashSet(StringComparer.OrdinalIgnoreCase),
+                    SavedStoryIds = (state.SavedStoryIds ?? new HashSet<string>()).Concat(latest.SavedStoryIds ?? new HashSet<string>()).ToHashSet(StringComparer.OrdinalIgnoreCase),
+                    LastPlaybackEvent = latest.LastPlaybackEvent ?? state.LastPlaybackEvent,
+                    PlaybackOutcomes = state.PlaybackOutcomes.Merge(latest.PlaybackOutcomes)
                 };
             await _packs.StoreAsync(state, cancellationToken);
             return state;

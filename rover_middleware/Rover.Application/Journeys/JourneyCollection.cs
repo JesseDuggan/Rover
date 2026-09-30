@@ -14,6 +14,24 @@ public sealed record JourneyCollection(string Title, int NarrationSeconds, int W
 
 public static class JourneyCollectionBuilder
 {
+    public static IReadOnlyList<AdaptiveRouteStory> Rebase(AdaptiveRouteStoryPack previous,
+        RouteStoryPlan plan, WalkRoute route, DateTimeOffset now)
+    {
+        if (previous.ExpiresUtc <= now || plan.Segments.Count == 0) return [];
+        return previous.Stories
+            .Where(story => (story.ExpiresUtc ?? previous.ExpiresUtc) > now
+                && story.Claims.Count > 0 && story.Sources.Count > 0
+                && Rover.Application.Walks.RouteMath.DistanceFromRouteMeters(story.Anchor, route.Coordinates) <= 225)
+            .Select(story =>
+            {
+                var segment = plan.Segments.MinBy(segment =>
+                    Rover.Application.Walks.RouteMath.DistanceToSegmentMeters(story.Anchor, segment.Start, segment.End))!;
+                return story with { SegmentId = segment.SegmentId, OpensAtRouteMeters = segment.StartRouteMeters,
+                    ClosesAtRouteMeters = segment.EndRouteMeters,
+                    ExpiresUtc = story.ExpiresUtc is { } expiry && expiry < previous.ExpiresUtc ? expiry : previous.ExpiresUtc };
+            }).ToArray();
+    }
+
     // Coarse areas, not raw traces or precise private endpoints, leave the server.
     public static JourneyArea Area(GeoLocation point) => new(Math.Round(point.Latitude, 2), Math.Round(point.Longitude, 2));
 
