@@ -46,6 +46,14 @@ public static class WalkRequestValidation
         }
 
         var accessibilityPreferences = new List<AccessibilityPreference>();
+        if ((request.NaturalRequest?.Length ?? 0) > 500)
+            errors["naturalRequest"] = new[] { "Keep your walk request to 500 characters." };
+        if (request.Companions is not ("Solo" or "Couple" or "Family" or "Group"))
+            errors["companions"] = new[] { "Choose Solo, Couple, Family, or Group." };
+        if (request.RouteShape is not ("Loop route" or "Different destination"))
+            errors["routeShape"] = new[] { "Choose Loop route or Different destination." };
+        if (request.Environment is not ("Indoor" or "Outdoor" or "Either"))
+            errors["environment"] = new[] { "Choose Indoor, Outdoor, or Either." };
         foreach (var value in request.AccessibilityPreferences ?? Array.Empty<string>())
         {
             if (TryParseEnum(value, out AccessibilityPreference preference))
@@ -68,7 +76,15 @@ public static class WalkRequestValidation
             request.AvailableMinutes!.Value,
             NormalizeInterests(request.Interests),
             walkingPace,
-            accessibilityPreferences);
+            accessibilityPreferences)
+        {
+            NaturalRequest = request.NaturalRequest?.Trim() ?? "",
+            Companions = request.Companions,
+            RouteShape = request.RouteShape,
+            Environment = request.Environment,
+            IncludePaidAttractions = request.IncludePaidAttractions,
+            SurpriseMe = request.SurpriseMe
+        };
 
         return true;
     }

@@ -6,4 +6,12 @@ public sealed record CreateWalkRequest(
     int? AvailableMinutes,
     IReadOnlyCollection<string>? Interests,
     string? WalkingPace,
-    IReadOnlyCollection<string>? AccessibilityPreferences);
+    IReadOnlyCollection<string>? AccessibilityPreferences)
+{
+    public string NaturalRequest { get; init; } = "";
+    public string Companions { get; init; } = "Solo";
+    public string RouteShape { get; init; } = "Loop route";
+    public string Environment { get; init; } = "Either";
+    public bool IncludePaidAttractions { get; init; }
+    public bool SurpriseMe { get; init; }
+}

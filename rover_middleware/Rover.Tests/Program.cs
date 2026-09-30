@@ -37,6 +37,7 @@ using Rover.Infrastructure.Walks;
 
 var tests = new List<(string Name, Func<Task> Run)>
 {
+    ("Walk About request preferences validate and reach command", WalkAboutRequestTests.Validation),
     ("Photo identification validates bounded images and location", PhotoIdentificationTests.Validation),
     ("Photo identification requires confirmation and minimizes location disclosure", PhotoIdentificationTests.ConfirmationAndPrivacy),
     ("Photo identification handles failures and cancellation", PhotoIdentificationTests.Failures),

@@ -26,9 +26,16 @@ internal static class StoryLedPlanningTests
     {
         var pool = Pool;
         var handler = new Handler { Ids = ["c", "a"] };
-        var selected = await Selector(handler).SelectAsync(Command, pool, 3, default);
+        var personalized = Command with { NaturalRequest = "Old buildings and a quiet coffee",
+            Companions = "Family", Environment = "Outdoor", IncludePaidAttractions = true };
+        var selected = await Selector(handler).SelectAsync(personalized, pool, 3, default);
         Check(selected.Stops.Count == 2 && ReferenceEquals(selected.Stops[0], pool[2]), "Must retain sourced objects and priority.");
         using var request = JsonDocument.Parse(handler.Request!);
+        using var input = JsonDocument.Parse(request.RootElement.GetProperty("input").GetString()!);
+        var preferences = input.RootElement.GetProperty("walkPreferences");
+        Check(preferences.GetProperty("naturalRequest").GetString() == personalized.NaturalRequest, "Natural request must reach selection.");
+        Check(preferences.GetProperty("Companions").GetString() == "Family", "Companions must reach selection.");
+        Check(preferences.GetProperty("IncludePaidAttractions").GetBoolean(), "Paid-attraction preference must reach selection.");
         Check(request.RootElement.GetProperty("store").GetBoolean() == false, "Disable response storage.");
         Check(request.RootElement.GetProperty("text").GetProperty("format").GetProperty("strict").GetBoolean(), "Strict schema required.");
         Check(!handler.Request!.Contains("latitude", StringComparison.OrdinalIgnoreCase), "Do not send precise GPS.");
