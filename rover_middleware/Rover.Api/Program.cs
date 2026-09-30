@@ -41,6 +41,12 @@ builder.Services.AddProblemDetails();
 builder.Services.AddRateLimiter(options =>
 {
     options.RejectionStatusCode = StatusCodes.Status429TooManyRequests;
+    options.AddFixedWindowLimiter("photo-identification", limiter =>
+    {
+        limiter.PermitLimit = 60;
+        limiter.Window = TimeSpan.FromHours(1);
+        limiter.QueueLimit = 0;
+    });
     options.GlobalLimiter = PartitionedRateLimiter.Create<HttpContext, string>(context =>
     {
         var key = context.Request.Headers.TryGetValue("X-Rover-Dev-User", out var devUser) && !string.IsNullOrWhiteSpace(devUser)
@@ -197,6 +203,38 @@ app.MapGet("/health", (IConfiguration configuration) => Results.Ok(new HealthRes
     .WithName("Health");
 
 var locationIntelligence = app.MapGroup("/api");
+
+locationIntelligence.MapPost("/location-observations/identify-photo", async (
+    HttpContext context,
+    Rover.Infrastructure.LocationIntelligence.PhotoIdentificationService service,
+    CancellationToken cancellationToken) =>
+{
+    if (!service.Available)
+        return Results.Problem(statusCode: 503, title: "Photo identification is not configured.");
+    const int limit = 2_850_000;
+    context.Response.Headers.CacheControl = "no-store";
+    if (context.Request.ContentLength > limit) return Results.StatusCode(413);
+    // Bound reads even for chunked bodies, before JSON deserialization.
+    using var body = new MemoryStream();
+    var buffer = new byte[8192];
+    int read;
+    while ((read = await context.Request.Body.ReadAsync(buffer, cancellationToken)) > 0)
+    {
+        if (body.Length + read > limit) return Results.StatusCode(413);
+        body.Write(buffer, 0, read);
+    }
+    try
+    {
+        var request = System.Text.Json.JsonSerializer.Deserialize<Rover.Infrastructure.LocationIntelligence.PhotoIdentificationRequest>(
+            body.GetBuffer().AsSpan(0, (int)body.Length), new System.Text.Json.JsonSerializerOptions(System.Text.Json.JsonSerializerDefaults.Web));
+        if (request is null) return Results.BadRequest();
+        return Results.Ok((await service.IdentifyAsync(request, cancellationToken)).ToResponse());
+    }
+    catch (Exception exception) when (exception is ArgumentException or System.Text.Json.JsonException)
+    {
+        return Results.Problem(statusCode: 400, title: "Invalid photo or location.");
+    }
+}).RequireRateLimiting("photo-identification");
 
 locationIntelligence.MapPost("/commerce/hotel-rates/search", async (
     HotelRateSearchRequest? request,

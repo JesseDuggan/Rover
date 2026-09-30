@@ -117,6 +117,13 @@ public static class DependencyInjection
                 ? webSearchEnabled
                 : configuration.GetValue("Rover:Conversation:OpenAI:WebSearchEnabled", false)
         });
+        services.AddSingleton(new PhotoIdentificationOptions
+        {
+            Enabled = bool.TryParse(Environment.GetEnvironmentVariable("ROVER_PHOTO_IDENTIFICATION_ENABLED"), out var photoEnabled) && photoEnabled,
+            ApiKey = Environment.GetEnvironmentVariable("OPENAI_API_KEY"),
+            Model = Environment.GetEnvironmentVariable("ROVER_VISION_MODEL")
+        });
+        services.AddHttpClient<PhotoIdentificationService>();
         var locationOptions = new LocationIntelligenceOptions
         {
             Enabled = configuration.GetValue("Rover:LocationIntelligence:Enabled", true),

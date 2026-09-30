@@ -37,6 +37,9 @@ using Rover.Infrastructure.Walks;
 
 var tests = new List<(string Name, Func<Task> Run)>
 {
+    ("Photo identification validates bounded images and location", PhotoIdentificationTests.Validation),
+    ("Photo identification requires confirmation and minimizes location disclosure", PhotoIdentificationTests.ConfirmationAndPrivacy),
+    ("Photo identification handles failures and cancellation", PhotoIdentificationTests.Failures),
     ("Runtime providers never silently select test fixtures", MockDataIsolationTests.ProductionNeverEnablesFixtures),
     ("Story-led planning validates sourced IDs and structured responses", StoryLedPlanningTests.SelectionValidation),
     ("Story-led planning fails gracefully and preserves cancellation", StoryLedPlanningTests.FailureAndCancellation),
@@ -4648,7 +4651,9 @@ static async Task ApiIntegrationWalkLifecycle()
 
     AssertEqual(HttpStatusCode.OK, (await client.GetAsync("/health")).StatusCode);
     AssertEqual(HttpStatusCode.Unauthorized, (await client.GetAsync("/api/beta/configuration")).StatusCode);
+    AssertEqual(HttpStatusCode.Unauthorized, (await client.PostAsJsonAsync("/api/location-observations/identify-photo", new { })).StatusCode);
     client.DefaultRequestHeaders.Add("X-Rover-Dev-User", "api-integration");
+    AssertEqual(HttpStatusCode.ServiceUnavailable, (await client.PostAsJsonAsync("/api/location-observations/identify-photo", new { })).StatusCode);
 
     var createResponse = await client.PostAsJsonAsync("/api/walks", new
     {
