@@ -238,7 +238,28 @@ public static class DependencyInjection
             MaximumCollectionStories = configuration.GetValue("Rover:Phase16:LocalResearch:MaximumCollectionStories", 8),
             CaptureRejectedResponses = EnvironmentFlag("ROVER_LOCAL_RESEARCH_CAPTURE_REJECTIONS", false)
         });
-        services.AddHttpClient<ILocalRouteResearcher, OpenAILocalRouteResearcher>();
+        var sharedStories = new SharedStoryLibraryOptions
+        {
+            Enabled = EnvironmentFlag("ROVER_SHARED_STORIES_ENABLED", false),
+            Directory = Environment.GetEnvironmentVariable("ROVER_SHARED_STORIES_DIRECTORY") ?? "",
+            ApprovedSourceHosts = (Environment.GetEnvironmentVariable("ROVER_SHARED_STORIES_APPROVED_HOSTS") ?? "")
+                .Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries),
+            MaximumEntries = configuration.GetValue("Rover:SharedStories:MaximumEntries", 2000)
+        };
+        if (sharedStories.Enabled && (!Path.IsPathFullyQualified(sharedStories.Directory) ||
+            sharedStories.ApprovedSourceHosts.Length == 0))
+            throw new InvalidOperationException("Shared stories require an absolute ROVER_SHARED_STORIES_DIRECTORY on durable storage and explicitly approved ROVER_SHARED_STORIES_APPROVED_HOSTS.");
+        services.AddSingleton(sharedStories);
+        services.AddSingleton<FileSharedStoryLibrary>();
+        services.AddSingleton<SharedStoryLibraryMetrics>();
+        services.AddHttpClient<OpenAILocalRouteResearcher>();
+        services.AddTransient<ILocalRouteResearcher>(provider => new LibraryLocalRouteResearcher(
+            provider.GetRequiredService<OpenAILocalRouteResearcher>(),
+            provider.GetRequiredService<FileSharedStoryLibrary>(),
+            sharedStories,
+            provider.GetRequiredService<LocalRouteResearchOptions>(),
+            provider.GetRequiredService<SharedStoryLibraryMetrics>(),
+            provider.GetRequiredService<Microsoft.Extensions.Logging.ILogger<LibraryLocalRouteResearcher>>()));
         services.AddHttpClient("MapboxDirections")
             .AddHttpMessageHandler<TransientRetryHandler>();
         services.AddHttpClient("GoogleRoutes")

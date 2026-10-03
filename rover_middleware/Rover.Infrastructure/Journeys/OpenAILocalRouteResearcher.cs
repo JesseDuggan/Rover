@@ -59,12 +59,15 @@ public sealed class OpenAILocalRouteResearcher(HttpClient client, LocalRouteRese
             var maximumStories = collection
                 ? Math.Clamp((int)Math.Ceiling(query.Journey!.WalkingMinutes / 3d), 3, Math.Clamp(options.MaximumCollectionStories, 3, 12))
                 : 3;
+            if (query.MaximumStories is { } requested)
+                maximumStories = Math.Clamp(requested, 1, maximumStories);
             // Do not send user IDs, precise GPS readings, or the complete route trace.
             var context = JsonSerializer.Serialize(new
             {
                 area = query.Area,
                 journey = query.Journey,
                 targetChapterCount = maximumStories,
+                alreadyCoveredSubjects = query.ExcludedStoryTitles.Take(120),
                 routeAreas = query.Segments.Where((_, index) => index % Math.Max(1, query.Segments.Count / 5) == 0)
                     .Take(6).Select(segment => new { latitude = Math.Round(segment.Anchor.Latitude, 2), longitude = Math.Round(segment.Anchor.Longitude, 2) }),
                 nearbyPublicPlaces = query.PublicPlaceNames.Take(12).Select(name => name[..Math.Min(name.Length, 120)]),

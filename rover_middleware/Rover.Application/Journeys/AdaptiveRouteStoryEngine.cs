@@ -71,7 +71,12 @@ public sealed record AdaptiveStorySource(
     double Confidence)
 {
     public bool AllowsOfflineUse { get; init; } = true;
+    public StorySourceReuse? Reuse { get; init; }
 }
+
+public sealed record StorySourceReuse(
+    string LicenseId, string LicenseUrl, string RightsUrl, string ContentScope,
+    string ProviderRecordId, string PolicyVersion);
 
 public sealed record AdaptiveStoryClaim(
     string ClaimId,
@@ -728,7 +733,8 @@ public sealed class AdaptiveRouteStoryPackService : IAdaptiveRouteStoryPackServi
                 session.Stops.Select(stop => stop.Name).ToArray(), session.Interests.ToArray(), language,
                 session.Stops.Where(stop => !string.IsNullOrWhiteSpace(stop.ProviderPlaceId))
                     .Select(stop => new LocalResearchPublicPlace(stop.Name, stop.Address, stop.Location)).ToArray(),
-                _options.JourneyCollectionsEnabled ? JourneyCollectionBuilder.Brief(session, plan, existingStories.Concat(stories).ToArray()) : null), cancellationToken);
+                _options.JourneyCollectionsEnabled ? JourneyCollectionBuilder.Brief(session, plan, existingStories.Concat(stories).ToArray()) : null)
+                { LibraryCandidates = stories.ToArray() }, cancellationToken);
             var known = stories.SelectMany(story => story.Claims).Select(claim => claim.Text.Trim())
                 .ToHashSet(StringComparer.OrdinalIgnoreCase);
             stories.AddRange(research.Stories.Where(story => !story.Claims.Any(claim => known.Contains(claim.Text.Trim()))));
@@ -774,7 +780,8 @@ public sealed class AdaptiveRouteStoryPackService : IAdaptiveRouteStoryPackServi
             .Select(group => group.First())
             .ToArray();
         var sources = sourceModels.Select(source => new AdaptiveStorySource(
-            SourceKey(source), source.ProviderName, source.SourceTitle, source.SourceUrl, source.Attribution, source.RetrievedUtc, source.ConfidenceScore)).ToArray();
+            SourceKey(source), source.ProviderName, source.SourceTitle, source.SourceUrl, source.Attribution, source.RetrievedUtc, source.ConfidenceScore)
+            { Reuse = StorySourceReusePolicy.FromLocationSource(source) }).ToArray();
         var sourceIds = sources.Select(source => source.SourceId).ToHashSet(StringComparer.OrdinalIgnoreCase);
         var claims = facts.Select(fact => new AdaptiveStoryClaim(
             fact.FactId,

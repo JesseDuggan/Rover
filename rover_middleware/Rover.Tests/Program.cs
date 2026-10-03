@@ -37,6 +37,11 @@ using Rover.Infrastructure.Walks;
 
 var tests = new List<(string Name, Func<Task> Run)>
 {
+    ("Shared stories persist and rebase across visitors", SharedStoryLibraryTests.ReuseAndPersistence),
+    ("Shared stories enforce freshness and reuse permissions", SharedStoryLibraryTests.FreshnessAndPermissions),
+    ("Shared stories match language, geography and missing coverage", SharedStoryLibraryTests.MatchingAndTopUp),
+    ("Shared story research coalesces concurrent visitors", SharedStoryLibraryTests.ConcurrentVisitors),
+    ("Shared story failures retain live research fallback", SharedStoryLibraryTests.FailuresAndDisabled),
     ("Walk About request preferences validate and reach command", WalkAboutRequestTests.Validation),
     ("Photo identification validates bounded images and location", PhotoIdentificationTests.Validation),
     ("Photo identification requires confirmation and minimizes location disclosure", PhotoIdentificationTests.ConfirmationAndPrivacy),

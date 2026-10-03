@@ -10,7 +10,13 @@ public sealed record LocalRouteResearchQuery(
     IReadOnlyList<string> Interests,
     string Language,
     IReadOnlyList<LocalResearchPublicPlace>? PublicPlaces = null,
-    JourneyBrief? Journey = null);
+    JourneyBrief? Journey = null)
+{
+    public int? MaximumStories { get; init; }
+    public IReadOnlyList<string> ExcludedStoryTitles { get; init; } = [];
+    // Internal provider-built stories only; never included in model input.
+    public IReadOnlyList<AdaptiveRouteStory> LibraryCandidates { get; init; } = [];
+}
 
 public sealed record LocalResearchPublicPlace(string Name, string? Address, GeoLocation Location);
 

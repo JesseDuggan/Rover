@@ -1,6 +1,7 @@
 using System.Globalization;
 using System.Net.Http.Json;
 using System.Text.Json;
+using System.Text.RegularExpressions;
 using Rover.Application.LocationIntelligence;
 using Rover.Domain.Walks;
 
@@ -63,8 +64,12 @@ public sealed class WikidataLocationContextProvider : LocationContextProviderBas
             }
 
             var qid = placeUri.Split('/').Last();
+            if (!Regex.IsMatch(qid, @"\AQ[1-9][0-9]*\z") ||
+                (placeUri != $"http://www.wikidata.org/entity/{qid}" &&
+                 placeUri != $"https://www.wikidata.org/entity/{qid}"))
+                continue;
             var instance = Binding(item, "instanceLabel");
-            var source = Source(qid, placeUri, "Wikidata contributors", "CC0", 0.84);
+            var source = Source(qid, $"https://www.wikidata.org/entity/{qid}", "Wikidata contributors", "CC0", 0.84);
             var factText = string.IsNullOrWhiteSpace(instance)
                 ? $"{label} is a Wikidata-listed place near this route."
                 : $"{label} is listed in Wikidata as {Article(instance)} {instance}.";
