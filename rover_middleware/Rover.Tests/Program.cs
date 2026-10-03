@@ -887,6 +887,50 @@ static async Task LocalRouteResearchValidation()
             url = "https://museum.example/history", title = "Museum history" } }
     } } } } });
     var additionalKinds = new[] { "fun_fact", "people", "then_and_now", "food", "legend", "nature", "hidden_gem", "local_life", "pop_culture", "look_closer", "news" };
+    await CheckNarrationLabels();
+
+    async Task CheckNarrationLabels()
+    {
+        foreach (var metadataOnly in new[] { false, true })
+        {
+            var calls = 0;
+            var labelled = "Subject: Public museum in Paris, a collection of local workshop tools and accounts of the people who used them.";
+            var detail = string.Join(' ', Enumerable.Repeat(passage, 4));
+            var evidence = metadataOnly ? labelled : labelled + " " + detail;
+            using var client = new HttpClient(new RoutingHttpMessageHandler(request =>
+            {
+                calls++;
+                if (calls == 1)
+                {
+                    using var payload = JsonDocument.Parse(request.Content!.ReadAsStringAsync().GetAwaiter().GetResult());
+                    var instructions = payload.RootElement.GetProperty("instructions").GetString()!;
+                    AssertTrue(instructions.Contains("100-180 words") && instructions.Contains("distinct factual angles"),
+                        "Starter research should retain detailed, distinct narration.");
+                    return JsonResponse(HttpStatusCode.OK, JsonSerializer.Serialize(new { status = "completed", output = new[] { new { content = new[] { new {
+                        text = evidence + " [1]",
+                        annotations = new[] { new { type = "url_citation", start_index = evidence.Length + 1, end_index = evidence.Length + 4,
+                            url = "https://museum.example/history", title = "Museum history" } }
+                    } } } } }));
+                }
+                var cards = JsonSerializer.Serialize(new { stories = new[] { new {
+                    evidenceIndex = 0, title = "Workshop traditions", kind = "history",
+                    latitude = anchor.Latitude, longitude = anchor.Longitude, locationEvidence = "Paris"
+                } } });
+                return JsonResponse(HttpStatusCode.OK, JsonSerializer.Serialize(new { status = "completed", output = new[] { new { content = new[] { new { text = cards } } } } }));
+            }));
+            var researcher = new Rover.Infrastructure.Journeys.OpenAILocalRouteResearcher(client,
+                new Rover.Infrastructure.Journeys.LocalRouteResearchOptions { Enabled = true, ApiKey = "test", Model = "test" }, TimeProvider.System);
+            var result = await researcher.ResearchAsync(query, CancellationToken.None);
+            AssertEqual(metadataOnly ? 0 : 1, result.Stories.Count);
+            if (!metadataOnly)
+            {
+                var story = result.Stories.Single();
+                AssertEqual(detail, story.Variants.Single(v => v.Length == AdaptiveStoryLength.Standard).Narration);
+                AssertTrue(story.Variants.All(v => !v.Narration.Contains("Subject:")), "Metadata must never become narration.");
+                AssertTrue(story.Claims.All(c => c.SourceIds.Count > 0), "Retained narration must keep citations.");
+            }
+        }
+    }
     foreach (var scenario in new[] { "valid", "culture", "architecture", "venue-anchor", "wrapped", "uncited", "missing-annotations", "bad-offset", "bad-url", "short-text", "embedded-url", "far", "undated-event", "invented-event-dates", "unknown-evidence", "unsupported-location", "failure", "undated-news", "old-news" }.Concat(additionalKinds))
     {
         var calls = 0;
