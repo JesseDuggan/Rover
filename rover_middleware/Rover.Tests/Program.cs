@@ -38,6 +38,7 @@ using Rover.Infrastructure.Walks;
 var tests = new List<(string Name, Func<Task> Run)>
 {
     ("Area research works in a new city without routes or POIs", AreaStoryTests.RouteFreeResearch),
+    ("Story images require sourced Wikimedia files and supported licenses", StoryImageTests.SourcedImages),
     ("Nearby stories research selected places and retain verified evidence", NearbyStoryResearchTests.Validation),
     ("Shared stories persist and rebase across visitors", SharedStoryLibraryTests.ReuseAndPersistence),
     ("Shared stories enforce freshness and reuse permissions", SharedStoryLibraryTests.FreshnessAndPermissions),

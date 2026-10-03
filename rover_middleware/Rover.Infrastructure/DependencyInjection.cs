@@ -124,6 +124,12 @@ public static class DependencyInjection
             Model = Environment.GetEnvironmentVariable("ROVER_VISION_MODEL")
         });
         services.AddHttpClient<PhotoIdentificationService>();
+        services.AddHttpClient("StoryImages", client => {
+            client.DefaultRequestHeaders.UserAgent.ParseAdd("WalkAbout/1.0 (https://github.com/JesseDuggan/Rover)");
+            client.Timeout = TimeSpan.FromSeconds(10);
+            client.MaxResponseContentBufferSize = 2 * 1024 * 1024;
+        }).ConfigurePrimaryHttpMessageHandler(() => new HttpClientHandler { AllowAutoRedirect = false });
+        services.AddSingleton<StoryImageService>();
         var locationOptions = new LocationIntelligenceOptions
         {
             Enabled = configuration.GetValue("Rover:LocationIntelligence:Enabled", true),

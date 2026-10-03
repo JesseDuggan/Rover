@@ -350,6 +350,16 @@ locationIntelligence.MapPost("/location-observations/resolve", async (
     }
 });
 
+locationIntelligence.MapPost("/story-images", async (
+    Rover.Infrastructure.Journeys.StoryImageRequest request,
+    Rover.Infrastructure.Journeys.StoryImageService service, CancellationToken cancellationToken) =>
+{
+    try { return Results.Ok(await service.FindAsync(request, cancellationToken)); }
+    catch (ArgumentException exception) {
+        return Results.ValidationProblem(new Dictionary<string, string[]> { ["sources"] = [exception.Message] });
+    }
+});
+
 locationIntelligence.MapPost("/area-stories", async (
     AreaStoryRequest request, AreaStoryService service, CancellationToken cancellationToken) =>
 {
