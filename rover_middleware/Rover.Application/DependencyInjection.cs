@@ -56,6 +56,7 @@ public static class DependencyInjection
         services.AddSingleton<IEvidenceRepository, NullEvidenceRepository>();
         services.AddSingleton<SafeFallbackLocationStorySynthesizer>();
         services.AddScoped<ILocationStoryContextService, LocationStoryContextService>();
+        services.AddScoped<AreaStoryService>();
         services.AddScoped<ICandidateObservationResolutionService, CandidateObservationResolutionService>();
         services.AddScoped<IWalkAdaptationService, WalkAdaptationService>();
         services.AddScoped<IProfileService, ProfileService>();

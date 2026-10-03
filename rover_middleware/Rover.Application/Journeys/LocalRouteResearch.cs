@@ -13,6 +13,7 @@ public sealed record LocalRouteResearchQuery(
     JourneyBrief? Journey = null)
 {
     public int? MaximumStories { get; init; }
+    public bool AreaFirst { get; init; }
     public IReadOnlyList<string> ExcludedStoryTitles { get; init; } = [];
     // Internal provider-built stories only; never included in model input.
     public IReadOnlyList<AdaptiveRouteStory> LibraryCandidates { get; init; } = [];
@@ -20,7 +21,10 @@ public sealed record LocalRouteResearchQuery(
 
 public sealed record LocalResearchPublicPlace(string Name, string? Address, GeoLocation Location);
 
-public sealed record LocalRouteResearchResult(IReadOnlyList<AdaptiveRouteStory> Stories, string? Warning);
+public sealed record LocalRouteResearchResult(IReadOnlyList<AdaptiveRouteStory> Stories, string? Warning)
+{
+    public bool Failed { get; init; }
+}
 
 public interface ILocalRouteResearcher
 {

@@ -145,6 +145,7 @@ public sealed record LocationStoryResult(
     public IReadOnlyList<GroundedStorySentence> SentenceGrounding { get; init; } = Array.Empty<GroundedStorySentence>();
     public IReadOnlyList<GroundedStorySection> StorySections { get; init; } = Array.Empty<GroundedStorySection>();
     public StoryPack? StoryPack { get; init; }
+    public string? ResearchStatus { get; init; }
 }
 
 public sealed record LocationContextProviderResult(

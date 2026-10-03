@@ -27,6 +27,7 @@ public sealed record LocationStoryResponse(
     IReadOnlyList<string> Warnings)
 {
     public StoryPackResponse? StoryPack { get; init; }
+    public string? ResearchStatus { get; init; }
 }
 
 public sealed record StoryPackResponse(

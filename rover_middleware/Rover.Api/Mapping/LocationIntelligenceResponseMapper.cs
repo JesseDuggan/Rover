@@ -35,7 +35,8 @@ public static class LocationIntelligenceResponseMapper
             story.RequiredAttribution,
             story.Warnings)
         {
-            StoryPack = story.StoryPack?.ToResponse()
+            StoryPack = story.StoryPack?.ToResponse(),
+            ResearchStatus = story.ResearchStatus
         };
     }
 

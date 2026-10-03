@@ -77,7 +77,7 @@ public sealed class LibraryLocalRouteResearcher(
         {
             metrics.Record("failure");
             logger.LogWarning("Shared story library live research failed; retained {Count} reusable stories.", reused.Length);
-            return new(reused, "Local research failed; retained fresh library stories.");
+            return new(reused, "Local research failed; retained fresh library stories.") { Failed = true };
         }
         if (fresh.Warning is not null && fresh.Stories.Count == 0) metrics.Record("failure");
         try { await library.StoreAsync(language, fresh.Stories, token); }
@@ -90,7 +90,7 @@ public sealed class LibraryLocalRouteResearcher(
             reused.Length, fresh.Stories.Count, missing);
         return new(reused.Concat(fresh.Stories)
             .Where(story => !excluded.Contains(Normalize(story.Title)))
-            .DistinctBy(story => story.StoryId).DistinctBy(story => Normalize(story.Title)).ToArray(), fresh.Warning);
+            .DistinctBy(story => story.StoryId).DistinctBy(story => Normalize(story.Title)).ToArray(), fresh.Warning) { Failed = fresh.Failed };
     }
 
     private static AdaptiveRouteStory? Rebase(AdaptiveRouteStory story, LocalRouteResearchQuery query)

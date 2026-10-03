@@ -22,6 +22,7 @@ public sealed class LocationStoryContextService : ILocationStoryContextService
     private readonly ILogger<LocationStoryContextService> _logger;
     private readonly IJourneyNarrativeArcService? _narrativeArcs;
     private readonly IWalkSessionRepository? _walkSessions;
+    private readonly ILocalRouteResearcher? _nearbyResearcher;
 
     public LocationStoryContextService(
         IEnumerable<ILocationContextProvider> providers,
@@ -38,7 +39,8 @@ public sealed class LocationStoryContextService : ILocationStoryContextService
         TimeProvider timeProvider,
         ILogger<LocationStoryContextService> logger,
         IJourneyNarrativeArcService? narrativeArcs = null,
-        IWalkSessionRepository? walkSessions = null)
+        IWalkSessionRepository? walkSessions = null,
+        ILocalRouteResearcher? nearbyResearcher = null)
     {
         _providers = providers.ToArray();
         _cache = cache;
@@ -55,6 +57,7 @@ public sealed class LocationStoryContextService : ILocationStoryContextService
         _logger = logger;
         _narrativeArcs = narrativeArcs;
         _walkSessions = walkSessions;
+        _nearbyResearcher = nearbyResearcher;
     }
 
     public async Task<LocationStoryContext> GetContextAsync(LocationContextQuery query, CancellationToken cancellationToken)
@@ -162,6 +165,14 @@ public sealed class LocationStoryContextService : ILocationStoryContextService
             cancellationToken);
 
         var selectedPlace = SelectPlace(context, request.SelectedPlaceIds);
+        if (request.NarrationStyle == "just-walking")
+        {
+            var researched = await NearbyStoryResearch.CreateAsync(
+                _nearbyResearcher, selectedPlace, request, _timeProvider.GetUtcNow(), cancellationToken);
+            _logger.LogInformation("Nearby story research completed: {ResearchStatus}; claims={ClaimCount}",
+                researched.ResearchStatus, researched.FactIdsUsed.Count);
+            return researched;
+        }
         var storageKey = selectedPlace is null
             ? null
             : StoryPackStorageKey.Create(
