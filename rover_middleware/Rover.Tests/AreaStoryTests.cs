@@ -34,6 +34,17 @@ internal static class AreaStoryTests
         }
         fake.Result = new([], "Provider failed") { Failed = true };
         Check((await service.ResearchAsync(request, default)).Status == "failed", "Expose failure separately.");
+        var regional = story with { Anchor = new GeoLocation(52.4, 4.883) };
+        fake.Result = new([regional], null);
+        Check((await service.ResearchAsync(request, default)).Stories.Count == 0, "Local search rejects regional anchor.");
+        var broader = await service.ResearchAsync(request with { SearchRadiusMeters = 5000 }, default);
+        Check(broader.Stories.Count == 1 && broader.SearchRadiusMeters == 5000
+            && fake.Query!.SearchRadiusMeters == 5000, "Regional scope must be explicit and passed to researcher.");
+        Check(broader.Stories[0].Anchor == regional.Anchor, "Do not relocate regional subjects to the walker.");
+        try {
+            await service.ResearchAsync(request with { SearchRadiusMeters = 50000 }, default);
+            throw new Exception("Unbounded search accepted.");
+        } catch (ArgumentException) { }
         try {
             await service.ResearchAsync(request with { Latitude = double.NaN }, default);
             throw new Exception("Invalid coordinates accepted.");

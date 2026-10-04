@@ -6,8 +6,8 @@ using Rover.Domain.Walks;
 namespace Rover.Application.Journeys;
 
 public sealed record AreaStoryRequest(double Latitude, double Longitude,
-    IReadOnlyList<string>? Interests, IReadOnlyList<string>? ExcludedTitles);
-public sealed record AreaStoryCollection(string Status, IReadOnlyList<AdaptiveRouteStory> Stories);
+    IReadOnlyList<string>? Interests, IReadOnlyList<string>? ExcludedTitles, int SearchRadiusMeters = 1000);
+public sealed record AreaStoryCollection(string Status, IReadOnlyList<AdaptiveRouteStory> Stories, int SearchRadiusMeters = 1000);
 
 public sealed class AreaStoryService(ILocalRouteResearcher researcher, TimeProvider clock,
     ILogger<AreaStoryService> logger)
@@ -15,6 +15,8 @@ public sealed class AreaStoryService(ILocalRouteResearcher researcher, TimeProvi
     public async Task<AreaStoryCollection> ResearchAsync(AreaStoryRequest request, CancellationToken cancellationToken)
     {
         cancellationToken.ThrowIfCancellationRequested();
+        if (request.SearchRadiusMeters is not (1000 or 5000 or 20000))
+            throw new ArgumentException("Search radius must be 1000, 5000 or 20000 metres.");
         if (!double.IsFinite(request.Latitude) || !double.IsFinite(request.Longitude)
             || Math.Abs(request.Latitude) > 90 || Math.Abs(request.Longitude) > 180)
             throw new ArgumentException("A valid current location is required.");
@@ -29,6 +31,7 @@ public sealed class AreaStoryService(ILocalRouteResearcher researcher, TimeProvi
             [], (request.Interests ?? []).Prepend("local events").Distinct().ToArray(), "en")
         {
             AreaFirst = true, MaximumStories = 3,
+            SearchRadiusMeters = request.SearchRadiusMeters,
             ExcludedStoryTitles = request.ExcludedTitles ?? []
         };
         using var budget = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
@@ -40,7 +43,7 @@ public sealed class AreaStoryService(ILocalRouteResearcher researcher, TimeProvi
         catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested) { throw; }
         catch (Exception exception) {
             logger.LogWarning("Area research failed: {Kind}", exception.GetType().Name);
-            return new("failed", []);
+            return new("failed", [], request.SearchRadiusMeters);
         }
         cancellationToken.ThrowIfCancellationRequested();
         var now = clock.GetUtcNow();
@@ -49,13 +52,13 @@ public sealed class AreaStoryService(ILocalRouteResearcher researcher, TimeProvi
             && s.ExpiresUtc > now && s.Claims.Count > 0 && s.Sources.Count > 0
             && s.Variants.Any(v => !string.IsNullOrWhiteSpace(v.Narration))
             && double.IsFinite(s.Anchor.Latitude) && double.IsFinite(s.Anchor.Longitude)
-            && RouteMath.DistanceMeters(center, s.Anchor) <= 1000
+            && RouteMath.DistanceMeters(center, s.Anchor) <= request.SearchRadiusMeters
             && s.Claims.All(c => c.SourceIds.Count > 0 && c.SourceIds.All(id =>
                 s.Sources.Any(source => source.SourceId == id && Uri.TryCreate(source.Url, UriKind.Absolute, out var uri)
                     && uri.Scheme is "http" or "https"))))
             .DistinctBy(s => s.Title.Trim().ToLowerInvariant()).Take(3).ToArray();
         var status = stories.Length > 0 ? "ready" : result.Failed ? "failed" : "empty";
-        logger.LogInformation("Area story research: {Status}; stories={Count}", status, stories.Length);
-        return new(status, stories);
+        logger.LogInformation("Area story research: {Status}; stories={Count}; radiusMeters={Radius}", status, stories.Length, request.SearchRadiusMeters);
+        return new(status, stories, request.SearchRadiusMeters);
     }
 }

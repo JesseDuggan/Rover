@@ -14,6 +14,7 @@ public sealed record LocalRouteResearchQuery(
 {
     public int? MaximumStories { get; init; }
     public bool AreaFirst { get; init; }
+    public int SearchRadiusMeters { get; init; } = 1000;
     public IReadOnlyList<string> ExcludedStoryTitles { get; init; } = [];
     // Internal provider-built stories only; never included in model input.
     public IReadOnlyList<AdaptiveRouteStory> LibraryCandidates { get; init; } = [];
