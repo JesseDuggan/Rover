@@ -142,7 +142,7 @@ public sealed class JourneyNarrationOrchestrator : IJourneyNarrationOrchestrator
                 session.WalkSessionId,
                 null,
                 session.Route.Coordinates,
-                session.Interests),
+                session.Interests) { IncludeGooglePlaces = false },
             cancellationToken);
 
         var narrated = query.AlreadyNarratedFactIds.ToHashSet(StringComparer.OrdinalIgnoreCase);
@@ -153,7 +153,7 @@ public sealed class JourneyNarrationOrchestrator : IJourneyNarrationOrchestrator
             {
                 Place = place,
                 Fact = place.Facts
-                    .Where(fact => fact.IsSuitableForNarration
+                    .Where(fact => RouteStoryEvidence.Priority(fact) > 0
                         && fact.ConfidenceScore >= 0.65
                         && !narrated.Contains(fact.FactId)
                         && !MatchesStoryCategory(fact.FactType, place.Categories, query.ExcludedStoryCategories))

@@ -38,6 +38,7 @@ using Rover.Infrastructure.Walks;
 var tests = new List<(string Name, Func<Task> Run)>
 {
     ("Area research works in a new city without routes or POIs", AreaStoryTests.RouteFreeResearch),
+    ("Editorial stories retain evidence, uncertainty and audience safety", StoryEditorialTests.SafetyAndEvidence),
     ("Story images require sourced Wikimedia files and supported licenses", StoryImageTests.SourcedImages),
     ("Nearby stories research selected places and retain verified evidence", NearbyStoryResearchTests.Validation),
     ("Shared stories persist and rebase across visitors", SharedStoryLibraryTests.ReuseAndPersistence),
@@ -771,7 +772,7 @@ static Task Phase16FlagsAreDisabledByDefault()
 
     AssertTrue(!options.Enabled, "Phase 16 must remain disabled until explicitly enabled.");
     AssertTrue(!options.JourneyCollectionsEnabled, "Journey collection research must be opt-in.");
-    AssertEqual("phase16-story-first-v3", options.PromptVersion);
+    AssertEqual("phase16-editorial-stories-v5", options.PromptVersion);
     return Task.CompletedTask;
 }
 
@@ -829,7 +830,7 @@ static async Task RouteStoryContinuity()
         [new(AdaptiveStoryLength.Standard, 20, "A sourced local story.", ["claim"])],
         [new("claim", "A sourced local story.", ["source"], 0.9)],
         [new("source", "archive", "Archive", "https://example.org/history", "Archive", now, 0.9)], 0.9, now.AddHours(1));
-    var oldPack = new AdaptiveRouteStoryPack("3.0", "old", "old", session.WalkSessionId, "old", 1, "test", now,
+    var oldPack = new AdaptiveRouteStoryPack("3.0", "old", "old", session.WalkSessionId, "old", 1, new Phase16Options().PromptVersion + "-journey-v1", now,
         now.AddHours(2), [story, story with { StoryId = "expired", ExpiresUtc = now.AddMinutes(-1) },
             story with { StoryId = "distant", Anchor = new GeoLocation(0, 0) }], []);
     await packs.StoreAsync(new(session.WalkSessionId, 1, AdaptiveRouteStoryPackStatus.Ready, now, oldPack, null,
@@ -889,7 +890,7 @@ static async Task LocalRouteResearchValidation()
         annotations = new[] { new { type = "url_citation", start_index = passage.Length + 1, end_index = passage.Length + 4,
             url = "https://museum.example/history", title = "Museum history" } }
     } } } } });
-    var additionalKinds = new[] { "fun_fact", "people", "then_and_now", "food", "legend", "nature", "hidden_gem", "local_life", "pop_culture", "look_closer", "news" };
+    var additionalKinds = new[] { "fun_fact", "people", "then_and_now", "food", "legend", "nature", "hidden_gem", "local_life", "pop_culture", "look_closer", "news", "sports", "social_change", "place_names", "route_connections" };
     await CheckNarrationLabels();
 
     async Task CheckNarrationLabels()
@@ -928,7 +929,7 @@ static async Task LocalRouteResearchValidation()
             if (!metadataOnly)
             {
                 var story = result.Stories.Single();
-                AssertEqual(detail, story.Variants.Single(v => v.Length == AdaptiveStoryLength.Standard).Narration);
+                AssertEqual(detail, story.Variants.Single(v => v.Length == AdaptiveStoryLength.Deep).Narration);
                 AssertTrue(story.Variants.All(v => !v.Narration.Contains("Subject:")), "Metadata must never become narration.");
                 AssertTrue(story.Claims.All(c => c.SourceIds.Count > 0), "Retained narration must keep citations.");
             }
@@ -997,7 +998,9 @@ static async Task LocalRouteResearchValidation()
                 latitude = scenario is "far" or "venue-anchor" ? 44 : anchor.Latitude, longitude = anchor.Longitude,
                 locationEvidence = scenario == "unsupported-location" ? "Berlin" : scenario == "venue-anchor" ? "Public museum" : "Paris",
                 startsUtc = scenario == "invented-event-dates" ? now.AddDays(1).ToString("O") : scenario == "news" ? now.ToString("O") : scenario == "old-news" ? now.AddDays(-10).ToString("O") : null,
-                endsUtc = scenario == "invented-event-dates" ? now.AddDays(1).AddHours(1).ToString("O") : null
+                endsUtc = scenario == "invented-event-dates" ? now.AddDays(1).AddHours(1).ToString("O") : null,
+                audienceSuitability = "family", sensitivityNotice = (string?)null,
+                uncertainClaims = Array.Empty<string>()
             } } });
             return JsonResponse(HttpStatusCode.OK, JsonSerializer.Serialize(new { status = "completed", output = new[] { new { content = new[] { new { text = cards } } } } }));
         }));
@@ -1031,6 +1034,13 @@ static async Task LocalRouteResearchValidation()
         {
             var story = result.Stories.Single();
             AssertEqual(passage, string.Join(' ', story.Claims.Select(claim => claim.Text)));
+            AssertTrue(story.CanAutoplay && story.AudienceSuitability == "family", "Reviewed family stories may autoplay.");
+            AssertEqual(4, story.Variants.Count);
+            AssertEqual("evergreen", story.TemporalClassification);
+            var sensitive = story with { AudienceSuitability = "sensitive", SensitivityNotice = "Content note: war." };
+            AssertTrue(!sensitive.CanAutoplay, "Sensitive history requires explicit listening.");
+            AssertTrue(!(story with { AudienceSuitability = "mature" }).CanAutoplay, "Mature stories cannot autoplay.");
+            AssertTrue(!(story with { AudienceSuitability = "unreviewed" }).CanAutoplay, "Missing reviews must fail closed.");
             AssertTrue(story.Sources.All(source => !source.AllowsOfflineUse), "Unknown source rights cannot permit offline storage.");
             AssertTrue(story.ExpiresUtc > now.AddHours(5) && story.ExpiresUtc <= now.AddHours(7), "Historical research must last through a walk, but expire within hours.");
         }
@@ -1269,6 +1279,8 @@ static async Task Phase16RoutePacksSelectCompleteAndSaveStories()
         session.Route.Coordinates[0],
         new[] { "history" },
         new[] { fact with { FactId = "duplicate" }, fact,
+            fact with { FactId = "google-history", FactText = "A directory description labelled as history.",
+                Source = TestLocationSource("GooglePlaces", "listing", now, 0.99) },
             fact with { FactId = "listing", FactType = "identity", FactText = "This place is listed at 10 Main Street.", ConfidenceScore = 0.99 } },
         new Dictionary<string, string> { ["wikipedia"] = "phase16-place" },
         source);
@@ -1290,6 +1302,10 @@ static async Task Phase16RoutePacksSelectCompleteAndSaveStories()
         new GenerateAdaptiveRouteStoryPackCommand(null, "GeneralTraveller", "en", false),
         CancellationToken.None);
     var story = state.Pack!.Stories.Single();
+    AssertTrue(story.Claims.All(claim => !claim.Text.Contains("10 Main Street")),
+        "Independent history must not absorb identity facts from the same place.");
+    AssertTrue(story.Variants.All(variant => !variant.Narration.Contains("10 Main Street")),
+        "Listing data must not leak into any narration length.");
     AssertNotNull(state.Pack.Collection, "Enabled journey collections must be returned with the pack.");
     AssertEqual(story.Variants.Max(variant => variant.EstimatedDurationSeconds), state.Pack.Collection!.NarrationSeconds);
     var cachedState = await service.GenerateAsync(session.WalkSessionId,
@@ -1309,6 +1325,8 @@ static async Task Phase16RoutePacksSelectCompleteAndSaveStories()
         researcher: new CapturingRouteResearcher(query =>
         {
             AssertTrue(query.Segments.All(segment => segment.EndRouteMeters >= progress), "Refill must research the remaining route.");
+            AssertEqual(0, query.PublicPlaceNames.Count);
+            AssertEqual(0, query.PublicPlaces!.Count);
             AssertTrue(query.Journey!.CoveredTopics.Contains(story.Title), "Refill must avoid existing chapters.");
             var segment = query.Segments.First();
             return new LocalRouteResearchResult(new[] { story with { StoryId = "refill-story", Title = "Another sourced chapter",
@@ -1359,8 +1377,14 @@ static async Task Phase16RoutePacksSelectCompleteAndSaveStories()
     var unsupportedAnswer = await service.AskAsync(session.WalkSessionId, new AdaptiveRouteStoryQuestion("who founded Booster Juice", 0, null), CancellationToken.None);
     AssertNull(unsupportedAnswer.Selection, "Do not substitute listing information for an unsupported question.");
     await packs.StoreAsync(state, CancellationToken.None);
-    AssertEqual(2, story.Claims.Count);
+    AssertEqual(1, story.Claims.Count);
     AssertEqual(fact.FactText, story.Variants.First().Narration);
+    AssertTrue(!story.CanAutoplay, "Unreviewed provider excerpts require explicit listening.");
+    AssertNull(await service.GetNextAsync(session.WalkSessionId,
+        new NextAdaptiveRouteStoryQuery(story.OpensAtRouteMeters, null, null, []), default),
+        "Unreviewed stories cannot be selected automatically.");
+    story = story with { AudienceSuitability = "family" };
+    state = state with { Pack = state.Pack with { Stories = [story] } };
     var approachingStory = story with { Intent = RouteStoryIntent.HiddenHistory, OpensAtRouteMeters = 600, ClosesAtRouteMeters = 800 };
     await packs.StoreAsync(state with { Pack = state.Pack with { Stories = new[] { approachingStory } } }, CancellationToken.None);
     AssertNotNull(await service.GetNextAsync(session.WalkSessionId,
@@ -1479,9 +1503,10 @@ static async Task Phase16RoutePacksSelectCompleteAndSaveStories()
     var listingPlace = place with { CanonicalId = "listing-only", Name = "Nearby shop", StoryWorthinessScore = 100,
         Facts = new[] { fact with { FactType = "identity", FactText = "A nearby coffee shop." } } };
     var historyContext = new RecordingLocationStoryContextService(new[] { listingPlace, historyPlace });
+    var historyPacks = new InMemoryAdaptiveRouteStoryPackRepository();
     var historyService = new AdaptiveRouteStoryPackService(options, walks, plans,
         historyContext,
-        new InMemoryAdaptiveRouteStoryPackRepository(), new DeterministicStoryIntentClassifier(),
+        historyPacks, new DeterministicStoryIntentClassifier(),
         new DeterministicAdaptiveStoryLengthSelector(options), TimeProvider.System);
     var historyState = await historyService.GenerateAsync(session.WalkSessionId,
         new GenerateAdaptiveRouteStoryPackCommand(null, "GeneralTraveller", "en", false), CancellationToken.None);
@@ -1493,6 +1518,10 @@ static async Task Phase16RoutePacksSelectCompleteAndSaveStories()
     AssertTrue(historyStory.Variants.Any(variant => variant.EstimatedDurationSeconds > quick.EstimatedDurationSeconds),
         "Wikipedia paragraphs must offer genuinely different audio durations.");
     AssertTrue(historyStory.Claims.All(claim => claim.SourceIds.Count > 0), "Split passages must retain citations.");
+    AssertTrue(!historyStory.CanAutoplay, "Provider excerpts have not undergone an audience review.");
+    await historyPacks.StoreAsync(historyState with { Pack = historyState.Pack with {
+        Stories = [historyStory with { AudienceSuitability = "family" }]
+    } }, default);
     var briefSelection = await historyService.GetNextAsync(session.WalkSessionId,
         new NextAdaptiveRouteStoryQuery(historyStory.OpensAtRouteMeters, quick.EstimatedDurationSeconds + options.NavigationSafetyBufferSeconds,
             AdaptiveStoryLength.Standard, Array.Empty<string>()), CancellationToken.None);

@@ -18,7 +18,7 @@ public sealed class Phase16Options
     public int NavigationSafetyBufferSeconds { get; set; } = 15;
     public int PackRetentionHours { get; set; } = 48;
     public int GenerationTimeoutSeconds { get; set; } = 120;
-    public string PromptVersion { get; set; } = "phase16-story-first-v3";
+    public string PromptVersion { get; set; } = "phase16-editorial-stories-v5";
 }
 
 [JsonConverter(typeof(JsonStringEnumConverter))]
@@ -104,7 +104,14 @@ public sealed record AdaptiveRouteStory(
     IReadOnlyList<AdaptiveStoryClaim> Claims,
     IReadOnlyList<AdaptiveStorySource> Sources,
     double EvidenceScore,
-    DateTimeOffset? ExpiresUtc);
+    DateTimeOffset? ExpiresUtc)
+{
+    public string AudienceSuitability { get; init; } = "unreviewed";
+    public string? SensitivityNotice { get; init; }
+    public IReadOnlyList<string> UncertainClaims { get; init; } = [];
+    public string TemporalClassification { get; init; } = "evergreen";
+    public bool CanAutoplay => AudienceSuitability == "family" && string.IsNullOrWhiteSpace(SensitivityNotice);
+}
 
 public sealed record AdaptiveRouteStoryPack(
     string SchemaVersion,
@@ -401,6 +408,7 @@ public sealed class AdaptiveRouteStoryPackService : IAdaptiveRouteStoryPackServi
                 {
                     var previousState = await _packs.GetAsync(walkSessionId, revision, generationToken);
                     if (previousState?.Pack is not { } previousPack) continue;
+                    if (previousPack.PromptVersion != promptVersion) continue;
                     var carried = JourneyCollectionBuilder.Rebase(previousPack, plan, session.Route, now);
                     generating = generating with
                     {
@@ -429,7 +437,7 @@ public sealed class AdaptiveRouteStoryPackService : IAdaptiveRouteStoryPackServi
                 researchPlan = plan with { Segments = plan.Segments.Where(segment => segment.EndRouteMeters >= progress).ToArray() };
             }
             var stories = await BuildStoriesAsync(session, researchPlan, command.ProfileId, command.Language ?? "en", warnings, generationToken,
-                _options.JourneyCollectionsEnabled ? retainedStories : []).WaitAsync(generationToken);
+                _options.JourneyCollectionsEnabled ? retainedStories : [], command.Audience ?? "GeneralTraveller").WaitAsync(generationToken);
             if (stories.Count == 0) warnings.Add("No sufficiently grounded route stories were found.");
             if (_options.JourneyCollectionsEnabled && retainedStories.Length > 0)
             {
@@ -514,6 +522,7 @@ public sealed class AdaptiveRouteStoryPackService : IAdaptiveRouteStoryPackServi
         var excluded = query.ExcludedStoryIds.ToHashSet(StringComparer.OrdinalIgnoreCase);
         var candidates = state?.Pack?.Stories
             .Where(candidate => IsFresh(candidate, state!.Pack!))
+            .Where(candidate => candidate.CanAutoplay)
             .Where(candidate => !state.HeardStoryIds.Contains(candidate.StoryId) && !excluded.Contains(candidate.StoryId))
             .Where(candidate => query.RouteProgressMeters >= PlaybackWindowStart(candidate) && query.RouteProgressMeters <= PlaybackWindowEnd(candidate))
             .OrderBy(PlaybackWindowEnd)
@@ -521,7 +530,8 @@ public sealed class AdaptiveRouteStoryPackService : IAdaptiveRouteStoryPackServi
             .ToArray() ?? Array.Empty<AdaptiveRouteStory>();
         foreach (var story in candidates)
         {
-            var variant = _lengthSelector.Select(story.Variants, query.PreferredLength, query.SecondsUntilNextManeuver);
+            var variant = _lengthSelector.Select(story.Variants.Where(v => v.Length != AdaptiveStoryLength.Deep).ToArray(),
+                query.PreferredLength, query.SecondsUntilNextManeuver);
             if (variant is not null)
             {
                 return new AdaptiveRouteStorySelection(story, variant, "Eligible in the current route window with navigation time available.");
@@ -645,7 +655,7 @@ public sealed class AdaptiveRouteStoryPackService : IAdaptiveRouteStoryPackServi
         string language,
         List<string> warnings,
         CancellationToken cancellationToken,
-        IReadOnlyList<AdaptiveRouteStory> existingStories)
+        IReadOnlyList<AdaptiveRouteStory> existingStories, string audience)
     {
         var stories = new List<AdaptiveRouteStory>();
         var usedPlaces = existingStories.Select(story => story.PlaceId).ToHashSet(StringComparer.OrdinalIgnoreCase);
@@ -730,11 +740,9 @@ public sealed class AdaptiveRouteStoryPackService : IAdaptiveRouteStoryPackServi
         {
             var research = await _researcher.ResearchAsync(new LocalRouteResearchQuery(plan.Segments,
                 new ApproximateLiveLocation(areaPlace?.City, areaPlace?.Region, areaPlace?.CountryCode, null),
-                session.Stops.Select(stop => stop.Name).ToArray(), session.Interests.ToArray(), language,
-                session.Stops.Where(stop => !string.IsNullOrWhiteSpace(stop.ProviderPlaceId))
-                    .Select(stop => new LocalResearchPublicPlace(stop.Name, stop.Address, stop.Location)).ToArray(),
+                [], session.Interests.ToArray(), language, [],
                 _options.JourneyCollectionsEnabled ? JourneyCollectionBuilder.Brief(session, plan, existingStories.Concat(stories).ToArray()) : null)
-                { LibraryCandidates = stories.ToArray() }, cancellationToken);
+                { LibraryCandidates = stories.ToArray(), Audience = audience }, cancellationToken);
             var known = stories.SelectMany(story => story.Claims).Select(claim => claim.Text.Trim())
                 .ToHashSet(StringComparer.OrdinalIgnoreCase);
             stories.AddRange(research.Stories.Where(story => !story.Claims.Any(claim => known.Contains(claim.Text.Trim()))));
@@ -766,7 +774,7 @@ public sealed class AdaptiveRouteStoryPackService : IAdaptiveRouteStoryPackServi
     private static AdaptiveRouteStory BuildStory(RouteStorySegment segment, LocationPlace place, DateTimeOffset now)
     {
         var facts = place.Facts
-            .Where(fact => fact.IsSuitableForNarration && !string.IsNullOrWhiteSpace(fact.FactText))
+            .Where(IsSubstantiveFact)
             .Where(fact => fact.Source.ExpiresUtc is null || fact.Source.ExpiresUtc > now)
             .OrderByDescending(RouteStoryEvidence.Priority)
             .ThenByDescending(fact => fact.ConfidenceScore)

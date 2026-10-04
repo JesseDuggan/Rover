@@ -35,13 +35,17 @@ public sealed class SharedStoryLibraryMetrics
     }
 }
 
-public sealed record SharedStoryEntry(string Language, DateTimeOffset StoredUtc, AdaptiveRouteStory Story);
+public sealed record SharedStoryEntry(string Language, DateTimeOffset StoredUtc, AdaptiveRouteStory Story)
+{
+    public string? ResearchPolicy { get; init; }
+}
 
 // A mounted volume is required for persistence across deployments.
 // File locks cover readers/writers in other processes using the same volume.
 public sealed class FileSharedStoryLibrary(SharedStoryLibraryOptions options, TimeProvider clock)
 {
     private static readonly JsonSerializerOptions Json = new(JsonSerializerDefaults.Web);
+    private const string ResearchPolicy = "editorial-stories-v3";
     private string Root => Path.GetFullPath(options.Directory);
     private string Catalog => Path.Combine(Root, "stories-v1.json");
 
@@ -108,7 +112,8 @@ public sealed class FileSharedStoryLibrary(SharedStoryLibraryOptions options, Ti
         // Bounded catalog; corrupt data is reported by the decorator, never used.
         if (stream.Length > 64 * 1024 * 1024) throw new IOException("Shared story catalog exceeds size limit.");
         var entries = await JsonSerializer.DeserializeAsync<List<SharedStoryEntry>>(stream, Json, token) ?? [];
-        return entries.Where(entry => entry is not null && !string.IsNullOrWhiteSpace(entry.Language) && CanReuse(entry.Story))
+        return entries.Where(entry => entry is not null && entry.ResearchPolicy == ResearchPolicy
+                && !string.IsNullOrWhiteSpace(entry.Language) && CanReuse(entry.Story))
             .OrderByDescending(entry => entry.StoredUtc).Take(Math.Clamp(options.MaximumEntries, 1, 10000)).ToList();
     }
 
@@ -121,7 +126,8 @@ public sealed class FileSharedStoryLibrary(SharedStoryLibraryOptions options, Ti
         var now = clock.GetUtcNow();
         // No route IDs, segment IDs, distances, requests, profiles or playback state are persisted.
         var added = eligible.Select(story => new SharedStoryEntry(language, now,
-            story with { SegmentId = "", OpensAtRouteMeters = 0, ClosesAtRouteMeters = 0 }));
+            story with { SegmentId = "", OpensAtRouteMeters = 0, ClosesAtRouteMeters = 0 })
+            { ResearchPolicy = ResearchPolicy });
         var entries = added.Concat(previous)
             .DistinctBy(entry => (entry.Language, entry.Story.StoryId))
             .Take(Math.Clamp(options.MaximumEntries, 1, 10000)).ToArray();

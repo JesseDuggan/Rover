@@ -200,7 +200,7 @@ public static class DependencyInjection
             StorySearchRadiusMeters = configuration.GetValue("Rover:Phase16:StorySearchRadiusMeters", 225),
             NavigationSafetyBufferSeconds = configuration.GetValue("Rover:Phase16:NavigationSafetyBufferSeconds", 15),
             PackRetentionHours = configuration.GetValue("Rover:Phase16:PackRetentionHours", 48),
-            PromptVersion = configuration["Rover:Phase16:PromptVersion"] ?? "phase16-story-first-v3"
+            PromptVersion = configuration["Rover:Phase16:PromptVersion"] ?? "phase16-editorial-stories-v5"
         });
         services.RemoveAll<IAdaptiveRouteStoryPackRepository>();
         services.AddSingleton<IAdaptiveRouteStoryPackRepository, FileAdaptiveRouteStoryPackRepository>();

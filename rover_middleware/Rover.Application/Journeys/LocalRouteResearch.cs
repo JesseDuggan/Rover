@@ -13,6 +13,7 @@ public sealed record LocalRouteResearchQuery(
     JourneyBrief? Journey = null)
 {
     public int? MaximumStories { get; init; }
+    public string Audience { get; init; } = "GeneralTraveller";
     public bool AreaFirst { get; init; }
     public int SearchRadiusMeters { get; init; } = 1000;
     public IReadOnlyList<string> ExcludedStoryTitles { get; init; } = [];

@@ -7,6 +7,8 @@ public static class RouteStoryEvidence
     public static int Priority(LocationFact fact)
     {
         if (!fact.IsSuitableForNarration || fact.ConfidenceScore < 0.65 || string.IsNullOrWhiteSpace(fact.FactText)) return 0;
+        // Place-directory data belongs to arrival narration, even when merged with history.
+        if (fact.Source.ProviderName.Contains("Google", StringComparison.OrdinalIgnoreCase)) return 0;
         var type = fact.FactType.ToLowerInvariant();
         if (type == "encyclopedic_summary") return 3;
         if (type.Contains("history") || type.Contains("historical") || type.Contains("architecture")

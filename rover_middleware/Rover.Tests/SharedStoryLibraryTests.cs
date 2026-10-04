@@ -131,6 +131,12 @@ internal static class SharedStoryLibraryTests
             Check(metrics.Snapshot.Failures == 1, "Research failure counted.");
             fake.Fail = false;
             await File.WriteAllTextAsync(Path.Combine(options.Directory, "stories-v1.json"),
+                System.Text.Json.JsonSerializer.Serialize(new[] {
+                    new SharedStoryEntry("en", clock.Now, Story("legacy-listing", clock.Now))
+                }, new System.Text.Json.JsonSerializerOptions(System.Text.Json.JsonSerializerDefaults.Web)));
+            Check((await new FileSharedStoryLibrary(options, clock).ReadAsync(default)).Count == 0,
+                "Stories from the old mixed research policy must not be reused.");
+            await File.WriteAllTextAsync(Path.Combine(options.Directory, "stories-v1.json"),
                 "[null,{\"language\":\"en\",\"story\":null}]");
             result = await service.ResearchAsync(Query("malformed"), default);
             Check(result.Stories.Count == 3, "Malformed entries must not prevent live research.");

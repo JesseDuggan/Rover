@@ -6,7 +6,7 @@ internal static class AreaStoryTests
 {
     public static async Task RouteFreeResearch()
     {
-        var center = new GeoLocation(52.373, 4.883);
+        var center = new GeoLocation(52.2946778, 4.7108732);
         var now = DateTimeOffset.UtcNow;
         var source = new AdaptiveStorySource("archive", "Archive", "Area history",
             "https://example.org/history", "Archive", now, .9);
@@ -34,7 +34,7 @@ internal static class AreaStoryTests
         }
         fake.Result = new([], "Provider failed") { Failed = true };
         Check((await service.ResearchAsync(request, default)).Status == "failed", "Expose failure separately.");
-        var regional = story with { Anchor = new GeoLocation(52.4, 4.883) };
+        var regional = story with { Anchor = new GeoLocation(center.Latitude + 0.027, center.Longitude) };
         fake.Result = new([regional], null);
         Check((await service.ResearchAsync(request, default)).Stories.Count == 0, "Local search rejects regional anchor.");
         var broader = await service.ResearchAsync(request with { SearchRadiusMeters = 5000 }, default);
