@@ -145,6 +145,7 @@ var tests = new List<(string Name, Func<Task> Run)>
     ("learning opt-out reset and deletion", LearningOptOutResetAndDeletion),
     ("account guest link export and isolation", AccountGuestLinkExportAndIsolation),
     ("speech generation validation cache and fallback", SpeechGenerationValidationCacheAndFallback),
+    ("ElevenLabs authentication errors retain safe diagnostic codes", ElevenLabsDiagnosticsTests.SafeFailures),
     ("beta speech authentication and shared quota", BetaSpeechAuthenticationAndSharedQuota),
     ("beta speech outside development preserves account authorization", BetaSpeechOutsideDevelopment),
     ("Phase 15 audio cache enforces eligibility and expiry", Phase15AudioCacheEnforcesEligibilityAndExpiry),
