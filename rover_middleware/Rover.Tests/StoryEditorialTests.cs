@@ -8,13 +8,17 @@ using Rover.Infrastructure.Journeys;
 
 internal static class StoryEditorialTests
 {
-    public static Task SafetyAndEvidence() => Verify(false);
+    public static async Task SafetyAndEvidence()
+    {
+        await Verify(false);
+        await Verify(false, recovery: true);
+    }
     public static async Task QuestionEvidence()
     {
         await Verify(true);
         await Verify(true, false);
     }
-    private static async Task Verify(bool question, bool relevant = true)
+    private static async Task Verify(bool question, bool relevant = true, bool recovery = false)
     {
         var anchor = new GeoLocation(52.2946778, 4.7108732);
         var segment = new RouteStorySegment("area", 0, anchor, anchor, anchor, 0, 0, 0, 0, false, []);
@@ -29,7 +33,7 @@ internal static class StoryEditorialTests
                 calls++;
                 using var body = JsonDocument.Parse(request.Content!.ReadAsStringAsync().GetAwaiter().GetResult());
                 string output;
-                if (calls == 1)
+                if (calls % 2 == 1)
                 {
                     var input = body.RootElement.GetProperty("input").GetString()!;
                     var instructions = body.RootElement.GetProperty("instructions").GetString()!;
@@ -37,6 +41,9 @@ internal static class StoryEditorialTests
                         && instructions.Contains("political movements") && instructions.Contains("source disagreements"),
                         "Editorial instructions must reach route-free research.");
                     Check(!input.Contains("Frankfurt"), "Location research must not depend on an old city.");
+                    if (calls == 3)
+                        Check(input.Contains("Broaden topics and sources, not the geographic boundary"),
+                            "Retry must research neighbourhood evidence without widening eligibility.");
                     if (question)
                         Check(input.Contains("workshop") && instructions.Contains("actual question")
                             && instructions.Contains("Superlatives") && instructions.Contains("copyrighted clips"),
@@ -53,7 +60,7 @@ internal static class StoryEditorialTests
                         "Classifier must perform an audience review.");
                     var cards = JsonSerializer.Serialize(new { stories = new[] { new {
                         evidenceIndex = 0, title = "Workshop records", kind = "history",
-                        latitude = anchor.Latitude, longitude = anchor.Longitude,
+                        latitude = recovery && calls == 2 ? anchor.Latitude + 1 : anchor.Latitude, longitude = anchor.Longitude,
                         locationEvidence = "test archive", startsUtc = (string?)null, endsUtc = (string?)null,
                         audienceSuitability = audience, sensitivityNotice = (string?)null,
                         uncertainClaims = new[] { "Accounts disagree about its opening date.", "Invented dispute." },
@@ -69,7 +76,7 @@ internal static class StoryEditorialTests
                 new() { Enabled = true, ApiKey = "test", Model = "test" }, TimeProvider.System);
             var result = await researcher.ResearchAsync(new([segment],
                 new ApproximateLiveLocation(null, null, null, null), [], ["history"], "en") {
-                    AreaFirst = true,
+                    AreaFirst = !recovery,
                     Question = question ? new("How did the workshop change?", StoryQuestionScope.Neighbourhood,
                         StoryQuestionFormat.ThenAndNow, 1, 180) : null
                 }, default);
@@ -78,7 +85,7 @@ internal static class StoryEditorialTests
                 Check(result.Stories.Count == 0, "Cited but irrelevant passages are not answers.");
                 continue;
             }
-            Check(result.Stories.Count == 1 && calls == 2, "Research remains bounded to two calls.");
+            Check(result.Stories.Count == 1 && calls == (recovery ? 4 : 2), "Research uses at most one recovery attempt.");
             var story = result.Stories.Single();
             Check(story.CanAutoplay == (audience == "family"), "Only reviewed family material may autoplay.");
             Check(story.UncertainClaims.SequenceEqual(new[] { "Accounts disagree about its opening date." }),

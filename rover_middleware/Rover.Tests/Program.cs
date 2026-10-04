@@ -950,15 +950,18 @@ static async Task LocalRouteResearchValidation()
             var body = request.Content!.ReadAsStringAsync().GetAwaiter().GetResult();
             AssertTrue(!body.Contains("walk-test"), "Research must not receive user session identifiers.");
             using var payload = JsonDocument.Parse(body);
-            AssertEqual(calls == 1 ? 8192 : 4096, payload.RootElement.GetProperty("max_output_tokens").GetInt32());
+            AssertEqual(calls % 2 == 1 ? 8192 : 4096, payload.RootElement.GetProperty("max_output_tokens").GetInt32());
             AssertEqual("low", payload.RootElement.GetProperty("reasoning").GetProperty("effort").GetString());
-            if (calls == 1)
+            if (calls % 2 == 1)
             {
                 AssertTrue(payload.RootElement.GetProperty("instructions").GetString()!.Contains("at most three"), "Search should request a bounded starter pack.");
                 var input = payload.RootElement.GetProperty("input").GetString()!;
                 var reader = new System.Text.Json.Utf8JsonReader(System.Text.Encoding.UTF8.GetBytes(input));
                 using var researchContext = JsonDocument.ParseValue(ref reader);
                 AssertEqual(1000, researchContext.RootElement.GetProperty("maximumStoryDistanceMeters").GetInt32());
+                if (calls == 3)
+                    AssertTrue(input.Contains("Broaden topics and sources, not the geographic boundary"),
+                        "Recovery must target neighbourhood evidence without moving geographic boundaries.");
                 var publicPlace = researchContext.RootElement.GetProperty("publicPlaces")[0];
                 AssertEqual("Museum street, Paris", publicPlace.GetProperty("address").GetString());
                 AssertEqual(Math.Round(anchor.Latitude, 4), publicPlace.GetProperty("latitude").GetDouble());
@@ -966,7 +969,7 @@ static async Task LocalRouteResearchValidation()
                 AssertTrue(input.Contains("actively search official neighbourhood") && input.Contains("existing search budget"), "Current events need an explicit bounded search, not incidental discovery.");
             }
             if (scenario == "failure") return JsonResponse(HttpStatusCode.ServiceUnavailable, "{}");
-            if (calls == 1)
+            if (calls % 2 == 1)
             {
                 var response = research;
                 if (scenario is "missing-annotations" or "bad-offset" or "bad-url" or "short-text" or "embedded-url")
@@ -1019,7 +1022,8 @@ static async Task LocalRouteResearchValidation()
             AssertEqual(RouteStoryIntent.HiddenHistory, result.Stories.Single().Intent);
             AssertEqual(anchor, result.Stories.Single().Anchor);
         }
-        AssertTrue(calls <= 2, "Research is bounded to two model calls per pack.");
+        if (scenario == "far") AssertEqual(4, calls);
+        else AssertTrue(calls <= 2, "Only an empty out-of-area result gets a recovery attempt.");
         var expectedDiagnostic = scenario switch
         {
             "missing-annotations" => "1 paragraphs; 0 citation annotations",
