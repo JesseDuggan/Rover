@@ -1,4 +1,6 @@
 using System.Globalization;
+using System.Security.Cryptography;
+using System.Text;
 using System.Text.Json;
 using Microsoft.Extensions.Logging;
 using Rover.Application.Journeys;
@@ -24,6 +26,17 @@ public sealed class LibraryLocalRouteResearcher(
         var target = query.Journey is null ? 3 : Math.Clamp((int)Math.Ceiling(query.Journey.WalkingMinutes / 3d),
             3, Math.Clamp(researchOptions.MaximumCollectionStories, 3, 12));
         if (query.MaximumStories is { } requested) target = Math.Clamp(requested, 1, target);
+        if (query.Question is { } question) target = Math.Clamp(question.StoryCount, 1, 5);
+        // Hash the full request context, not keywords. Never store the user's question text.
+        var questionKey = query.Question is null ? null : Convert.ToHexString(SHA256.HashData(
+            Encoding.UTF8.GetBytes(JsonSerializer.Serialize(new
+            {
+                policy = "question-v1", query.Question, language, query.SearchRadiusMeters,
+                areas = query.Segments.Select(s => new {
+                    startLat = Math.Round(s.Start.Latitude, 4), startLon = Math.Round(s.Start.Longitude, 4),
+                    endLat = Math.Round(s.End.Latitude, 4), endLon = Math.Round(s.End.Longitude, 4)
+                })
+            }))));
         var first = query.Segments.OrderBy(segment => segment.SequenceNumber).First().Anchor;
         var key = string.Create(CultureInfo.InvariantCulture,
             $"{language}|{Math.Floor(first.Latitude * 100)}|{Math.Floor(first.Longitude * 100)}");
@@ -47,12 +60,15 @@ public sealed class LibraryLocalRouteResearcher(
         var excluded = query.ExcludedStoryTitles.Concat(query.Journey?.CoveredTopics ?? [])
             .Concat(query.LibraryCandidates.Select(story => story.Title))
             .Select(Normalize).ToHashSet(StringComparer.Ordinal);
-        var reused = stored.Where(entry => entry.Language == language && !excluded.Contains(Normalize(entry.Story.Title)))
+        var reused = stored.Where(entry => entry.Language == language && entry.QuestionKey == questionKey
+                && !excluded.Contains(Normalize(entry.Story.Title)))
             .Select(entry => Rebase(entry.Story, query))
             .Where(story => story is not null).Cast<AdaptiveRouteStory>()
             .OrderByDescending(story => InterestMatch(story.Category, query.Interests))
             .ThenBy(story => story.OpensAtRouteMeters)
             .DistinctBy(story => Normalize(story.Title)).Take(target).ToArray();
+        // A partially cached collection is not a new answer to a multi-part question.
+        if (questionKey is not null && reused.Length < target) reused = [];
         if (reused.Length > 0) metrics.Record("reused", reused.Length);
         if (reused.Length >= target && CoversRequestedLiveTopics(reused, query.Interests))
         {
@@ -80,7 +96,7 @@ public sealed class LibraryLocalRouteResearcher(
             return new(reused, "Local research failed; retained fresh library stories.") { Failed = true };
         }
         if (fresh.Warning is not null && fresh.Stories.Count == 0) metrics.Record("failure");
-        try { await library.StoreAsync(language, fresh.Stories, token); }
+        try { await library.StoreAsync(language, fresh.Stories, token, questionKey); }
         catch (Exception error) when (StorageFailure(error))
         {
             metrics.Record("failure");
@@ -98,7 +114,8 @@ public sealed class LibraryLocalRouteResearcher(
         var segment = query.Segments.MinBy(segment =>
             RouteMath.DistanceToSegmentMeters(story.Anchor, segment.Start, segment.End))!;
         // More conservative than research discovery: reuse only within the walking corridor.
-        if (RouteMath.DistanceToSegmentMeters(story.Anchor, segment.Start, segment.End) > 225) return null;
+        var radius = query.Question is not null ? query.SearchRadiusMeters : 225;
+        if (RouteMath.DistanceToSegmentMeters(story.Anchor, segment.Start, segment.End) > radius) return null;
         return story with { SegmentId = segment.SegmentId,
             OpensAtRouteMeters = segment.StartRouteMeters, ClosesAtRouteMeters = segment.EndRouteMeters };
     }

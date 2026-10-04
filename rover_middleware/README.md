@@ -677,6 +677,74 @@ For actual private beta, use `ASPNETCORE_ENVIRONMENT=Beta`, HTTPS middleware end
 
 See `docs/PHASE_9_PRIVATE_BETA.md` and `docs/PHASE_9_FIELD_TEST_PLAN.md`.
 
+## Location-Aware Story Questions (October 2026)
+
+`POST /api/story-questions` performs explicit question-driven research independently
+of route generation, arrival announcements and automatic story queues. It requires
+the caller's current latitude/longitude, not a saved walk or a POI listing.
+The existing route-pack ask endpoint is unchanged. Flutter's question UI has not
+yet been connected to this new endpoint.
+
+Request fields:
+
+| Field | Values |
+| --- | --- |
+| question | Required, 1-1200 characters |
+| latitude, longitude | Required current location; no default city or coordinates |
+| scope | Auto (default), Street, Neighbourhood, City, Route |
+| format | Auto (default), Single, ThenAndNow, Collection |
+| storyCount | Optional 1-5; multiple stories require Collection |
+| availableNarrationSeconds | 30-1800, default 300 |
+| language | Two-letter language, optionally region, default en |
+| routeGeometry | For Route scope only: 2-120 latitude/longitude points within 50 km of current location |
+
+Auto scope/format recognition is deliberately small and English-based. Other
+languages and ambiguous questions should use explicit scope/format. Examples:
+street-name origins use Street/Single; neighbourhood changes use
+Neighbourhood/ThenAndNow; five city turning points use City/Collection with
+storyCount 5. Route questions need geometry; no route is invented.
+
+Search limits are 1 km for street/route, 5 km for neighbourhood, and 20 km for city.
+These are radius/corridor bounds, not administrative boundary data. The researcher
+must establish the named street/area/municipality from evidence; exact-street
+ambiguity must not be replaced with a guess. Model location input is rounded to
+four decimal places, with at most six route-area samples.
+
+Response fields include status, resolved scope/format, requestedStories,
+searchRadiusMeters, answers and message. Each answer contains the full sourced
+story and a complete selected narration variant. Status is ready, partial, empty,
+failed, or needs_route. Missing evidence and upstream failures are distinct.
+The total selected narration duration cannot exceed the requested budget.
+These are manually requested answers; this endpoint never starts playback or
+inserts them into an automatic queue.
+
+Research uses the existing cited web-search and tool-free classification pipeline,
+with direct question relevance checked during classification. It retains source
+links, uncertainty, audience classification, content notices and expiry. Unsupported
+superlatives, legends as facts, invented historical imagery and copied vendor tour
+scripts are prohibited. Supported film/music references do not imply clip playback.
+The question is untrusted input and cannot override those instructions.
+Citation extraction follows the
+[OpenAI web-search citation format](https://developers.openai.com/api/docs/guides/tools-web-search).
+
+The total request deadline is 95 seconds, with at most two model requests and
+three search-tool calls (six for collections). The endpoint also has an
+instance-wide 60-request/hour limiter in addition to the existing global limiter.
+Existing local-research configuration and server-only provider credentials apply.
+
+Eligible cached answers are isolated by a hash of question, format, scope, count,
+time budget, language and rounded geography. Generic nearby stories cannot answer
+an unrelated question; partial cached collections are researched again as a whole.
+Raw questions are not stored in the shared library or rejected-response captures.
+The existing per-source reuse permission and freshness checks still apply:
+ordinary online citations do NOT automatically become reusable shared-library
+entries. This feature does not broaden copyright/storage permissions.
+
+Tests cover scope/format resolution, route-free research, missing routes, invalid
+input, unsupported/stale/distant evidence, total narration time, sensitive metadata,
+cancellation, classifier relevance, cache isolation and HTTP response contracts.
+Provider responses are stubbed; live answer quality still needs field testing.
+
 ## Deferred
 
 Do not begin Phase 10 from this foundation. AR, camera recognition, payments, advertising, social sharing, white-label features, production publishing, and new major platform capabilities remain out of scope until explicitly authorized.

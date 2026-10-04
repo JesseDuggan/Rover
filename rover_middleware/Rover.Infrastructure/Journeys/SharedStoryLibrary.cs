@@ -38,6 +38,7 @@ public sealed class SharedStoryLibraryMetrics
 public sealed record SharedStoryEntry(string Language, DateTimeOffset StoredUtc, AdaptiveRouteStory Story)
 {
     public string? ResearchPolicy { get; init; }
+    public string? QuestionKey { get; init; }
 }
 
 // A mounted volume is required for persistence across deployments.
@@ -117,7 +118,8 @@ public sealed class FileSharedStoryLibrary(SharedStoryLibraryOptions options, Ti
             .OrderByDescending(entry => entry.StoredUtc).Take(Math.Clamp(options.MaximumEntries, 1, 10000)).ToList();
     }
 
-    public async Task StoreAsync(string language, IReadOnlyList<AdaptiveRouteStory> stories, CancellationToken token)
+    public async Task StoreAsync(string language, IReadOnlyList<AdaptiveRouteStory> stories, CancellationToken token,
+        string? questionKey = null)
     {
         var eligible = stories.Where(CanReuse).ToArray();
         if (eligible.Length == 0) return;
@@ -127,9 +129,9 @@ public sealed class FileSharedStoryLibrary(SharedStoryLibraryOptions options, Ti
         // No route IDs, segment IDs, distances, requests, profiles or playback state are persisted.
         var added = eligible.Select(story => new SharedStoryEntry(language, now,
             story with { SegmentId = "", OpensAtRouteMeters = 0, ClosesAtRouteMeters = 0 })
-            { ResearchPolicy = ResearchPolicy });
+            { ResearchPolicy = ResearchPolicy, QuestionKey = questionKey });
         var entries = added.Concat(previous)
-            .DistinctBy(entry => (entry.Language, entry.Story.StoryId))
+            .DistinctBy(entry => (entry.Language, entry.QuestionKey, entry.Story.StoryId))
             .Take(Math.Clamp(options.MaximumEntries, 1, 10000)).ToArray();
         var temporary = $"{Catalog}.{Guid.NewGuid():N}.tmp";
         try

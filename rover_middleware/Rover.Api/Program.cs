@@ -47,6 +47,12 @@ builder.Services.AddRateLimiter(options =>
         limiter.Window = TimeSpan.FromHours(1);
         limiter.QueueLimit = 0;
     });
+    options.AddFixedWindowLimiter("story-questions", limiter =>
+    {
+        limiter.PermitLimit = 60;
+        limiter.Window = TimeSpan.FromHours(1);
+        limiter.QueueLimit = 0;
+    });
     options.GlobalLimiter = PartitionedRateLimiter.Create<HttpContext, string>(context =>
     {
         var key = context.Request.Headers.TryGetValue("X-Rover-Dev-User", out var devUser) && !string.IsNullOrWhiteSpace(devUser)
@@ -359,6 +365,15 @@ locationIntelligence.MapPost("/story-images", async (
         return Results.ValidationProblem(new Dictionary<string, string[]> { ["sources"] = [exception.Message] });
     }
 });
+
+locationIntelligence.MapPost("/story-questions", async (
+    StoryQuestionRequest request, StoryQuestionService service, CancellationToken cancellationToken) =>
+{
+    try { return Results.Ok(await service.AskAsync(request, cancellationToken)); }
+    catch (ArgumentException exception) {
+        return Results.ValidationProblem(new Dictionary<string, string[]> { ["question"] = [exception.Message] });
+    }
+}).RequireRateLimiting("story-questions");
 
 locationIntelligence.MapPost("/area-stories", async (
     AreaStoryRequest request, AreaStoryService service, CancellationToken cancellationToken) =>

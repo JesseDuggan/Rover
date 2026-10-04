@@ -8,7 +8,13 @@ using Rover.Infrastructure.Journeys;
 
 internal static class StoryEditorialTests
 {
-    public static async Task SafetyAndEvidence()
+    public static Task SafetyAndEvidence() => Verify(false);
+    public static async Task QuestionEvidence()
+    {
+        await Verify(true);
+        await Verify(true, false);
+    }
+    private static async Task Verify(bool question, bool relevant = true)
     {
         var anchor = new GeoLocation(52.2946778, 4.7108732);
         var segment = new RouteStorySegment("area", 0, anchor, anchor, anchor, 0, 0, 0, 0, false, []);
@@ -26,10 +32,15 @@ internal static class StoryEditorialTests
                 if (calls == 1)
                 {
                     var input = body.RootElement.GetProperty("input").GetString()!;
-                    Check(input.Contains("warm, conversational") && input.Contains("family-safe")
-                        && input.Contains("political movements") && input.Contains("source disagreements"),
+                    var instructions = body.RootElement.GetProperty("instructions").GetString()!;
+                    Check(instructions.Contains("warm, conversational") && instructions.Contains("family-safe")
+                        && instructions.Contains("political movements") && instructions.Contains("source disagreements"),
                         "Editorial instructions must reach route-free research.");
                     Check(!input.Contains("Frankfurt"), "Location research must not depend on an old city.");
+                    if (question)
+                        Check(input.Contains("workshop") && instructions.Contains("actual question")
+                            && instructions.Contains("Superlatives") && instructions.Contains("copyrighted clips"),
+                            "Question research needs its own topic and evidence safeguards.");
                     output = JsonSerializer.Serialize(new { status = "completed", output = new[] { new { content = new[] { new {
                         text = passage + " [1]",
                         annotations = new[] { new { type = "url_citation", start_index = passage.Length + 1,
@@ -45,7 +56,8 @@ internal static class StoryEditorialTests
                         latitude = anchor.Latitude, longitude = anchor.Longitude,
                         locationEvidence = "test archive", startsUtc = (string?)null, endsUtc = (string?)null,
                         audienceSuitability = audience, sensitivityNotice = (string?)null,
-                        uncertainClaims = new[] { "Accounts disagree about its opening date.", "Invented dispute." }
+                        uncertainClaims = new[] { "Accounts disagree about its opening date.", "Invented dispute." },
+                        answersQuestion = relevant
                     } } });
                     output = JsonSerializer.Serialize(new { status = "completed", output = new[] { new { content = new[] { new { text = cards } } } } });
                 }
@@ -56,7 +68,16 @@ internal static class StoryEditorialTests
             var researcher = new OpenAILocalRouteResearcher(client,
                 new() { Enabled = true, ApiKey = "test", Model = "test" }, TimeProvider.System);
             var result = await researcher.ResearchAsync(new([segment],
-                new ApproximateLiveLocation(null, null, null, null), [], ["history"], "en") { AreaFirst = true }, default);
+                new ApproximateLiveLocation(null, null, null, null), [], ["history"], "en") {
+                    AreaFirst = true,
+                    Question = question ? new("How did the workshop change?", StoryQuestionScope.Neighbourhood,
+                        StoryQuestionFormat.ThenAndNow, 1, 180) : null
+                }, default);
+            if (question && !relevant)
+            {
+                Check(result.Stories.Count == 0, "Cited but irrelevant passages are not answers.");
+                continue;
+            }
             Check(result.Stories.Count == 1 && calls == 2, "Research remains bounded to two calls.");
             var story = result.Stories.Single();
             Check(story.CanAutoplay == (audience == "family"), "Only reviewed family material may autoplay.");

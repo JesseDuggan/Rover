@@ -39,6 +39,11 @@ var tests = new List<(string Name, Func<Task> Run)>
 {
     ("Area research works in a new city without routes or POIs", AreaStoryTests.RouteFreeResearch),
     ("Editorial stories retain evidence, uncertainty and audience safety", StoryEditorialTests.SafetyAndEvidence),
+    ("Question research validates scope and answer formats", StoryQuestionTests.ScopeAndFormats),
+    ("Question answers require evidence and respect time budgets", StoryQuestionTests.EvidenceAndBudget),
+    ("Question validation prevents unbounded research", StoryQuestionTests.Validation),
+    ("Question researcher rejects unrelated cited passages", StoryEditorialTests.QuestionEvidence),
+    ("Shared question answers isolate requests and preserve privacy", SharedStoryLibraryTests.QuestionIsolation),
     ("Story images require sourced Wikimedia files and supported licenses", StoryImageTests.SourcedImages),
     ("Nearby stories research selected places and retain verified evidence", NearbyStoryResearchTests.Validation),
     ("Shared stories persist and rebase across visitors", SharedStoryLibraryTests.ReuseAndPersistence),
@@ -211,7 +216,8 @@ var tests = new List<(string Name, Func<Task> Run)>
     ("location intelligence endpoint validation", LocationIntelligenceEndpointValidation),
     ("location intelligence no external keys in Flutter", LocationIntelligenceNoExternalKeysInFlutter),
     ("production startup validates required configuration", ProductionStartupValidatesRequiredConfiguration),
-    ("API integration walk lifecycle", ApiIntegrationWalkLifecycle)
+    ("API integration walk lifecycle", ApiIntegrationWalkLifecycle),
+    ("API question endpoint works without a walk and validates requests", ApiIntegrationStoryQuestions)
 };
 
 var failures = new List<string>();
@@ -4724,6 +4730,30 @@ static async Task MissingMapboxConfiguration()
 
     await AssertThrowsAsync<InvalidOperationException>(() =>
         provider.CreateRouteAsync(DefaultCommand(), MockWalkPlanner.CreateUnionSquareStops(), CancellationToken.None));
+}
+
+static async Task ApiIntegrationStoryQuestions()
+{
+    using var api = await RoverApiProcess.StartAsync();
+    using var client = new HttpClient { BaseAddress = api.BaseAddress };
+    client.DefaultRequestHeaders.Add("X-Rover-Dev-User", "question-integration");
+    var invalid = await client.PostAsJsonAsync("/api/story-questions", new {
+        question = "", latitude = 51.5, longitude = -0.12
+    });
+    AssertEqual(HttpStatusCode.BadRequest, invalid.StatusCode);
+    var route = await client.PostAsJsonAsync("/api/story-questions", new {
+        question = "Tell me about the route ahead", latitude = 51.5, longitude = -0.12
+    });
+    AssertEqual(HttpStatusCode.OK, route.StatusCode);
+    using var routeJson = JsonDocument.Parse(await route.Content.ReadAsStringAsync());
+    AssertEqual("needs_route", routeJson.RootElement.GetProperty("status").GetString()!);
+    var area = await client.PostAsJsonAsync("/api/story-questions", new {
+        question = "Tell me the history of this neighbourhood", latitude = 51.5, longitude = -0.12
+    });
+    AssertEqual(HttpStatusCode.OK, area.StatusCode);
+    using var areaJson = JsonDocument.Parse(await area.Content.ReadAsStringAsync());
+    AssertEqual("failed", areaJson.RootElement.GetProperty("status").GetString()!);
+    AssertEqual(0, areaJson.RootElement.GetProperty("answers").GetArrayLength());
 }
 
 static async Task ApiIntegrationWalkLifecycle()

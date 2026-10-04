@@ -6,6 +6,32 @@ using Rover.Infrastructure.Journeys;
 
 internal static class SharedStoryLibraryTests
 {
+    public static async Task QuestionIsolation()
+    {
+        await WithLibrary(async (options, clock) =>
+        {
+            var fake = new Researcher(clock);
+            var service = Service(fake, options, clock, new());
+            var generic = Query("first");
+            await service.ResearchAsync(generic, default);
+            var question = generic with { MaximumStories = 1, Question = new(
+                "How did this street get its name?", StoryQuestionScope.Street, StoryQuestionFormat.Single, 1, 180) };
+            await service.ResearchAsync(question, default);
+            Check(fake.Calls == 2, "Unrelated nearby stories cannot answer a question.");
+            await Service(fake, options, clock, new()).ResearchAsync(question, default);
+            Check(fake.Calls == 2, "The identical eligible answer survives a new service instance.");
+            await service.ResearchAsync(question with { Question = question.Question! with { Text = "Who lived here?" } }, default);
+            Check(fake.Calls == 3, "Different questions require different evidence.");
+            await service.ResearchAsync(question with { Question = question.Question! with { Format = StoryQuestionFormat.ThenAndNow } }, default);
+            Check(fake.Calls == 4, "Different answer formats are isolated.");
+            await service.ResearchAsync(question with { Language = "de" }, default);
+            Check(fake.Calls == 5, "Question languages are isolated.");
+            var saved = await File.ReadAllTextAsync(Path.Combine(options.Directory, "stories-v1.json"));
+            Check(!saved.Contains("How did this street") && !saved.Contains("Who lived here"),
+                "Do not persist the visitor's raw question.");
+        });
+    }
+
     public static async Task ReuseAndPersistence()
     {
         await WithLibrary(async (options, clock) =>
