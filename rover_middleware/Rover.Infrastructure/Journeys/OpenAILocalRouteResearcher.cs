@@ -25,6 +25,7 @@ public sealed class LocalRouteResearchOptions
     public int ClassificationMaxOutputTokens { get; set; } = 4096;
     public int MaximumCollectionStories { get; set; } = 8;
     public bool CaptureRejectedResponses { get; set; }
+    public bool CoordinateDiagnostics { get; set; }
 }
 
 // Search produces cited evidence; a tool-free second pass only classifies that evidence.
@@ -63,6 +64,10 @@ public sealed class OpenAILocalRouteResearcher(HttpClient client, LocalRouteRese
         if (string.IsNullOrWhiteSpace(options.ApiKey) || string.IsNullOrWhiteSpace(options.Model))
             return new([], "Local research is enabled but OPENAI_API_KEY or model is missing.") { Failed = true };
         if (query.Segments.Count == 0) return new([], "Local research needs a route.");
+        if (options.CoordinateDiagnostics)
+            logger?.LogInformation("StoryCoordinates input: firstRouteLat={Lat}; firstRouteLon={Lon}; anchors={Count}; zeroPairs={Zeros}; recovery={Recovery}",
+                Coarse(query.Segments[0].Anchor.Latitude), Coarse(query.Segments[0].Anchor.Longitude),
+                query.Segments.Count, query.Segments.Count(s => s.Anchor is { Latitude: 0, Longitude: 0 }), neighbourhoodRetry);
         using var budget = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
         budget.CancelAfter(TimeSpan.FromSeconds(Math.Clamp(options.TimeoutSeconds, 10, 90)));
         var stage = "web search";
@@ -150,6 +155,7 @@ public sealed class OpenAILocalRouteResearcher(HttpClient client, LocalRouteRese
             var cards = JsonSerializer.Deserialize<Cards>(classificationText, JsonOptions);
             if (cards?.Stories is null)
                 throw new ResearchResponseException("classification response is missing its stories array");
+            LogCoordinates(query, classificationText, cards, neighbourhoodRetry);
             stage = "story validation";
             var stories = new List<AdaptiveRouteStory>();
             var used = new HashSet<int>();
@@ -255,6 +261,48 @@ public sealed class OpenAILocalRouteResearcher(HttpClient client, LocalRouteRese
             return new([], $"Local research failed during {stage}: {reason}.") { Failed = true };
         }
     }
+
+    private void LogCoordinates(LocalRouteResearchQuery query, string json, Cards cards, bool recovery)
+    {
+        if (!options.CoordinateDiagnostics || logger is null) return;
+        var trace = Guid.NewGuid().ToString("N")[..8];
+        using var document = JsonDocument.Parse(json);
+        var rawCards = document.RootElement.EnumerateObject()
+            .FirstOrDefault(p => p.Name.Equals("stories", StringComparison.OrdinalIgnoreCase)).Value;
+        logger.LogInformation("StoryCoordinates {Trace}: cards={Count}; routeAnchors={Anchors}; routeZeroPairs={Zeros}; recovery={Recovery}",
+            trace, cards.Stories.Length, query.Segments.Count,
+            query.Segments.Count(s => s.Anchor is { Latitude: 0, Longitude: 0 }), recovery);
+        // Cap diagnostic volume and expose only allowlisted, coarsened numeric fields.
+        for (var i = 0; i < Math.Min(cards.Stories.Length, 12); i++)
+        {
+            var card = cards.Stories[i];
+            if (card is null) continue;
+            var raw = rawCards.ValueKind == JsonValueKind.Array && i < rawCards.GetArrayLength()
+                ? rawCards[i] : default;
+            var valid = card.Latitude is { } lat && card.Longitude is { } lon
+                && double.IsFinite(lat) && double.IsFinite(lon) && Math.Abs(lat) <= 90 && Math.Abs(lon) <= 180;
+            var subject = valid ? new GeoLocation(card.Latitude, card.Longitude) : null;
+            var nearest = subject is null ? query.Segments[0]
+                : query.Segments.MinBy(s => RouteMath.DistanceMeters(s.Anchor, subject))!;
+            logger.LogInformation("StoryCoordinates {Trace}: index={Index}; rawLat={RawLat}; rawLon={RawLon}; parsedLat={Lat}; parsedLon={Lon}; nearestRouteLat={RouteLat}; nearestRouteLon={RouteLon}; distanceKm={Distance}",
+                trace, i, RawCoordinate(raw, "latitude"), RawCoordinate(raw, "longitude"),
+                Coarse(card.Latitude), Coarse(card.Longitude), Coarse(nearest.Anchor.Latitude),
+                Coarse(nearest.Anchor.Longitude), subject is null ? null
+                    : (double?)Math.Round(RouteMath.DistanceMeters(nearest.Anchor, subject) / 1000));
+        }
+    }
+
+    private static string Coarse(double? value) => value is { } number && double.IsFinite(number)
+        ? Math.Round(number, 2).ToString("F2", CultureInfo.InvariantCulture) : "unknown";
+
+    private static string RawCoordinate(JsonElement card, string name)
+    {
+        if (card.ValueKind != JsonValueKind.Object) return "missing";
+        var value = card.EnumerateObject().FirstOrDefault(p => p.Name.Equals(name, StringComparison.OrdinalIgnoreCase)).Value;
+        return value.ValueKind == JsonValueKind.Number && value.TryGetDouble(out var number)
+            ? Coarse(number) : value.ValueKind.ToString();
+    }
+
 
     private async Task<JsonDocument> SendAsync(object body, CancellationToken token)
     {
