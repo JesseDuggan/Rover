@@ -12,13 +12,18 @@ internal static class StoryEditorialTests
     {
         await Verify(false);
         await Verify(false, recovery: true);
+        foreach (var scope in new[] { "neighbourhood", "city", "county", "region", "country" })
+        {
+            await Verify(false, scope: scope);
+            await Verify(false, relevant: false, scope: scope);
+        }
     }
     public static async Task QuestionEvidence()
     {
         await Verify(true);
         await Verify(true, false);
     }
-    private static async Task Verify(bool question, bool relevant = true, bool recovery = false)
+    private static async Task Verify(bool question, bool relevant = true, bool recovery = false, string? scope = null)
     {
         var anchor = new GeoLocation(52.2946778, 4.7108732);
         var segment = new RouteStorySegment("area", 0, anchor, anchor, anchor, 0, 0, 0, 0, false, []);
@@ -42,7 +47,7 @@ internal static class StoryEditorialTests
                         "Editorial instructions must reach route-free research.");
                     Check(!input.Contains("Frankfurt"), "Location research must not depend on an old city.");
                     if (calls == 3)
-                        Check(input.Contains("Broaden topics and sources, not the geographic boundary"),
+                        Check(input.Contains("Follow the geographic fallback policy in order"),
                             "Retry must research neighbourhood evidence without widening eligibility.");
                     if (question)
                         Check(input.Contains("workshop") && instructions.Contains("actual question")
@@ -60,7 +65,11 @@ internal static class StoryEditorialTests
                         "Classifier must perform an audience review.");
                     var cards = JsonSerializer.Serialize(new { stories = new[] { new {
                         evidenceIndex = 0, title = "Workshop records", kind = "history",
-                        latitude = recovery && calls == 2 ? anchor.Latitude + 1 : anchor.Latitude, longitude = anchor.Longitude,
+                        latitude = scope is not null ? anchor.Latitude + 0.03 : recovery && calls == 2 ? anchor.Latitude + 1 : anchor.Latitude, longitude = anchor.Longitude,
+                        geographicScope = scope ?? "local",
+                        geographicArea = scope is null ? null : "test archive",
+                        geographicConnection = scope is null ? null : relevant
+                            ? "The archive also documents the surrounding community." : "Unsupported connection to a different city.",
                         locationEvidence = "test archive", startsUtc = (string?)null, endsUtc = (string?)null,
                         audienceSuitability = audience, sensitivityNotice = (string?)null,
                         uncertainClaims = new[] { "Accounts disagree about its opening date.", "Invented dispute." },
@@ -80,13 +89,22 @@ internal static class StoryEditorialTests
                     Question = question ? new("How did the workshop change?", StoryQuestionScope.Neighbourhood,
                         StoryQuestionFormat.ThenAndNow, 1, 180) : null
                 }, default);
-            if (question && !relevant)
+            if ((question || scope is not null) && !relevant)
             {
                 Check(result.Stories.Count == 0, "Cited but irrelevant passages are not answers.");
                 continue;
             }
             Check(result.Stories.Count == 1 && calls == (recovery ? 4 : 2), "Research uses at most one recovery attempt.");
             var story = result.Stories.Single();
+            if (scope is not null)
+            {
+                Check(story.GeographicScope == scope && story.ContextOrigin == anchor,
+                    "Broader context must retain its relevant origin and scope.");
+                Check(story.Anchor.Latitude != anchor.Latitude,
+                    "Never move a distant subject onto the route.");
+                Check(story.Variants.All(v => v.Narration.StartsWith("For broader " + scope)),
+                    "Every narration length must identify broader context.");
+            }
             Check(story.CanAutoplay == (audience == "family"), "Only reviewed family material may autoplay.");
             Check(story.UncertainClaims.SequenceEqual(new[] { "Accounts disagree about its opening date." }),
                 "Uncertainty must be grounded in the passage.");

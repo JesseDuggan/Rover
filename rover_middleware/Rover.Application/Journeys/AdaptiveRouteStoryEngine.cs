@@ -110,6 +110,9 @@ public sealed record AdaptiveRouteStory(
     public string? SensitivityNotice { get; init; }
     public IReadOnlyList<string> UncertainClaims { get; init; } = [];
     public string TemporalClassification { get; init; } = "evergreen";
+    public string GeographicScope { get; init; } = "local";
+    public string? GeographicArea { get; init; }
+    public GeoLocation? ContextOrigin { get; init; }
     public bool CanAutoplay => AudienceSuitability == "family" && string.IsNullOrWhiteSpace(SensitivityNotice);
 }
 

@@ -961,8 +961,8 @@ static async Task LocalRouteResearchValidation()
                 using var researchContext = JsonDocument.ParseValue(ref reader);
                 AssertEqual(1000, researchContext.RootElement.GetProperty("maximumStoryDistanceMeters").GetInt32());
                 if (calls == 3)
-                    AssertTrue(input.Contains("Broaden topics and sources, not the geographic boundary"),
-                        "Recovery must target neighbourhood evidence without moving geographic boundaries.");
+                    AssertTrue(input.Contains("Follow the geographic fallback policy in order"),
+                        "Recovery must follow the ordered fallback with cited local relevance.");
                 var publicPlace = researchContext.RootElement.GetProperty("publicPlaces")[0];
                 AssertEqual("Museum street, Paris", publicPlace.GetProperty("address").GetString());
                 AssertEqual(Math.Round(anchor.Latitude, 4), publicPlace.GetProperty("latitude").GetDouble());

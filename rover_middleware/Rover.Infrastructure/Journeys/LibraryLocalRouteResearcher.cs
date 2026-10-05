@@ -111,11 +111,14 @@ public sealed class LibraryLocalRouteResearcher(
 
     private static AdaptiveRouteStory? Rebase(AdaptiveRouteStory story, LocalRouteResearchQuery query)
     {
+        // Regional relevance was established for this origin, not every visitor near the subject.
+        if (story.GeographicScope != "local" && query.Question is not null) return null;
+        var relevanceAnchor = story.ContextOrigin ?? story.Anchor;
         var segment = query.Segments.MinBy(segment =>
-            RouteMath.DistanceToSegmentMeters(story.Anchor, segment.Start, segment.End))!;
+            RouteMath.DistanceToSegmentMeters(relevanceAnchor, segment.Start, segment.End))!;
         // More conservative than research discovery: reuse only within the walking corridor.
         var radius = query.Question is not null ? query.SearchRadiusMeters : 225;
-        if (RouteMath.DistanceToSegmentMeters(story.Anchor, segment.Start, segment.End) > radius) return null;
+        if (RouteMath.DistanceToSegmentMeters(relevanceAnchor, segment.Start, segment.End) > radius) return null;
         return story with { SegmentId = segment.SegmentId,
             OpensAtRouteMeters = segment.StartRouteMeters, ClosesAtRouteMeters = segment.EndRouteMeters };
     }
