@@ -12,6 +12,7 @@ internal static class StoryEditorialTests
     {
         await Verify(false);
         await Verify(false, recovery: true);
+        await Verify(false, recovery: true, areaRecovery: true);
         foreach (var scope in new[] { "neighbourhood", "city", "county", "region", "country" })
         {
             await Verify(false, scope: scope);
@@ -23,7 +24,7 @@ internal static class StoryEditorialTests
         await Verify(true);
         await Verify(true, false);
     }
-    private static async Task Verify(bool question, bool relevant = true, bool recovery = false, string? scope = null)
+    private static async Task Verify(bool question, bool relevant = true, bool recovery = false, string? scope = null, bool areaRecovery = false)
     {
         var anchor = new GeoLocation(52.2946778, 4.7108732);
         var segment = new RouteStorySegment("area", 0, anchor, anchor, anchor, 0, 0, 0, 0, false, []);
@@ -46,6 +47,16 @@ internal static class StoryEditorialTests
                         && instructions.Contains("political movements") && instructions.Contains("source disagreements"),
                         "Editorial instructions must reach route-free research.");
                     Check(!input.Contains("Frankfurt"), "Location research must not depend on an old city.");
+                    if (!question)
+                    {
+                        Check(!input.Contains("All subjects must relate to the area within maximumStoryDistanceMeters")
+                            && !input.Contains("Subjects must be within maximumStoryDistanceMeters"),
+                            "Local-only instructions must not contradict geographic fallback.");
+                        var reader = new Utf8JsonReader(Encoding.UTF8.GetBytes(input));
+                        using var context = JsonDocument.ParseValue(ref reader);
+                        Check(context.RootElement.GetProperty("routeAreas")[0].GetProperty("latitude").GetDouble()
+                            == Math.Round(anchor.Latitude, 3), "Automatic research preserves neighbourhood-scale precision.");
+                    }
                     if (calls == 3)
                         Check(input.Contains("Follow the geographic fallback policy in order"),
                             "Retry must research neighbourhood evidence without widening eligibility.");
@@ -63,6 +74,9 @@ internal static class StoryEditorialTests
                 {
                     Check(body.RootElement.GetProperty("instructions").GetString()!.Contains("audienceSuitability"),
                         "Classifier must perform an audience review.");
+                    if (!question)
+                        Check(body.RootElement.GetProperty("instructions").GetString()!.Contains("geographicScope local, neighbourhood, city, county, region or country"),
+                            "Scope policy must reach classifier instructions, not just untrusted evidence.");
                     var cards = JsonSerializer.Serialize(new { stories = new[] { new {
                         evidenceIndex = 0, title = "Workshop records", kind = "history",
                         latitude = scope is not null ? anchor.Latitude + 0.03 : recovery && calls == 2 ? anchor.Latitude + 1 : anchor.Latitude, longitude = anchor.Longitude,
@@ -85,7 +99,7 @@ internal static class StoryEditorialTests
                 new() { Enabled = true, ApiKey = "test", Model = "test" }, TimeProvider.System);
             var result = await researcher.ResearchAsync(new([segment],
                 new ApproximateLiveLocation(null, null, null, null), [], ["history"], "en") {
-                    AreaFirst = !recovery,
+                    AreaFirst = !recovery || areaRecovery,
                     Question = question ? new("How did the workshop change?", StoryQuestionScope.Neighbourhood,
                         StoryQuestionFormat.ThenAndNow, 1, 180) : null
                 }, default);

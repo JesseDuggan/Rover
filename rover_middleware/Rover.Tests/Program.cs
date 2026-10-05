@@ -1120,11 +1120,16 @@ static async Task LocalRouteResearchValidation()
         var captured = await captureResearcher.ResearchAsync(query, CancellationToken.None);
         AssertEqual(1, calls);
         AssertEqual(0, captured.Stories.Count);
-        AssertEqual(capture ? 1 : 0, logger.Entries.Count);
+        AssertEqual(capture ? 2 : 1, logger.Entries.Count);
+        var diagnosticEntry = logger.Entries.Single(entry => entry.EventId.Name != "RoverResearchCapture");
+        AssertTrue(diagnosticEntry.Message.Contains("citation failure")
+            && !diagnosticEntry.Message.Contains(secret)
+            && !diagnosticEntry.Message.Contains("I could not establish"),
+            "Default diagnostics expose counts, not provider text or credentials.");
         AssertTrue(!captured.Warning!.Contains("I could not establish"), "Raw research must not appear in app status.");
         if (capture)
         {
-            var entry = logger.Entries.Single();
+            var entry = logger.Entries.Single(entry => entry.EventId.Name == "RoverResearchCapture");
             AssertEqual("RoverResearchCapture", entry.EventId.Name);
             AssertTrue(entry.Message.Contains("I could not establish a locality.") && entry.Message.Contains("Paris"), "Capture must expose the rejected text and coarse context.");
             AssertTrue(entry.Message.Contains("[truncated]") && entry.Message.Contains("[REDACTED]"), "Capture must bound text and redact credentials.");
