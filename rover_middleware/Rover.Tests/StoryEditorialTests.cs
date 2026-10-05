@@ -13,6 +13,8 @@ internal static class StoryEditorialTests
         await Verify(false);
         await Verify(false, recovery: true);
         await Verify(false, recovery: true, areaRecovery: true);
+        foreach (var coordinateCase in new[] { "missing", "null", "zero" })
+            await Verify(false, recovery: true, areaRecovery: true, coordinateCase: coordinateCase);
         foreach (var scope in new[] { "neighbourhood", "city", "county", "region", "country" })
         {
             await Verify(false, scope: scope);
@@ -24,13 +26,14 @@ internal static class StoryEditorialTests
         await Verify(true);
         await Verify(true, false);
     }
-    private static async Task Verify(bool question, bool relevant = true, bool recovery = false, string? scope = null, bool areaRecovery = false)
+    private static async Task Verify(bool question, bool relevant = true, bool recovery = false, string? scope = null, bool areaRecovery = false, string? coordinateCase = null)
     {
         var anchor = new GeoLocation(52.2946778, 4.7108732);
         var segment = new RouteStorySegment("area", 0, anchor, anchor, anchor, 0, 0, 0, 0, false, []);
         const string passage = "This test archive describes a local workshop and the people who worked there. " +
             "Accounts disagree about its opening date. The collection preserves their tools and written records. " +
-            "Those records explain how the workshop changed over time. The archive also documents the surrounding community.";
+            "Those records explain how the workshop changed over time. The archive also documents the surrounding community. " +
+            "Location: test archive; latitude 52.295; longitude 4.711.";
         foreach (var audience in new string?[] { "family", "sensitive", "mature", null })
         {
             var calls = 0;
@@ -72,6 +75,11 @@ internal static class StoryEditorialTests
                 }
                 else
                 {
+                    var input = body.RootElement.GetProperty("input").GetString()!;
+                    var reader = new Utf8JsonReader(Encoding.UTF8.GetBytes(input));
+                    using var payload = JsonDocument.ParseValue(ref reader);
+                    Check(payload.RootElement.GetProperty("route").ValueKind == JsonValueKind.Object,
+                        "Classification context must be an object, not double-encoded JSON.");
                     Check(body.RootElement.GetProperty("instructions").GetString()!.Contains("audienceSuitability"),
                         "Classifier must perform an audience review.");
                     if (!question)
@@ -89,6 +97,17 @@ internal static class StoryEditorialTests
                         uncertainClaims = new[] { "Accounts disagree about its opening date.", "Invented dispute." },
                         answersQuestion = relevant
                     } } });
+                    if (coordinateCase is not null && calls == 2)
+                    {
+                        var parsed = System.Text.Json.Nodes.JsonNode.Parse(cards)!;
+                        var card = parsed["stories"]![0]!.AsObject();
+                        foreach (var key in new[] { "latitude", "longitude" })
+                        {
+                            if (coordinateCase == "missing") card.Remove(key);
+                            else card[key] = coordinateCase == "zero" ? System.Text.Json.Nodes.JsonValue.Create(0) : null;
+                        }
+                        cards = parsed.ToJsonString();
+                    }
                     output = JsonSerializer.Serialize(new { status = "completed", output = new[] { new { content = new[] { new { text = cards } } } } });
                 }
                 return new HttpResponseMessage(HttpStatusCode.OK) {
@@ -110,6 +129,8 @@ internal static class StoryEditorialTests
             }
             Check(result.Stories.Count == 1 && calls == (recovery ? 4 : 2), "Research uses at most one recovery attempt.");
             var story = result.Stories.Single();
+            Check(story.Variants.All(v => !v.Narration.Contains("Location:") && !v.Narration.Contains("latitude")),
+                "Coordinate metadata must never become spoken narration.");
             if (scope is not null)
             {
                 Check(story.GeographicScope == scope && story.ContextOrigin == anchor,
