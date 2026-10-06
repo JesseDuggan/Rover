@@ -64,6 +64,7 @@ public sealed class LibraryLocalRouteResearcher(
                 && !excluded.Contains(Normalize(entry.Story.Title)))
             .Select(entry => Rebase(entry.Story, query))
             .Where(story => story is not null).Cast<AdaptiveRouteStory>()
+            .Where(story => query.Question is not null || StoryInterestPolicy.Allows(story.Category, query.Interests))
             .OrderByDescending(story => InterestMatch(story.Category, query.Interests))
             .ThenBy(story => story.OpensAtRouteMeters)
             .DistinctBy(story => Normalize(story.Title)).Take(target).ToArray();

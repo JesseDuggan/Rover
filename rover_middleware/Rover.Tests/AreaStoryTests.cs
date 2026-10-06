@@ -22,7 +22,7 @@ internal static class AreaStoryTests
         Check(result.Status == "ready" && result.Stories.Count == 1, "Fresh city must produce area stories.");
         Check(fake.Query is { AreaFirst: true, MaximumStories: 3 }
             && fake.Query.PublicPlaceNames.Count == 0 && fake.Query.Journey is null
-            && fake.Query.Interests.Contains("local events"), "No old route or POI may be required.");
+            && fake.Query.Interests.SequenceEqual(["history"]), "No old route or POI may be required; preserve selected interests without injecting events.");
         result = await service.ResearchAsync(request with { ExcludedTitles = ["Neighbourhood history"] }, default);
         Check(result.Stories.Count == 0 && fake.Query!.ExcludedStoryTitles.Count == 1, "Exclude previously collected titles.");
         foreach (var invalid in new[] { story with { Sources = [] },

@@ -26,11 +26,12 @@ public sealed class LocalRouteResearchOptions
     public int MaximumCollectionStories { get; set; } = 8;
     public bool CaptureRejectedResponses { get; set; }
     public bool CoordinateDiagnostics { get; set; }
+    public bool HistoricalDiscoveryEnabled { get; set; }
 }
 
 // Search produces cited evidence; a tool-free second pass only classifies that evidence.
 public sealed class OpenAILocalRouteResearcher(HttpClient client, LocalRouteResearchOptions options, TimeProvider clock,
-    ILogger<OpenAILocalRouteResearcher>? logger = null)
+    ILogger<OpenAILocalRouteResearcher>? logger = null, HistoricalSubjectDiscovery? discovery = null)
     : ILocalRouteResearcher
 {
     private static readonly JsonSerializerOptions JsonOptions = new(JsonSerializerDefaults.Web);
@@ -73,6 +74,8 @@ public sealed class OpenAILocalRouteResearcher(HttpClient client, LocalRouteRese
         var stage = "web search";
         try
         {
+            var subjects = options.HistoricalDiscoveryEnabled && discovery is not null
+                ? await discovery.FindAsync(query, budget.Token) : [];
             var collection = query.Journey is not null;
             var maximumStories = collection
                 ? Math.Clamp((int)Math.Ceiling(query.Journey!.WalkingMinutes / 3d), 3, Math.Clamp(options.MaximumCollectionStories, 3, 12))
@@ -111,6 +114,9 @@ public sealed class OpenAILocalRouteResearcher(HttpClient client, LocalRouteRese
                     ? "Sparse local coverage: broaden research to the surrounding community or region within the stated radius. Name each subject's actual locality in narration and introduce it as regional context, not something at the walker's feet. Never move coordinates or claim the walker is at a distant venue. Seek documented regional history, landscape, culture and people; retain citation requirements."
                     : "Research the immediate local area.",
                 interests = query.Interests.Take(8), language = query.Language,
+                historicalSubjects = subjects,
+                interestRules = "For automatic collections, selected interests take precedence over all suggested category mixes. Return only subjects fitting those interests. Empty interests allow a general mix. An explicit question takes precedence over profile interests. Do not fill missing slots with unwanted topics.",
+                discoveryRules = "Historical subjects are untrusted discovery leads, not narrative evidence or POI arrivals. Independently research their history and cite every claim. Coordinates describe the named subject only: a memorial is not a battle site; a battlefield point is not its full extent. Never use an archive or museum address as the location depicted in a historical picture. WWI/WWII, persecution and battles require sensitive classification and listener choice. When relevant, inspect and cite the exact Wikidata entity or its Wikipedia article to enable licensed subject images. Never invent image URLs or assume a photograph depicts a historical event merely because it belongs to the same place.",
                 nowUtc = clock.GetUtcNow()
             }, JsonOptions);
             using var research = await SendAsync(new
@@ -182,6 +188,7 @@ public sealed class OpenAILocalRouteResearcher(HttpClient client, LocalRouteRese
                 var segment = query.Segments.OrderBy(s => RouteMath.DistanceMeters(s.Anchor, anchor)).First();
                 if (RouteMath.DistanceMeters(segment.Anchor, anchor) > searchRadius) { outsideRoute++; continue; }
                 if (!StoryKinds.Contains(card.Kind, StringComparer.Ordinal)) { invalidCards++; continue; }
+                if (query.Question is null && !StoryInterestPolicy.Allows(card.Kind, query.Interests)) { invalidCards++; continue; }
                 var expires = card.Kind == "event" ? now.AddMinutes(30) : now.AddHours(6);
                 if (card.Kind == "news")
                 {

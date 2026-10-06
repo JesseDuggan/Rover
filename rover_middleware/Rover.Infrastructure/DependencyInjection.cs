@@ -243,7 +243,8 @@ public static class DependencyInjection
             ClassificationMaxOutputTokens = configuration.GetValue("Rover:Phase16:LocalResearch:ClassificationMaxOutputTokens", 4096),
             MaximumCollectionStories = configuration.GetValue("Rover:Phase16:LocalResearch:MaximumCollectionStories", 8),
             CaptureRejectedResponses = EnvironmentFlag("ROVER_LOCAL_RESEARCH_CAPTURE_REJECTIONS", false),
-            CoordinateDiagnostics = EnvironmentFlag("ROVER_LOCAL_RESEARCH_COORDINATE_DIAGNOSTICS", false)
+            CoordinateDiagnostics = EnvironmentFlag("ROVER_LOCAL_RESEARCH_COORDINATE_DIAGNOSTICS", false),
+            HistoricalDiscoveryEnabled = EnvironmentFlag("ROVER_HISTORICAL_DISCOVERY_ENABLED", false)
         });
         var sharedStories = new SharedStoryLibraryOptions
         {
@@ -260,6 +261,12 @@ public static class DependencyInjection
         services.AddSingleton<FileSharedStoryLibrary>();
         services.AddSingleton<SharedStoryLibraryMetrics>();
         services.AddHttpClient<OpenAILocalRouteResearcher>();
+        services.AddHttpClient("HistoricalDiscovery", client =>
+        {
+            client.Timeout = TimeSpan.FromSeconds(6);
+            client.DefaultRequestHeaders.UserAgent.ParseAdd("Rover/1.0 (historical-subject-discovery)");
+        });
+        services.AddSingleton<HistoricalSubjectDiscovery>();
         services.AddTransient<ILocalRouteResearcher>(provider => new LibraryLocalRouteResearcher(
             provider.GetRequiredService<OpenAILocalRouteResearcher>(),
             provider.GetRequiredService<FileSharedStoryLibrary>(),

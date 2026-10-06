@@ -748,3 +748,40 @@ Provider responses are stubbed; live answer quality still needs field testing.
 ## Deferred
 
 Do not begin Phase 10 from this foundation. AR, camera recognition, payments, advertising, social sharing, white-label features, production publishing, and new major platform capabilities remain out of scope until explicitly authorized.
+# Historical Subject Discovery
+
+Set `ROVER_HISTORICAL_DISCOVERY_ENABLED=true` on the API to enable the optional
+Wikidata research-lead lookup (disabled by default). No additional key or APK
+change is needed. Deploy the API change before enabling it.
+
+The lookup uses current route/area coordinates, not a saved itinerary or POI
+arrival. It samples at most two approximate centers, finds at most 12 nearby
+subjects, and has a six-second total budget. Statues and battle sites are leads
+for history; buildings for architecture; statues also for culture/art and notable
+people. Other interests continue through the existing research flow. Coverage is
+not exhaustive: absence from Wikidata is not evidence of absence of local history.
+
+Selected interests constrain newly researched and shared-library stories. Empty
+selections permit a general mix; explicit questions may override preferences.
+Just walking no longer injects local events into a user's selections.
+
+Discovery metadata is not narration evidence. Independent cited research and
+existing geographic and audience checks remain required. Memorials, battle sites,
+and a battlefield's extent must not be conflated. War stories retain content
+notices and require listener choice. POI arrival narration is unchanged.
+
+The existing image resolver can show licensed Wikimedia images when research
+cites the corresponding Wikipedia article or Wikidata entity. Images are optional;
+this does not guarantee historical photos, portraits, or then-and-now pairs.
+Unsupported licenses and arbitrary image hosts are rejected. Captions and credits
+remain attached. No generated images are presented as historical evidence.
+
+Discovery results are cached for six hours per sampled area and interest classes
+in a bounded per-process cache; concurrent misses are serialized. Empty results
+last ten minutes, HTTP failures one minute. Multiple API replicas have separate
+discovery caches. Discovery failure does not disable the existing web research.
+
+Verification: `dotnet run --project Rover.Tests -c Release` includes mock-provider
+tests for coordinate validation, interest selection, new locations, caching,
+cancellation and failure fallback, plus existing citation and image-license tests.
+Live Wikidata coverage and on-device imagery still need a deployment smoke test.

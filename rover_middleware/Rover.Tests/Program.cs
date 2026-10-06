@@ -37,6 +37,7 @@ using Rover.Infrastructure.Walks;
 
 var tests = new List<(string Name, Func<Task> Run)>
 {
+    ("Historical discovery respects interests, coordinates, caching and failures", HistoricalDiscoveryTests.Discovery),
     ("Area research works in a new city without routes or POIs", AreaStoryTests.RouteFreeResearch),
     ("Editorial stories retain evidence, uncertainty and audience safety", StoryEditorialTests.SafetyAndEvidence),
     ("Question research validates scope and answer formats", StoryQuestionTests.ScopeAndFormats),
@@ -1016,7 +1017,7 @@ static async Task LocalRouteResearchValidation()
         }));
         var researcher = new Rover.Infrastructure.Journeys.OpenAILocalRouteResearcher(client,
             new Rover.Infrastructure.Journeys.LocalRouteResearchOptions { Enabled = true, ApiKey = "test", Model = "gpt-5-mini" }, TimeProvider.System);
-        var result = await researcher.ResearchAsync(query, CancellationToken.None);
+        var result = await researcher.ResearchAsync(query with { Interests = [] }, CancellationToken.None);
         AssertEqual(additionalKinds.Contains(scenario) || scenario is "valid" or "wrapped" or "culture" or "architecture" or "venue-anchor" ? 1 : 0, result.Stories.Count);
         if (scenario is "culture" or "architecture" or "venue-anchor")
         {

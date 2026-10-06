@@ -12,13 +12,15 @@ internal static class StoryEditorialTests
     {
         await Verify(false);
         await Verify(false, recovery: true);
+        await Verify(false, foodOnly: true);
+        await Verify(true, foodOnly: true);
     }
     public static async Task QuestionEvidence()
     {
         await Verify(true);
         await Verify(true, false);
     }
-    private static async Task Verify(bool question, bool relevant = true, bool recovery = false)
+    private static async Task Verify(bool question, bool relevant = true, bool recovery = false, bool foodOnly = false)
     {
         var anchor = new GeoLocation(52.2946778, 4.7108732);
         var segment = new RouteStorySegment("area", 0, anchor, anchor, anchor, 0, 0, 0, 0, false, []);
@@ -75,11 +77,16 @@ internal static class StoryEditorialTests
             var researcher = new OpenAILocalRouteResearcher(client,
                 new() { Enabled = true, ApiKey = "test", Model = "test" }, TimeProvider.System);
             var result = await researcher.ResearchAsync(new([segment],
-                new ApproximateLiveLocation(null, null, null, null), [], ["history"], "en") {
+                new ApproximateLiveLocation(null, null, null, null), [], foodOnly ? ["food"] : ["history"], "en") {
                     AreaFirst = !recovery,
                     Question = question ? new("How did the workshop change?", StoryQuestionScope.Neighbourhood,
                         StoryQuestionFormat.ThenAndNow, 1, 180) : null
                 }, default);
+            if (foodOnly && !question)
+            {
+                Check(result.Stories.Count == 0, "Automatic history must not override food-only preferences.");
+                continue;
+            }
             if (question && !relevant)
             {
                 Check(result.Stories.Count == 0, "Cited but irrelevant passages are not answers.");

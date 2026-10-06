@@ -28,7 +28,7 @@ public sealed class AreaStoryService(ILocalRouteResearcher researcher, TimeProvi
         // Adapter to the citation researcher: this is a search anchor, not a saved route.
         var anchor = new RouteStorySegment("area", 0, center, center, center, 0, 0, 0, 0, false, []);
         var query = new LocalRouteResearchQuery([anchor], new ApproximateLiveLocation(null, null, null, null),
-            [], (request.Interests ?? []).Prepend("local events").Distinct().ToArray(), "en")
+            [], (request.Interests ?? []).Distinct(StringComparer.OrdinalIgnoreCase).ToArray(), "en")
         {
             AreaFirst = true, MaximumStories = 3,
             SearchRadiusMeters = request.SearchRadiusMeters,

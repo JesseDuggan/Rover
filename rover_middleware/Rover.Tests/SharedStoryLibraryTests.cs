@@ -152,9 +152,11 @@ internal static class SharedStoryLibraryTests
             Check(persisted.Any(entry => entry.Story.StoryId == "provider-candidate"),
                 "Provider-built story must reach shared storage.");
             fake.Fail = true;
-            var result = await service.ResearchAsync(Query("topup") with { Interests = ["current events"] }, default);
+            var result = await service.ResearchAsync(Query("topup") with { Interests = ["history", "current events"] }, default);
             Check(result.Stories.Count == 3 && result.Warning!.Contains("failed"), "Failed top-up retains reusable stories.");
             Check(metrics.Snapshot.Failures == 1, "Research failure counted.");
+            result = await service.ResearchAsync(Query("food-only") with { Interests = ["food"] }, default);
+            Check(result.Stories.Count == 0, "Do not substitute cached history when the visitor selected only food.");
             fake.Fail = false;
             await File.WriteAllTextAsync(Path.Combine(options.Directory, "stories-v1.json"),
                 System.Text.Json.JsonSerializer.Serialize(new[] {
