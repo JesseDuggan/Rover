@@ -8,6 +8,7 @@ public sealed class MockWalkPlanner : IWalkPlanner
     private readonly IWalkRouteProvider _routeProvider;
     private readonly ILocalDiscoveryProvider _localDiscoveryProvider;
     private readonly IStoryLedStopSelector? _storySelector;
+    private readonly WalkPlaceSearchService? _placeSearch;
 
     public MockWalkPlanner()
         : this(new MockWalkRouteProvider(), new NoOpLocalDiscoveryProvider())
@@ -15,16 +16,19 @@ public sealed class MockWalkPlanner : IWalkPlanner
     }
 
     public MockWalkPlanner(IWalkRouteProvider routeProvider, ILocalDiscoveryProvider? localDiscoveryProvider = null,
-        IStoryLedStopSelector? storySelector = null)
+        IStoryLedStopSelector? storySelector = null, WalkPlaceSearchService? placeSearch = null)
     {
         _routeProvider = routeProvider;
         _localDiscoveryProvider = localDiscoveryProvider ?? new NoOpLocalDiscoveryProvider();
         _storySelector = storySelector;
+        _placeSearch = placeSearch;
     }
 
     public async Task<WalkSession> PlanWalkAsync(CreateWalkCommand command, CancellationToken cancellationToken)
     {
         cancellationToken.ThrowIfCancellationRequested();
+        if (command.SelectedPlace is not null)
+            return await PlanSelectedPlaceAsync(command, cancellationToken);
 
         var storyPlanning = _storySelector?.Enabled == true;
         var isUnionSquareStart = !storyPlanning && !_localDiscoveryProvider.RequiresRealPlaces
@@ -209,11 +213,86 @@ public sealed class MockWalkPlanner : IWalkPlanner
                 stop.DiscoveryProviderName,
                 stop.ProviderPlaceId,
                 stop.SourceUrl,
-                stop.RequiredAttribution));
+                stop.RequiredAttribution) { IsDestination = stop.IsDestination });
             previous = stop.Location;
         }
 
         return resequenced;
+    }
+
+    private async Task<WalkSession> PlanSelectedPlaceAsync(CreateWalkCommand command, CancellationToken ct)
+    {
+        var requested = await (_placeSearch ?? throw new InvalidOperationException("Place search is unavailable."))
+            .ResolveAsync(command.SelectedPlace!, command.StartingLocation, ct);
+        var direct = await _routeProvider.CreateRouteAsync(command, new[] { requested }, ct);
+        EnsureSelectedPlaceRoute(direct);
+        var candidates = new List<WalkStop>();
+        // Bounded corridor discovery uses the same interests and accessibility
+        // preferences as normal planning, along the actual walking geometry.
+        if (direct.DurationMinutes + requested.EstimatedVisitMinutes < command.AvailableMinutes)
+        {
+            var geometry = direct.Coordinates;
+            var centers = geometry.Count < 2 ? new[] { command.StartingLocation } :
+                new[] { geometry[0], geometry[geometry.Count / 2], geometry[^1] };
+            foreach (var center in centers.Distinct())
+            {
+                var found = await _localDiscoveryProvider.DiscoverForPlanningAsync(
+                    command with { StartingLocation = center, SelectedPlace = null }, ct, 12);
+                candidates.AddRange(found.Stops.Where(stop => !SamePlace(stop, requested) &&
+                    (!requested.IsDestination || RouteMath.DistanceFromRouteMeters(stop.Location, geometry) <= 600)));
+            }
+        }
+        var unique = candidates.DistinctBy(stop => stop.StopId).ToArray();
+        var selection = _storySelector?.Enabled == true && unique.Length > 0
+            ? await _storySelector.SelectAsync(command, unique, DesiredStopCount(command.AvailableMinutes) - 1, ct)
+            : null;
+        var chosen = (selection?.Stops.Count > 0 ? selection.Stops : unique)
+            .Take(11).ToList();
+        var timeForStops = Math.Max(0, command.AvailableMinutes - direct.DurationMinutes - requested.EstimatedVisitMinutes);
+        var retained = new List<WalkStop>();
+        foreach (var stop in chosen)
+        {
+            // Reserve a small walking detour allowance as well as the visit.
+            var cost = Math.Max(1, stop.EstimatedVisitMinutes) + 3;
+            if (cost > timeForStops) continue;
+            retained.Add(stop);
+            timeForStops -= cost;
+        }
+        IReadOnlyList<WalkStop> stops = CreateEfficientStopPlan(command, retained, retained.Count);
+        if (requested.IsDestination)
+            stops = Resequence(command.StartingLocation, stops.Append(requested).ToArray());
+        else
+            stops = CreateEfficientStopPlan(command, stops.Append(requested).ToArray(), stops.Count + 1);
+        var route = stops.Count == 1 ? direct : await _routeProvider.CreateRouteAsync(command, stops, ct);
+        if (stops.Count > 1 && route.DurationMinutes + stops.Sum(stop => stop.EstimatedVisitMinutes) > command.AvailableMinutes)
+        {
+            // One bounded reroute; an explicit choice can never be trimmed.
+            var keep = stops.Where(stop => !SamePlace(stop, requested)).Take(Math.Max(0, (stops.Count - 1) / 2));
+            stops = requested.IsDestination
+                ? Resequence(command.StartingLocation, keep.Append(requested).ToArray())
+                : CreateEfficientStopPlan(command, keep.Append(requested).ToArray(), keep.Count() + 1);
+            if (!stops.Any(stop => SamePlace(stop, requested))) stops = new[] { requested };
+            route = stops.Count == 1 ? direct : await _routeProvider.CreateRouteAsync(command, stops, ct);
+        }
+        var duration = route.DurationMinutes + stops.Sum(stop => stop.EstimatedVisitMinutes);
+        EnsureSelectedPlaceRoute(route);
+        var summary = requested.IsDestination ? $"Walk to {requested.Name}." : $"Walk via {requested.Name}.";
+        summary += stops.Count > 1 ? " Includes discoveries matched to your walk preferences." : " No additional stops fit this route and time.";
+        if (duration > command.AvailableMinutes)
+            summary += " This route exceeds your requested time; review the estimate before starting.";
+        return new WalkSession(Guid.NewGuid().ToString("n"), command.StartingLocation, DateTimeOffset.UtcNow,
+            command.AvailableMinutes, duration, route.DistanceMeters, summary, command.Interests,
+            command.WalkingPace, command.AccessibilityPreferences, stops, route);
+    }
+
+    private static bool SamePlace(WalkStop a, WalkStop b) =>
+        a.StopId == b.StopId || (!string.IsNullOrEmpty(a.ProviderPlaceId) && a.ProviderPlaceId == b.ProviderPlaceId) ||
+        (a.Name.Equals(b.Name, StringComparison.OrdinalIgnoreCase) && RouteMath.DistanceMeters(a.Location, b.Location) < 40);
+
+    private void EnsureSelectedPlaceRoute(WalkRoute route)
+    {
+        if (_routeProvider.ProviderName != "Mock" && route.Provider == "Mock")
+            throw new InvalidOperationException("Walking directions to that place are temporarily unavailable. Please try again.");
     }
 
     public static IReadOnlyList<WalkStop> CreateLocalFieldTestStops(GeoLocation startingLocation)

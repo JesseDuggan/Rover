@@ -15,4 +15,5 @@ public sealed record CreateWalkCommand(
     public string Environment { get; init; } = "Either";
     public bool IncludePaidAttractions { get; init; }
     public bool SurpriseMe { get; init; }
+    public WalkPlaceSelection? SelectedPlace { get; init; }
 }

@@ -100,14 +100,14 @@ public sealed class WalkSession
         Route = proposal.ProposedRoute;
         RouteRevision++;
         EstimatedDistanceMeters = Route.DistanceMeters;
-        EstimatedDurationMinutes = Math.Min(AvailableMinutes, proposal.EstimatedNewTotalMinutes);
+        EstimatedDurationMinutes = Math.Max(0, proposal.EstimatedNewTotalMinutes);
         ClearArrivalCandidate();
         TrackingState = TrackingState with
         {
             DistanceToNextStopMeters = NextStop is null || LastKnownLocation is null
                 ? null
                 : DistanceMeters(LastKnownLocation, NextStop.Location),
-            EstimatedMinutesRemaining = Math.Max(0, proposal.EstimatedNewTotalMinutes - visitedStops.Sum(stop => stop.EstimatedVisitMinutes)),
+            EstimatedMinutesRemaining = Math.Max(0, Route.DurationMinutes + remainingStops.Sum(stop => stop.EstimatedVisitMinutes)),
             IsOffRoute = proposal.Type != WalkAdaptationType.RejoinRoute && TrackingState.IsOffRoute,
             RouteProgressPercentage = proposal.Type == WalkAdaptationType.RejoinRoute
                 ? 0
@@ -356,7 +356,12 @@ public sealed class WalkSession
                     stop.Address,
                     stop.WebsiteUrl,
                     stop.PhoneNumber,
-                    stop.MenuUrl);
+                    stop.MenuUrl,
+                    stop.DiscoveryProviderName,
+                    stop.ProviderPlaceId,
+                    stop.SourceUrl,
+                    stop.RequiredAttribution)
+                { IsDestination = stop.IsDestination };
 
                 if (stop.ArrivedAtUtc is not null)
                 {

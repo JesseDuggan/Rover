@@ -46,6 +46,8 @@ public static class WalkRequestValidation
         }
 
         var accessibilityPreferences = new List<AccessibilityPreference>();
+        if (!WalkPlaceSearchService.IsValid(request.SelectedPlace))
+            errors["selectedPlace"] = new[] { "Search for and select a valid place." };
         if ((request.NaturalRequest?.Length ?? 0) > 500)
             errors["naturalRequest"] = new[] { "Keep your walk request to 500 characters." };
         if (request.Companions is not ("Solo" or "Couple" or "Family" or "Group"))
@@ -80,10 +82,11 @@ public static class WalkRequestValidation
         {
             NaturalRequest = request.NaturalRequest?.Trim() ?? "",
             Companions = request.Companions,
-            RouteShape = request.RouteShape,
+            RouteShape = request.SelectedPlace?.IsDestination == true ? "Different destination" : request.RouteShape,
             Environment = request.Environment,
             IncludePaidAttractions = request.IncludePaidAttractions,
-            SurpriseMe = request.SurpriseMe
+            SurpriseMe = request.SurpriseMe,
+            SelectedPlace = request.SelectedPlace
         };
 
         return true;
@@ -287,6 +290,8 @@ public static class WalkRequestValidation
         }
 
         WalkAdaptationType? requestedType = null;
+        if (!WalkPlaceSearchService.IsValid(request.SelectedPlace))
+            errors["selectedPlace"] = new[] { "Search for and select a valid place." };
         if (!string.IsNullOrWhiteSpace(request.RequestedType))
         {
             if (TryParseEnum(request.RequestedType, out WalkAdaptationType parsed))
@@ -321,7 +326,8 @@ public static class WalkRequestValidation
             string.IsNullOrWhiteSpace(request.UserRequest) ? null : request.UserRequest.Trim(),
             string.IsNullOrWhiteSpace(request.Interest) ? null : request.Interest.Trim(),
             string.IsNullOrWhiteSpace(request.ProposedDiscoveryId) ? null : request.ProposedDiscoveryId.Trim(),
-            NormalizeInterests(request.DismissedDiscoveryIds));
+            NormalizeInterests(request.DismissedDiscoveryIds))
+        { SelectedPlace = request.SelectedPlace };
         return true;
     }
 

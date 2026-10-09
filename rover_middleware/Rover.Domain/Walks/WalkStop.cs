@@ -49,6 +49,7 @@ public sealed class WalkStop
     }
 
     public string StopId { get; }
+    public bool IsDestination { get; init; }
     public int SequenceNumber { get; }
     public string Name { get; }
     public GeoLocation Location { get; }

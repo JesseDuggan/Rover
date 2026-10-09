@@ -8,5 +8,6 @@ public enum WalkAdaptationType
     AddDiscovery,
     RejoinRoute,
     ReturnToStart,
-    ContinueUnchanged
+    ContinueUnchanged,
+    SetDestination
 }

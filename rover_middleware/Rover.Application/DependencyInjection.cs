@@ -18,6 +18,7 @@ public static class DependencyInjection
     {
         services.AddSingleton(TimeProvider.System);
         services.AddScoped<IWalkSessionService, WalkSessionService>();
+        services.AddScoped<WalkPlaceSearchService>();
         services.AddSingleton<IRouteQualityAnalyzer, DeterministicRouteQualityAnalyzer>();
         services.AddSingleton<IStopLifecycleConsistencyService, StopLifecycleConsistencyService>();
         services.AddSingleton<RoverPromptBuilder>();

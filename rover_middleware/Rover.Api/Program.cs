@@ -1114,6 +1114,16 @@ profiles.MapDelete("/{profileId:guid}", async (
     return Results.NoContent();
 });
 
+app.MapGet("/api/walk-places", async (string query, double lat, double lng,
+    WalkPlaceSearchService places, CancellationToken ct) =>
+{
+    if (string.IsNullOrWhiteSpace(query) || query.Length > 256 ||
+        !double.IsFinite(lat) || !double.IsFinite(lng) || Math.Abs(lat) > 90 || Math.Abs(lng) > 180)
+        return Results.ValidationProblem(new Dictionary<string, string[]>
+        { ["query"] = new[] { "Provide a place name and valid device coordinates." } });
+    return Results.Ok(await places.SearchAsync(query, new GeoLocation(lat, lng), ct));
+});
+
 var walks = app.MapGroup("/api/walks");
 
 walks.MapPost("/", async (

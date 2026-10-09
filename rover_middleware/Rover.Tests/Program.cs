@@ -37,6 +37,9 @@ using Rover.Infrastructure.Walks;
 
 var tests = new List<(string Name, Func<Task> Run)>
 {
+    ("Selected places require verified explicit identities", SelectedPlaceTests.Selection),
+    ("Destination planning preserves interests and corridor stops", SelectedPlaceTests.Planning),
+    ("Place adaptations preserve endpoints and require confirmation", SelectedPlaceTests.Adaptation),
     ("Historical discovery respects interests, coordinates, caching and failures", HistoricalDiscoveryTests.Discovery),
     ("Area research works in a new city without routes or POIs", AreaStoryTests.RouteFreeResearch),
     ("Editorial stories retain evidence, uncertainty and audience safety", StoryEditorialTests.SafetyAndEvidence),
@@ -4768,9 +4771,17 @@ static async Task ApiIntegrationWalkLifecycle()
     using var client = new HttpClient { BaseAddress = api.BaseAddress };
 
     AssertEqual(HttpStatusCode.OK, (await client.GetAsync("/health")).StatusCode);
+    AssertEqual(HttpStatusCode.Unauthorized, (await client.GetAsync("/api/walk-places?query=Hotel&lat=91&lng=4")).StatusCode);
     AssertEqual(HttpStatusCode.Unauthorized, (await client.GetAsync("/api/beta/configuration")).StatusCode);
     AssertEqual(HttpStatusCode.Unauthorized, (await client.PostAsJsonAsync("/api/location-observations/identify-photo", new { })).StatusCode);
     client.DefaultRequestHeaders.Add("X-Rover-Dev-User", "api-integration");
+    AssertEqual(HttpStatusCode.BadRequest, (await client.GetAsync("/api/walk-places?query=Hotel&lat=91&lng=4")).StatusCode);
+    AssertEqual(HttpStatusCode.BadRequest, (await client.PostAsJsonAsync("/api/walks", new
+    {
+        latitude = 52, longitude = 4, availableMinutes = 60,
+        interests = new[] { "history" }, walkingPace = "Standard",
+        selectedPlace = new { query = "Hotel", placeId = "", isDestination = true }
+    })).StatusCode);
     AssertEqual(HttpStatusCode.ServiceUnavailable, (await client.PostAsJsonAsync("/api/location-observations/identify-photo", new { })).StatusCode);
 
     var createResponse = await client.PostAsJsonAsync("/api/walks", new

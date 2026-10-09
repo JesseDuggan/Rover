@@ -14,4 +14,5 @@ public sealed record CreateWalkRequest(
     public string Environment { get; init; } = "Either";
     public bool IncludePaidAttractions { get; init; }
     public bool SurpriseMe { get; init; }
+    public Rover.Application.Walks.WalkPlaceSelection? SelectedPlace { get; init; }
 }

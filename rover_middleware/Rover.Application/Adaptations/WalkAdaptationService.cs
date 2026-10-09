@@ -16,6 +16,8 @@ public sealed class WalkAdaptationService : IWalkAdaptationService
     private readonly TimeProvider _timeProvider;
     private readonly IRouteStoryPlanService? _routeStoryPlans;
     private readonly IJourneyNarrativeArcService? _narrativeArcs;
+    private readonly WalkPlaceSearchService? _placeSearch;
+    private readonly IWalkPlanner? _planner;
 
     public WalkAdaptationService(
         IWalkSessionRepository sessions,
@@ -25,7 +27,9 @@ public sealed class WalkAdaptationService : IWalkAdaptationService
         TimeProvider timeProvider,
         IStopLifecycleConsistencyService? lifecycleConsistency = null,
         IRouteStoryPlanService? routeStoryPlans = null,
-        IJourneyNarrativeArcService? narrativeArcs = null)
+        IJourneyNarrativeArcService? narrativeArcs = null,
+        WalkPlaceSearchService? placeSearch = null,
+        IWalkPlanner? planner = null)
     {
         _sessions = sessions;
         _adaptations = adaptations;
@@ -35,6 +39,8 @@ public sealed class WalkAdaptationService : IWalkAdaptationService
         _timeProvider = timeProvider;
         _routeStoryPlans = routeStoryPlans;
         _narrativeArcs = narrativeArcs;
+        _placeSearch = placeSearch;
+        _planner = planner;
     }
 
     public async Task<WalkAdaptationProposal> EvaluateAsync(string walkSessionId, WalkAdaptationCommand command, CancellationToken cancellationToken)
@@ -42,6 +48,10 @@ public sealed class WalkAdaptationService : IWalkAdaptationService
         var session = await GetMutableSession(walkSessionId, cancellationToken);
         EnsureActive(session);
         EnsureCurrentRevision(session, command.RouteRevision);
+        if (command.SelectedPlace is not null &&
+            command.RequestedType != (command.SelectedPlace.IsDestination
+                ? WalkAdaptationType.SetDestination : WalkAdaptationType.AddDiscovery))
+            throw new InvalidOperationException("The selected place must be an added stop or destination.");
 
         var type = ResolveType(session, command);
         var currentLocation = command.CurrentLocation ?? session.LastKnownLocation ?? session.StartingLocation;
@@ -57,6 +67,8 @@ public sealed class WalkAdaptationService : IWalkAdaptationService
         switch (type)
         {
             case WalkAdaptationType.SkipStop:
+                if (session.NextStop?.IsDestination == true)
+                    throw new InvalidOperationException("Choose a new destination or return to the start before removing your endpoint.");
                 if (session.NextStop is not null)
                 {
                     affected.Add(session.NextStop.StopId);
@@ -70,6 +82,7 @@ public sealed class WalkAdaptationService : IWalkAdaptationService
 
             case WalkAdaptationType.ShortenWalk:
                 var removable = proposed
+                    .Where(stop => !stop.IsDestination)
                     .OrderBy(stop => MatchesInterest(session, stop) ? 1 : 0)
                     .ThenByDescending(stop => stop.EstimatedVisitMinutes + stop.DistanceFromPreviousStopMeters / 80)
                     .Take(Math.Max(1, proposed.Count / 3))
@@ -84,6 +97,22 @@ public sealed class WalkAdaptationService : IWalkAdaptationService
 
             case WalkAdaptationType.ExtendWalk:
             case WalkAdaptationType.AddDiscovery:
+                if (command.SelectedPlace is not null)
+                {
+                    var selectedStop = await (_placeSearch ?? throw new InvalidOperationException("Place search is unavailable."))
+                        .ResolveAsync(command.SelectedPlace, currentLocation, cancellationToken);
+                    if (session.Stops.Any(stop => stop.StopId == selectedStop.StopId ||
+                        (!string.IsNullOrEmpty(stop.ProviderPlaceId) && stop.ProviderPlaceId == selectedStop.ProviderPlaceId)))
+                        throw new InvalidOperationException("That place is already in this walk.");
+                    var inserted = await InsertAtMostEfficientPositionAsync(currentLocation,
+                        command.AvailableMinutes ?? session.AvailableMinutes, session, proposed, selectedStop, cancellationToken);
+                    proposed = inserted.Stops;
+                    proposedRoute = inserted.Route;
+                    affected.Add(selectedStop.StopId);
+                    title = $"Add {selectedStop.Name}";
+                    explanation = "Add your selected place while keeping the remaining stops and destination.";
+                    break;
+                }
                 var discovery = await SelectDiscovery(session, currentLocation, command, cancellationToken);
                 if (discovery is null && type == WalkAdaptationType.AddDiscovery)
                 {
@@ -113,6 +142,20 @@ public sealed class WalkAdaptationService : IWalkAdaptationService
                     addedMinutes = Math.Max(1, proposedRoute.DurationMinutes - session.Route.DurationMinutes);
                     addedDistance = Math.Max(0, proposedRoute.DistanceMeters - session.Route.DistanceMeters);
                 }
+                break;
+
+            case WalkAdaptationType.SetDestination:
+                if (command.SelectedPlace?.IsDestination != true)
+                    throw new InvalidOperationException("Search for and select your destination.");
+                var destinationPlan = await (_planner ?? throw new InvalidOperationException("Destination planning is unavailable."))
+                    .PlanWalkAsync(RouteCommand(currentLocation, command.AvailableMinutes ?? session.AvailableMinutes, session)
+                        with { SelectedPlace = command.SelectedPlace, RouteShape = "Different destination" }, cancellationToken);
+                proposed = destinationPlan.Stops.Where(stop => stop.IsDestination || !session.Stops.Any(visited =>
+                    visited.Visited && (visited.StopId == stop.StopId ||
+                        (!string.IsNullOrEmpty(visited.ProviderPlaceId) && visited.ProviderPlaceId == stop.ProviderPlaceId)))).ToList();
+                affected.AddRange(proposed.Select(stop => stop.StopId));
+                title = $"Finish at {proposed[^1].Name}";
+                explanation = destinationPlan.RouteSummary;
                 break;
 
             case WalkAdaptationType.RejoinRoute:
@@ -164,6 +207,14 @@ public sealed class WalkAdaptationService : IWalkAdaptationService
             cancellationToken);
 
         var now = _timeProvider.GetUtcNow();
+        if (command.SelectedPlace is not null && _routes.ProviderName != "Mock" && route.Provider == "Mock")
+            throw new InvalidOperationException("Walking directions to that place are temporarily unavailable. Your walk is unchanged.");
+        var plannedMinutes = route.DurationMinutes + proposed.Sum(stop => stop.EstimatedVisitMinutes);
+        if (command.SelectedPlace is not null)
+        {
+            addedMinutes = plannedMinutes - (session.Route.DurationMinutes + remaining.Sum(stop => stop.EstimatedVisitMinutes));
+            addedDistance = route.DistanceMeters - session.Route.DistanceMeters;
+        }
         var proposal = new WalkAdaptationProposal(
             Guid.NewGuid().ToString("n"),
             session.WalkSessionId,
@@ -172,7 +223,7 @@ public sealed class WalkAdaptationService : IWalkAdaptationService
             explanation,
             addedMinutes,
             addedDistance,
-            Math.Max(0, session.Route.DurationMinutes + addedMinutes),
+            command.SelectedPlace is not null ? plannedMinutes : Math.Max(0, session.Route.DurationMinutes + addedMinutes),
             affected,
             addedStops,
             removedStops,
@@ -311,7 +362,9 @@ public sealed class WalkAdaptationService : IWalkAdaptationService
         double? bestScore = null;
         var command = RouteCommand(currentLocation, availableMinutes, session);
 
-        for (var index = 0; index <= remainingStops.Count; index++)
+        var lastInsertion = remainingStops.Count > 0 && remainingStops[^1].IsDestination
+            ? remainingStops.Count - 1 : remainingStops.Count;
+        for (var index = 0; index <= lastInsertion; index++)
         {
             var candidateStops = remainingStops.ToList();
             candidateStops.Insert(index, addedStop);

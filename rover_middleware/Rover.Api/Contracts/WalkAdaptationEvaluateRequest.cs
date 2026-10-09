@@ -9,4 +9,7 @@ public sealed record WalkAdaptationEvaluateRequest(
     string? UserRequest,
     string? Interest,
     string? ProposedDiscoveryId,
-    IReadOnlyCollection<string>? DismissedDiscoveryIds);
+    IReadOnlyCollection<string>? DismissedDiscoveryIds)
+{
+    public Rover.Application.Walks.WalkPlaceSelection? SelectedPlace { get; init; }
+}
