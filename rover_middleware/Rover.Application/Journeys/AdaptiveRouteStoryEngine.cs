@@ -661,6 +661,7 @@ public sealed class AdaptiveRouteStoryPackService : IAdaptiveRouteStoryPackServi
         var usedPlaces = existingStories.Select(story => story.PlaceId).ToHashSet(StringComparer.OrdinalIgnoreCase);
         string? previousCategory = null;
         LocationPlace? areaPlace = null;
+        var researchPlaces = new List<LocalResearchPublicPlace>();
         foreach (var segment in plan.Segments.Take(Math.Clamp(_options.MaximumStoriesPerPack * 2, 1, 24)))
         {
             cancellationToken.ThrowIfCancellationRequested();
@@ -691,6 +692,12 @@ public sealed class AdaptiveRouteStoryPackService : IAdaptiveRouteStoryPackServi
                         .DistinctBy(place => place.CanonicalId, StringComparer.OrdinalIgnoreCase).ToArray()
                 };
             }
+            areaPlace ??= context.RankedPlaces.FirstOrDefault(candidate => !string.IsNullOrWhiteSpace(candidate.City));
+            // Public narrative-source subjects locate research, but are not evidence
+            // themselves. Do not substitute itinerary businesses or user endpoints.
+            researchPlaces.AddRange(context.RankedPlaces
+                .Where(candidate => RouteMath.DistanceMeters(segment.Anchor, candidate.Coordinates) <= 1000)
+                .Select(candidate => new LocalResearchPublicPlace(candidate.Name, null, candidate.Coordinates)));
             var place = context.RankedPlaces
                 .Where(candidate => !usedPlaces.Contains(candidate.CanonicalId))
                 .Where(candidate => _options.JourneyCollectionsEnabled || !ReservedForArrival(candidate, session))
@@ -738,9 +745,10 @@ public sealed class AdaptiveRouteStoryPackService : IAdaptiveRouteStoryPackServi
         }
         if (_researcher is not null)
         {
+            var publicPlaces = researchPlaces.DistinctBy(place => place.Name, StringComparer.OrdinalIgnoreCase).Take(12).ToArray();
             var research = await _researcher.ResearchAsync(new LocalRouteResearchQuery(plan.Segments,
                 new ApproximateLiveLocation(areaPlace?.City, areaPlace?.Region, areaPlace?.CountryCode, null),
-                [], session.Interests.ToArray(), language, [],
+                publicPlaces.Select(place => place.Name).ToArray(), session.Interests.ToArray(), language, publicPlaces,
                 _options.JourneyCollectionsEnabled ? JourneyCollectionBuilder.Brief(session, plan, existingStories.Concat(stories).ToArray()) : null)
                 { LibraryCandidates = stories.ToArray(), Audience = audience }, cancellationToken);
             var known = stories.SelectMany(story => story.Claims).Select(claim => claim.Text.Trim())

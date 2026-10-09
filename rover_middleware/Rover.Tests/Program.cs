@@ -54,6 +54,7 @@ var tests = new List<(string Name, Func<Task> Run)>
     ("Europeana requires matching subjects, credits and reusable rights", EuropeanaTests.RightsMatchingAndSecrets),
     ("Europeana coalesces visitors and respects provider cooldown", EuropeanaTests.CooldownAndConcurrentVisitors),
     ("Europeana research retains interests and geographic boundaries", EuropeanaTests.InterestsAndGeography),
+    ("Europeana metadata research is independent of picture reuse eligibility", EuropeanaTests.MetadataResearch),
     ("Europeana images preserve the existing Wikimedia fallback", EuropeanaTests.ImagePipelineFallback),
     ("Europeana timeouts and malformed replies preserve other images", EuropeanaTests.TimeoutsAndMalformedResponses),
     ("Europeana leads require independent cited research before narration", EuropeanaTests.ResearchPipeline),
@@ -1320,6 +1321,7 @@ static async Task Phase16RoutePacksSelectCompleteAndSaveStories()
     var packs = new InMemoryAdaptiveRouteStoryPackRepository();
     var options = new Phase16Options { Enabled = true, JourneyCollectionsEnabled = true };
     var playbackContext = new RecordingLocationStoryContextService(new[] { place });
+    var researchCalls = 0;
     var service = new AdaptiveRouteStoryPackService(
         options,
         walks,
@@ -1328,13 +1330,26 @@ static async Task Phase16RoutePacksSelectCompleteAndSaveStories()
         packs,
         new DeterministicStoryIntentClassifier(),
         new DeterministicAdaptiveStoryLengthSelector(options),
-        TimeProvider.System);
+        TimeProvider.System,
+        researcher: new CapturingRouteResearcher(query =>
+        {
+            researchCalls++;
+            AssertEqual(1, query.PublicPlaces!.Count);
+            AssertEqual(place.Name, query.PublicPlaces[0].Name);
+            AssertEqual(place.Coordinates, query.PublicPlaces[0].Location);
+            AssertTrue(query.PublicPlaces.All(candidate => candidate.Address is null), "Do not send street addresses for route discovery.");
+            AssertEqual(place.Name, query.PublicPlaceNames.Single());
+            AssertTrue(query.Interests.SequenceEqual(session.Interests), "Route research must preserve listener interests.");
+            AssertEqual(1000, query.SearchRadiusMeters);
+            return new LocalRouteResearchResult([], null);
+        }));
 
     var state = await service.GenerateAsync(
         session.WalkSessionId,
         new GenerateAdaptiveRouteStoryPackCommand(null, "GeneralTraveller", "en", false),
         CancellationToken.None);
     var story = state.Pack!.Stories.Single();
+    AssertEqual(1, researchCalls);
     AssertTrue(story.Claims.All(claim => !claim.Text.Contains("10 Main Street")),
         "Independent history must not absorb identity facts from the same place.");
     AssertTrue(story.Variants.All(variant => !variant.Narration.Contains("10 Main Street")),

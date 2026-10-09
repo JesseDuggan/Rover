@@ -45,31 +45,48 @@ public sealed class EuropeanaArchiveClient(IHttpClientFactory clients, Europeana
     {
         token.ThrowIfCancellationRequested();
         // Existing classification still enforces the selected interests, citations and route boundary.
-        if (!Enabled || query.Question is not null || StoryInterestPolicy.DiscoveryTypes(query.Interests).Length == 0
-            || string.IsNullOrWhiteSpace(query.Area.City) || query.Area.City.Length > 120) return [];
+        var skip = !Enabled ? "disabled-or-missing-key" : query.Question is not null ? "explicit-question"
+            : StoryInterestPolicy.DiscoveryTypes(query.Interests).Length == 0 ? "interests"
+            : string.IsNullOrWhiteSpace(query.Area.City) || query.Area.City.Length > 120 ? "missing-locality" : null;
+        if (skip is not null)
+        {
+            logger.LogInformation("Europeana research skipped: {Reason}.", skip);
+            return [];
+        }
         var radius = query.AreaFirst ? Math.Clamp(query.SearchRadiusMeters, 1000, 20000) : 1000;
         var names = subjects.Select(s => (s.Name, s.Location))
             .Concat((query.PublicPlaces ?? []).Select(s => (s.Name, s.Location)))
             .Where(s => query.Segments.Any(segment => RouteMath.DistanceMeters(segment.Anchor, s.Location) <= radius))
-            .Select(s => s.Name).Where(ValidSubject).Distinct(StringComparer.OrdinalIgnoreCase).Take(2);
+            .Select(s => s.Name).Where(ValidResearchSubject).Distinct(StringComparer.OrdinalIgnoreCase).Take(2).ToArray();
         using var budget = CancellationTokenSource.CreateLinkedTokenSource(token);
         budget.CancelAfter(TimeSpan.FromSeconds(4));
         var leads = new List<ArchiveResearchLead>();
+        var attempted = 0;
+        var failed = 0;
         foreach (var name in names)
         {
-            try { leads.AddRange((await SearchAsync(name, query.Area.City, null, budget.Token)).Leads); }
-            catch (OperationCanceledException) when (!token.IsCancellationRequested) { break; }
+            try
+            {
+                attempted++;
+                var result = await SearchAsync(name, query.Area.City, null, budget.Token, research: true);
+                if (result.Failed) failed++;
+                leads.AddRange(result.Leads);
+            }
+            catch (OperationCanceledException) when (!token.IsCancellationRequested) { failed++; break; }
             if (budget.IsCancellationRequested) break;
         }
         token.ThrowIfCancellationRequested();
-        return leads.DistinctBy(x => x.SourceUrl).Take(4).ToArray();
+        var accepted = leads.DistinctBy(x => x.SourceUrl).Take(4).ToArray();
+        logger.LogInformation("Europeana research: {Subjects} local subjects; {Attempted} lookups; {Leads} leads; {Failed} unavailable.",
+            names.Length, attempted, accepted.Length, failed);
+        return accepted;
     }
 
-    private async Task<EuropeanaResult> SearchAsync(string? subject, string? locality, string? id, CancellationToken token)
+    private async Task<EuropeanaResult> SearchAsync(string? subject, string? locality, string? id, CancellationToken token, bool research = false)
     {
         token.ThrowIfCancellationRequested();
         if (!Enabled) return Empty;
-        var key = JsonSerializer.Serialize(new { subject, locality, id });
+        var key = JsonSerializer.Serialize(new { subject, locality, id, research });
         if (cache.TryGetValue(key, out EuropeanaResult? cached)) return cached!;
         using var budget = CancellationTokenSource.CreateLinkedTokenSource(token);
         budget.CancelAfter(TimeSpan.FromSeconds(4));
@@ -87,7 +104,8 @@ public sealed class EuropeanaArchiveClient(IHttpClientFactory clients, Europeana
             if (locality is not null) query += " AND where:" + Quote(locality);
             using var request = new HttpRequestMessage(HttpMethod.Get,
                 "https://api.europeana.eu/record/v2/search.json?query=" + Uri.EscapeDataString(query)
-                + "&qf=TYPE%3AIMAGE&reusability=open&thumbnail=true&profile=rich&rows=6");
+                + (research ? "" : "&qf=TYPE%3AIMAGE&reusability=open&thumbnail=true")
+                + "&profile=rich&rows=6");
             // Header authentication avoids credentials in URLs, caches, responses and access logs.
             request.Headers.Add("X-Api-Key", options.ApiKey!.Trim());
             using var client = clients.CreateClient("Europeana");
@@ -103,10 +121,10 @@ public sealed class EuropeanaArchiveClient(IHttpClientFactory clients, Europeana
                 return new([], [], true);
             }
             using var document = JsonDocument.Parse(await response.Content.ReadAsStringAsync(budget.Token));
-            var result = Parse(document.RootElement, subject, locality, id);
+            var result = Parse(document.RootElement, subject, locality, id, research);
             if (result.Failed) cooldownUntil = clock.GetUtcNow().AddMinutes(1);
             else cache.Set(key, result, new MemoryCacheEntryOptions { Size = 1,
-                AbsoluteExpirationRelativeToNow = result.Images.Count == 0 ? TimeSpan.FromMinutes(10) : TimeSpan.FromHours(6) });
+                AbsoluteExpirationRelativeToNow = result.Images.Count + result.Leads.Count == 0 ? TimeSpan.FromMinutes(10) : TimeSpan.FromHours(6) });
             return result;
         }
         catch (OperationCanceledException) when (token.IsCancellationRequested) { throw; }
@@ -120,7 +138,7 @@ public sealed class EuropeanaArchiveClient(IHttpClientFactory clients, Europeana
         finally { if (entered) gate.Release(); }
     }
 
-    private static EuropeanaResult Parse(JsonElement root, string? subject, string? locality, string? requestedId)
+    private static EuropeanaResult Parse(JsonElement root, string? subject, string? locality, string? requestedId, bool research)
     {
         if (root.ValueKind != JsonValueKind.Object || !root.TryGetProperty("success", out var ok) || ok.ValueKind != JsonValueKind.True
             || !root.TryGetProperty("items", out var items) || items.ValueKind != JsonValueKind.Array) return new([], [], true);
@@ -128,18 +146,29 @@ public sealed class EuropeanaArchiveClient(IHttpClientFactory clients, Europeana
         var leads = new List<ArchiveResearchLead>();
         foreach (var item in items.EnumerateArray().Take(6))
         {
-            if (item.ValueKind != JsonValueKind.Object || Text(item, "type") != "IMAGE"
-                || item.TryGetProperty("previewNoDistribute", out var noDistribute) && noDistribute.ValueKind != JsonValueKind.False) continue;
+            if (item.ValueKind != JsonValueKind.Object) continue;
             var id = Text(item, "id");
             if (id is null || !Regex.IsMatch(id, @"^/[A-Za-z0-9_-]+/[A-Za-z0-9_-]+$")
                 || requestedId is not null && requestedId != id) continue;
-            var title = Values(item, "title").FirstOrDefault();
-            var description = string.Join(" ", Values(item, "dcDescription"));
+            var titles = Values(item, "title").Concat(Values(item, "dcTitleLangAware"));
+            var title = titles.FirstOrDefault(value => subject is null || ContainsPhrase(value, subject));
+            var description = string.Join(" ", Values(item, "dcDescription").Concat(Values(item, "dcDescriptionLangAware")).Distinct());
             if (string.IsNullOrWhiteSpace(title) || title.Length > 500
                 || subject is not null && !ContainsPhrase(title, subject)) continue;
             var places = string.Join(" ", Values(item, "edmPlaceLabel").Concat(Values(item, "edmPlaceLabelLangAware"))
                 .Concat(Values(item, "dctermsSpatial")));
             if (locality is not null && !ContainsPhrase(title + " " + description + " " + places, locality)) continue;
+            var source = "https://www.europeana.eu/item" + id;
+            // Catalogue metadata is a lead, not permission to display its media.
+            // The researcher must still independently verify every narrated claim.
+            if (research)
+            {
+                if (description.Length > 0)
+                    leads.Add(new(subject ?? title, title, description[..Math.Min(700, description.Length)], source));
+                continue;
+            }
+            if (Text(item, "type") != "IMAGE"
+                || item.TryGetProperty("previewNoDistribute", out var noDistribute) && noDistribute.ValueKind != JsonValueKind.False) continue;
             var rights = Values(item, "rights").Distinct().ToArray();
             // Conflicting rights across media in a record cannot safely be assigned to its preview.
             if (rights.Length != 1 || !TryLicense(rights[0], out var license, out var licenseUrl)) continue;
@@ -148,7 +177,6 @@ public sealed class EuropeanaArchiveClient(IHttpClientFactory clients, Europeana
             var creators = string.Join("; ", Values(item, "dcCreator").Distinct());
             if (string.IsNullOrWhiteSpace(creators) && license is "CC0 1.0" or "Public domain") creators = "Creator not recorded";
             if (preview is null || string.IsNullOrWhiteSpace(provider) || string.IsNullOrWhiteSpace(creators)) continue;
-            var source = "https://www.europeana.eu/item" + id;
             var date = Values(item, "year").FirstOrDefault(x => Regex.IsMatch(x, @"^[12][0-9]{3}$"));
             var caption = title + (date is null ? "" : " (" + date + ")");
             images.Add(new(preview, caption, creators + " - " + provider, license, licenseUrl, source, source,
@@ -203,6 +231,9 @@ public sealed class EuropeanaArchiveClient(IHttpClientFactory clients, Europeana
 
     private static bool ValidSubject(string subject) => subject.Length is >= 8 and <= 160 &&
         !subject.Contains(':') && Regex.Matches(subject, @"[\p{L}\p{N}]+").Count >= 2;
+    // A geocoded subject plus a required locality can disambiguate single-word names.
+    private static bool ValidResearchSubject(string subject) => subject.Length is >= 4 and <= 160 &&
+        !subject.Contains(':') && Regex.IsMatch(subject, @"\p{L}");
     private static string Quote(string text) => "\"" + text.Replace("\\", "\\\\").Replace("\"", "\\\"") + "\"";
     private static bool SafeHttps(Uri uri) => uri.Scheme == "https" && uri.IsDefaultPort && uri.UserInfo.Length == 0;
     private static string Normalize(string value) => Regex.Replace(value.ToLowerInvariant(), @"[^\p{L}\p{N}]+", " ").Trim();

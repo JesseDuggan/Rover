@@ -134,6 +134,42 @@ internal static class EuropeanaTests
             "A holding institution's city is not evidence of the depicted subject's location.");
     }
 
+    public static async Task MetadataResearch()
+    {
+        using var handler = new Handler();
+        using var client = Client(handler);
+        var anchor = new GeoLocation(52.08, 4.31);
+        var segment = new RouteStorySegment("route", 0, anchor, anchor, anchor, 0, 0, 0, 0, false, []);
+        var query = new LocalRouteResearchQuery([segment], new ApproximateLiveLocation("Den Haag", null, "NL", null),
+            [], ["history"], "en", [new("Noordeinde", null, anchor)]);
+        var text = Record("text", title: "Paleis Noordeinde in Den Haag", rights: "http://rightsstatements.org/vocab/InC/1.0/",
+            preview: "", noDistribute: true, creator: "");
+        text["type"] = "TEXT";
+        text["dcDescription"] = Array.Empty<string>();
+        text["dcDescriptionLangAware"] = new { nl = new[] { "Beschrijving van Paleis Noordeinde in Den Haag." } };
+        var unrelated = Record("delft", title: "Noordeinde te Delft");
+        unrelated["dcDescription"] = new[] { "A street in Delft." };
+        unrelated["edmPlaceLabel"] = new[] { "Delft" };
+        var translated = Record("translated", title: "Royal palace");
+        translated["dcTitleLangAware"] = new { nl = new[] { "Paleis Noordeinde in Den Haag" } };
+        handler.Records = [text, unrelated, translated];
+        var leads = await client.FindResearchLeadsAsync(query, [], default);
+        Check(leads.Count == 2 && leads.Any(lead => lead.SourceUrl.EndsWith("/text"))
+            && leads.All(lead => !lead.SourceUrl.EndsWith("/delft")),
+            "Single-word local subjects and multilingual catalogue metadata are usable leads; other cities remain excluded.");
+        Check(!handler.Query!.Contains("thumbnail=") && !handler.Query.Contains("reusability=")
+            && !handler.Query.Contains("TYPE:IMAGE") && handler.Query.Contains("where:\"Den Haag\""),
+            "Research metadata is not filtered by media type or image reuse rights.");
+        Check((await client.FindPicturesAsync("https://www.europeana.eu/item/123/text", default)).Images.Count == 0,
+            "A useful catalogue lead never grants permission to display restricted media.");
+        var calls = handler.Calls;
+        await client.FindResearchLeadsAsync(query with { Area = new(null, null, "NL", null) }, [], default);
+        await client.FindResearchLeadsAsync(query with { Interests = ["food"] }, [], default);
+        Check(handler.Calls == calls, "Missing locality and unrelated interests still suppress archive research.");
+        await client.FindResearchLeadsAsync(query, [], default);
+        Check(handler.Calls == calls, "Research has a shared cache independent of picture lookups.");
+    }
+
     public static async Task ImagePipelineFallback()
     {
         using var handler = new Handler();
