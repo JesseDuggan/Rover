@@ -543,6 +543,11 @@ $env:ElevenLabs__ModelId = "REPLACE_WITH_MODEL_ID"
 
 See `docs\PHASE_8_5_ELEVENLABS_VOICE.md` for key rotation, usage limits, fallback testing and Samsung voice test steps.
 
+The approved `eleven_v4_turbo` model is supported through the dialogue WebSocket
+while preserving the configured narrator VoiceId and supported settings. Deploy
+this middleware before changing Railway's `ElevenLabs__ModelId`; the voice guide
+includes the activation and rollback steps. Flutter still receives complete MP3s.
+
 ## Lifecycle Rules
 
 - A successfully planned walk becomes `Ready`.
@@ -785,3 +790,50 @@ Verification: `dotnet run --project Rover.Tests -c Release` includes mock-provid
 tests for coordinate validation, interest selection, new locations, caching,
 cancellation and failure fallback, plus existing citation and image-license tests.
 Live Wikidata coverage and on-device imagery still need a deployment smoke test.
+
+## Europeana Archive Material
+
+Set `EUROPEANA_API_KEY` on the Railway **Rover API service**, never in Flutter,
+an APK build define, or Git. The optional integration activates when the key is
+present; `ROVER_EUROPEANA_ENABLED=false` disables it. Deploy the API changes and
+install the updated APK to display Europeana pictures. Adding the variable alone
+does not add the integration to an older deployment.
+
+The image endpoint retains Wikimedia pictures and can add up to three archival
+images per lookup, with at most two archive lookups and six images per response.
+It searches exact multiword Wikipedia subjects (including nearby article context)
+or resolves a cited Europeana item. It does not search the entire city to fill a
+carousel, and it cannot yet infer archive subjects from arbitrary non-Wikipedia
+citations or Wikidata-only citations. Coverage depends on catalogue metadata.
+
+Only public-domain, CC0, CC BY and CC BY-SA records with unambiguous rights and
+credits are displayed. Restricted, conflicting or withheld previews are omitted.
+Thumbnails come only from Europeana's cached thumbnail endpoint, never arbitrary
+institution hosts. The viewer labels these as **Archive material**, shows the
+recorded year when available, and keeps creator, institution, source and licence
+links. A missing creator is labelled explicitly for public-domain/CC0 records.
+An archive image is not presented as a current photograph or proof of an event.
+
+For automatic research, at most two already-located route subjects are searched
+within a known city, and only for interests supporting historical discovery.
+Up to four catalogue leads enter the existing research prompt, not the story
+collection directly. Independent citations, subject-coordinate validation,
+selected interests and sensitive-content checks remain mandatory. Museum or
+archive storage coordinates are never used as depicted-place coordinates.
+Explicit questions and existing shared-library reuse remain unchanged.
+
+Lookups have a four-second budget, bounded in-memory caches (six hours for matches,
+ten minutes for empty results), concurrent-request coalescing, and a one-request
+per-second provider gate. HTTP failures trigger a shared cooldown; 429 respects
+Retry-After with a one-minute minimum, and 401/403 uses at least 15 minutes. These protections
+are **per API process**, not distributed across replicas. The API key is sent only
+in `X-Api-Key`; provider request logging is disabled and raw responses are never
+returned. A provider failure does not disable Wikimedia pictures or web research.
+
+Reference: [Search API](https://europeana.atlassian.net/wiki/spaces/EF/pages/2385739812),
+[header authentication](https://europeana.atlassian.net/wiki/spaces/EF/pages/2358673409),
+and [public thumbnails](https://europeana.atlassian.net/wiki/spaces/EF/pages/2480209953).
+Mock-provider tests run with `dotnet run --project Rover.Tests/Rover.Tests.csproj`.
+After deployment, open an eligible story (for example Laan van Meerdervoort),
+check its picture carousel and credits, and inspect Railway for `Europeana lookup
+unavailable` if nothing loads. Never export or paste the API key with logs.

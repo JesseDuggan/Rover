@@ -49,6 +49,14 @@ var tests = new List<(string Name, Func<Task> Run)>
     ("Question researcher rejects unrelated cited passages", StoryEditorialTests.QuestionEvidence),
     ("Shared question answers isolate requests and preserve privacy", SharedStoryLibraryTests.QuestionIsolation),
     ("Story images require sourced Wikimedia files and supported licenses", StoryImageTests.SourcedImages),
+    ("Story images resolve nearby context and legacy Wikimedia metadata safely", StoryImageTests.NearbyAndMetadata),
+    ("Europeana is optional and accepts only supported sources", EuropeanaTests.ConfigurationAndSources),
+    ("Europeana requires matching subjects, credits and reusable rights", EuropeanaTests.RightsMatchingAndSecrets),
+    ("Europeana coalesces visitors and respects provider cooldown", EuropeanaTests.CooldownAndConcurrentVisitors),
+    ("Europeana research retains interests and geographic boundaries", EuropeanaTests.InterestsAndGeography),
+    ("Europeana images preserve the existing Wikimedia fallback", EuropeanaTests.ImagePipelineFallback),
+    ("Europeana timeouts and malformed replies preserve other images", EuropeanaTests.TimeoutsAndMalformedResponses),
+    ("Europeana leads require independent cited research before narration", EuropeanaTests.ResearchPipeline),
     ("Nearby stories research selected places and retain verified evidence", NearbyStoryResearchTests.Validation),
     ("Shared stories persist and rebase across visitors", SharedStoryLibraryTests.ReuseAndPersistence),
     ("Shared stories enforce freshness and reuse permissions", SharedStoryLibraryTests.FreshnessAndPermissions),
@@ -150,6 +158,13 @@ var tests = new List<(string Name, Func<Task> Run)>
     ("account guest link export and isolation", AccountGuestLinkExportAndIsolation),
     ("speech generation validation cache and fallback", SpeechGenerationValidationCacheAndFallback),
     ("ElevenLabs authentication errors retain safe diagnostic codes", ElevenLabsDiagnosticsTests.SafeFailures),
+    ("ElevenLabs v4 Turbo preserves voice and completes fragmented dialogue", ElevenLabsDialogueTests.ProtocolAndVoice),
+    ("ElevenLabs legacy model remains available without voice changes", ElevenLabsDialogueTests.LegacyModel),
+    ("ElevenLabs dialogue failures never disclose provider secrets", ElevenLabsDialogueTests.SafeFailures),
+    ("ElevenLabs dialogue rejects incomplete and malformed audio", ElevenLabsDialogueTests.InvalidAndIncompleteStreams),
+    ("ElevenLabs dialogue bounds messages and audio size", ElevenLabsDialogueTests.Bounds),
+    ("ElevenLabs dialogue respects deadlines and cancellation", ElevenLabsDialogueTests.DeadlinesAndCancellation),
+    ("ElevenLabs dialogue retains caching and device fallback", ElevenLabsDialogueTests.CacheAndFallback),
     ("beta speech authentication and shared quota", BetaSpeechAuthenticationAndSharedQuota),
     ("beta speech outside development preserves account authorization", BetaSpeechOutsideDevelopment),
     ("Phase 15 audio cache enforces eligibility and expiry", Phase15AudioCacheEnforcesEligibilityAndExpiry),
@@ -226,6 +241,9 @@ var tests = new List<(string Name, Func<Task> Run)>
 };
 
 var failures = new List<string>();
+
+if (Environment.GetEnvironmentVariable("ROVER_TEST_LIVE_IMAGES") == "1")
+    tests.Add(("Live Wikimedia images for Laan van Meerdervoort and nearby places", StoryImageTests.LiveWikimedia));
 
 foreach (var test in tests)
 {

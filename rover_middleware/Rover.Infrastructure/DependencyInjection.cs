@@ -130,6 +130,19 @@ public static class DependencyInjection
             client.MaxResponseContentBufferSize = 2 * 1024 * 1024;
         }).ConfigurePrimaryHttpMessageHandler(() => new HttpClientHandler { AllowAutoRedirect = false });
         services.AddSingleton<StoryImageService>();
+        services.AddSingleton(new EuropeanaOptions
+        {
+            Enabled = EnvironmentFlag("ROVER_EUROPEANA_ENABLED", true),
+            ApiKey = Environment.GetEnvironmentVariable("EUROPEANA_API_KEY")
+        });
+        services.AddHttpClient("Europeana", client =>
+        {
+            client.DefaultRequestHeaders.UserAgent.ParseAdd("WalkAbout/1.0 (https://github.com/JesseDuggan/Rover)");
+            client.Timeout = TimeSpan.FromSeconds(4);
+            client.MaxResponseContentBufferSize = 2 * 1024 * 1024;
+        }).ConfigurePrimaryHttpMessageHandler(() => new HttpClientHandler { AllowAutoRedirect = false })
+            .RemoveAllLoggers();
+        services.AddSingleton<EuropeanaArchiveClient>();
         var locationOptions = new LocationIntelligenceOptions
         {
             Enabled = configuration.GetValue("Rover:LocationIntelligence:Enabled", true),
@@ -430,6 +443,7 @@ public static class DependencyInjection
         services.AddSingleton<FileGeneratedAudioCache>();
         services.AddSingleton<IGeneratedAudioCache>(provider => provider.GetRequiredService<FileGeneratedAudioCache>());
         services.AddSingleton<ISpeechUsageService, InMemorySpeechUsageService>();
+        services.AddSingleton<IElevenLabsWebSocketFactory, ElevenLabsWebSocketFactory>();
         services.AddScoped<ElevenLabsTextToSpeechProvider>();
         services.AddScoped<UnavailableSpeechProvider>();
         services.AddScoped<ITextToSpeechProvider>(provider =>

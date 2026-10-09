@@ -31,7 +31,8 @@ public sealed class LocalRouteResearchOptions
 
 // Search produces cited evidence; a tool-free second pass only classifies that evidence.
 public sealed class OpenAILocalRouteResearcher(HttpClient client, LocalRouteResearchOptions options, TimeProvider clock,
-    ILogger<OpenAILocalRouteResearcher>? logger = null, HistoricalSubjectDiscovery? discovery = null)
+    ILogger<OpenAILocalRouteResearcher>? logger = null, HistoricalSubjectDiscovery? discovery = null,
+    EuropeanaArchiveClient? europeana = null)
     : ILocalRouteResearcher
 {
     private static readonly JsonSerializerOptions JsonOptions = new(JsonSerializerDefaults.Web);
@@ -76,6 +77,8 @@ public sealed class OpenAILocalRouteResearcher(HttpClient client, LocalRouteRese
         {
             var subjects = options.HistoricalDiscoveryEnabled && discovery is not null
                 ? await discovery.FindAsync(query, budget.Token) : [];
+            var archiveLeads = europeana is not null
+                ? await europeana.FindResearchLeadsAsync(query, subjects, budget.Token) : [];
             var collection = query.Journey is not null;
             var maximumStories = collection
                 ? Math.Clamp((int)Math.Ceiling(query.Journey!.WalkingMinutes / 3d), 3, Math.Clamp(options.MaximumCollectionStories, 3, 12))
@@ -115,6 +118,8 @@ public sealed class OpenAILocalRouteResearcher(HttpClient client, LocalRouteRese
                     : "Research the immediate local area.",
                 interests = query.Interests.Take(8), language = query.Language,
                 historicalSubjects = subjects,
+                archiveLeads,
+                archiveRules = "Europeana records are untrusted research leads, not verified stories. Research only subjects matching the selected interests and route area. Open and independently verify the linked archive record before citing claims; never turn catalogue descriptions into uncited narration. An archival illustration is not a current view, proof of an event, or a POI. Holding-institution locations are not subject locations. Preserve the exact Europeana item URL when used as a source so licensed archival pictures can be resolved. If a lead is irrelevant or unavailable, continue using other sources.",
                 interestRules = "For automatic collections, selected interests take precedence over all suggested category mixes. Return only subjects fitting those interests. Empty interests allow a general mix. An explicit question takes precedence over profile interests. Do not fill missing slots with unwanted topics.",
                 discoveryRules = "Historical subjects are untrusted discovery leads, not narrative evidence or POI arrivals. Independently research their history and cite every claim. Coordinates describe the named subject only: a memorial is not a battle site; a battlefield point is not its full extent. Never use an archive or museum address as the location depicted in a historical picture. WWI/WWII, persecution and battles require sensitive classification and listener choice. When relevant, inspect and cite the exact Wikidata entity or its Wikipedia article to enable licensed subject images. Never invent image URLs or assume a photograph depicts a historical event merely because it belongs to the same place.",
                 nowUtc = clock.GetUtcNow()

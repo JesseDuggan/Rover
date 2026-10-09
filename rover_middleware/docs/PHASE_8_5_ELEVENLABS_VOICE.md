@@ -78,6 +78,38 @@ flutter run -d RFGYA0RB5HY --dart-define=ROVER_API_BASE_URL=http://127.0.0.1:508
 
 Open Profile, then Voice test. Use Stop sample, Ask sample, Intro sample, Pause, Resume, and Stop.
 
+## Approved v4 Turbo Upgrade (October 2026)
+
+The approved comparison used the existing Walkabout voice with `eleven_v4_turbo`.
+This model uses `wss://api.elevenlabs.io/v1/text-to-dialogue/stream-input`, not the
+legacy text-to-speech REST path. The middleware registers the configured VoiceId,
+sends one narration, flushes the session, and waits for `is_final` before returning
+the complete MP3. Flutter's speech API contract is unchanged; this model upgrade
+alone does not require a new APK. It does not add incremental playback on the phone.
+
+Preserve `ElevenLabs__ApiKey`, `ElevenLabs__VoiceId`, and all stored voice settings.
+The approved settings are stability `0.45` and similarity `0.75`. v4 requests send
+only these two supported controls. Style and speaker boost remain configured for
+legacy models, but are not sent to v4 Turbo. Keys stay in the connection header,
+never in URLs or dialogue messages. No voice-edit API is called.
+
+Deployment order:
+
+1. Deploy the updated middleware with the existing `ElevenLabs__ModelId` unchanged.
+2. In Railway's Rover production service, change only `ElevenLabs__ModelId` to
+   `eleven_v4_turbo`, then apply/redeploy the variable change.
+3. Verify a new stop narration and a story on a real device. Confirm premium
+   playback rather than device fallback, then check pause/resume and POI interruption.
+4. To roll back the model, restore `ElevenLabs__ModelId=eleven_multilingual_v2`.
+   Leave the VoiceId and voice settings alone. Both connection paths remain supported.
+
+Cache keys include the model, so v4 does not reuse Multilingual v2 recordings.
+Partial streams, provider errors, or the configured request deadline trigger the
+existing device fallback and are never saved as completed premium narration.
+The WebSocket path has no automatic retries, avoiding duplicate synthesis charges.
+
+Protocol reference: https://elevenlabs.io/docs/eleven-api/guides/how-to/websockets/realtime-tdd
+
 ## Fallback Behavior
 
 Rover uses device TTS when ElevenLabs is disabled, missing configuration, times out, rejects the request, exceeds local usage limits, or audio playback fails. Navigation and safety prompts continue to use immediate device TTS.
