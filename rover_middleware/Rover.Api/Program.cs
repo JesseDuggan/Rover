@@ -1130,6 +1130,9 @@ walks.MapPost("/", async (
     CreateWalkRequest? request,
     IWalkSessionService walkService,
     IRoverWalkPrefetchService? prefetchService,
+    HttpContext httpContext,
+    IAccountService accountService,
+    IWebHostEnvironment environment,
     CancellationToken cancellationToken) =>
 {
     if (!WalkRequestValidation.TryCreateCommand(request, out var command, out var errors))
@@ -1139,6 +1142,8 @@ walks.MapPost("/", async (
 
     try
     {
+        if (command!.ProfileId is { } profileId && await EnforceProfileAccessAsync(profileId,
+            httpContext, accountService, environment, cancellationToken) is { } denied) return denied;
         var session = await walkService.CreateAsync(command!, cancellationToken);
         QueueWalkWarmup(prefetchService, session, "created");
         return Results.Created($"/api/walks/{session.WalkSessionId}", session.ToResponse());
@@ -1685,6 +1690,29 @@ walks.MapPost("/{walkSessionId}/adaptations/{adaptationId}/reject", async (
     {
         return ConflictProblem(exception.Message);
     }
+});
+
+walks.MapPost("/{walkSessionId}/field-test-feedback", async (
+    string walkSessionId,
+    OntarioFieldTestFeedback request,
+    IWalkSessionService walkService,
+    OntarioFieldTestOptions options,
+    IOntarioFieldTestRecorder recorder,
+    HttpContext httpContext,
+    IAccountService accountService,
+    IWebHostEnvironment environment,
+    CancellationToken cancellationToken) =>
+{
+    if (!request.IsValid) return Results.ValidationProblem(new Dictionary<string, string[]>
+        { ["feedback"] = ["Provide the tester profile, four ratings from 1 to 5, a supported narration result, and at most 1000 comment characters."] });
+    if (await EnforceProfileAccessAsync(request.ProfileId, httpContext, accountService, environment, cancellationToken) is { } denied) return denied;
+    var session = await walkService.GetAsync(walkSessionId, cancellationToken);
+    if (session is null) return NotFoundProblem("Walk session not found.");
+    if (session.ProfileId != request.ProfileId || options.ForJourney(session) is not { } market)
+        return ForbiddenProblem("This walk is not enrolled in the Ontario field test.");
+    recorder.Record(new(market.Key, "tester-feedback", "submitted", WalkSessionId: walkSessionId, Feedback: request,
+        GeographicProfileId: session.GeographicProfileId ?? market.Value.GeographicProfileId));
+    return Results.Accepted();
 });
 
 walks.MapPost("/{walkSessionId}/feedback", async (

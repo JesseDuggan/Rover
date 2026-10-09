@@ -9,6 +9,7 @@ public sealed record CreateWalkCommand(
     WalkingPace WalkingPace,
     IReadOnlyCollection<AccessibilityPreference> AccessibilityPreferences)
 {
+    public Guid? ProfileId { get; init; }
     public string NaturalRequest { get; init; } = "";
     public string Companions { get; init; } = "Solo";
     public string RouteShape { get; init; } = "Loop route";

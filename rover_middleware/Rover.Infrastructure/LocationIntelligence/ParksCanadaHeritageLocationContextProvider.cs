@@ -22,15 +22,18 @@ public sealed class ParksCanadaHeritageLocationContextProvider : LocationContext
     ];
 
     private readonly IHttpClientFactory _httpClientFactory;
+    private readonly int _maximumRadiusMeters;
 
     public ParksCanadaHeritageLocationContextProvider(
         IHttpClientFactory httpClientFactory,
         ILocationContextCache cache,
         TimeProvider timeProvider,
-        LocationProviderOptions options)
+        LocationProviderOptions options,
+        int maximumRadiusMeters = 5000)
         : base(cache, timeProvider, options)
     {
         _httpClientFactory = httpClientFactory;
+        _maximumRadiusMeters = Math.Clamp(maximumRadiusMeters, 100, 10000);
     }
 
     public override string Name => "ParksCanadaHeritage";
@@ -160,7 +163,7 @@ public sealed class ParksCanadaHeritageLocationContextProvider : LocationContext
             ["geometryType"] = "esriGeometryPoint",
             ["inSR"] = "4326",
             ["spatialRel"] = "esriSpatialRelIntersects",
-            ["distance"] = Math.Min(query.RadiusMeters, 5000).ToString(CultureInfo.InvariantCulture),
+            ["distance"] = Math.Min(query.RadiusMeters, _maximumRadiusMeters).ToString(CultureInfo.InvariantCulture),
             ["units"] = "esriSRUnit_Meter",
             ["outFields"] = "OBJECTID,Name_e,Descr_e,Principal_type,D_Source,D_Source_Code",
             ["returnGeometry"] = "true",

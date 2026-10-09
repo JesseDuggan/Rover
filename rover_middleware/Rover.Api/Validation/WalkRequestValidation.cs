@@ -80,6 +80,7 @@ public static class WalkRequestValidation
             walkingPace,
             accessibilityPreferences)
         {
+            ProfileId = request.ProfileId,
             NaturalRequest = request.NaturalRequest?.Trim() ?? "",
             Companions = request.Companions,
             RouteShape = request.SelectedPlace?.IsDestination == true ? "Different destination" : request.RouteShape,

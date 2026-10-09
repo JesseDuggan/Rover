@@ -39,6 +39,20 @@ public static class DependencyInjection
     {
         ArgumentNullException.ThrowIfNull(configuration);
 
+        var ontarioOptions = new OntarioFieldTestOptions();
+        configuration.GetSection("Rover:OntarioFieldTesting").Bind(ontarioOptions);
+        ontarioOptions.Validate();
+        services.AddSingleton(ontarioOptions);
+        services.AddSingleton<IOntarioFieldTestRecorder, FileOntarioFieldTestRecorder>();
+        services.AddSingleton<OntarioMunicipalHeritageClient>();
+        services.AddScoped<OntarioFieldTestProvider>();
+        services.AddScoped<ILocationContextProvider>(provider => provider.GetRequiredService<OntarioFieldTestProvider>());
+        services.AddHttpClient("OntarioMunicipal", client =>
+        {
+            client.Timeout = TimeSpan.FromSeconds(8);
+            client.DefaultRequestHeaders.UserAgent.ParseAdd("WalkaboutOntarioPilot/1.0");
+        }).ConfigurePrimaryHttpMessageHandler(() => new HttpClientHandler { AllowAutoRedirect = false });
+
         var hotelRateOptions = new HotelRateOptions
         {
             Enabled = configuration.GetValue("Rover:Commerce:HotelRates:Enabled", false),
@@ -476,15 +490,18 @@ public static class DependencyInjection
         services.AddScoped<GooglePlacesLocalDiscoveryProvider>();
         services.AddScoped<ILocalDiscoveryProvider>(provider =>
         {
+            ILocalDiscoveryProvider Pilot(ILocalDiscoveryProvider selected) => ontarioOptions.Enabled
+                ? new OntarioLocalDiscoveryProvider(selected, provider.GetRequiredService<OntarioFieldTestProvider>(), ontarioOptions)
+                : selected;
             var modeText = Environment.GetEnvironmentVariable("ROVER_LOCAL_DISCOVERY_MODE") ?? configuration["Rover:LocalDiscovery:Mode"] ?? "None";
             if (modeText.Equals("Mapbox", StringComparison.OrdinalIgnoreCase))
             {
-                return provider.GetRequiredService<MapboxLocalDiscoveryProvider>();
+                return Pilot(provider.GetRequiredService<MapboxLocalDiscoveryProvider>());
             }
 
             if (modeText.Equals("GooglePlaces", StringComparison.OrdinalIgnoreCase))
             {
-                return provider.GetRequiredService<GooglePlacesLocalDiscoveryProvider>();
+                return Pilot(provider.GetRequiredService<GooglePlacesLocalDiscoveryProvider>());
             }
 
             return TestFixturesEnabled(provider, configuration) ? provider.GetRequiredService<NoOpLocalDiscoveryProvider>() : throw new InvalidOperationException("Live place discovery is not configured. Select GooglePlaces or Mapbox; synthetic stops are disabled.");

@@ -40,6 +40,8 @@ public sealed class WalkSession
     }
 
     public string WalkSessionId { get; }
+    public Guid? ProfileId { get; init; }
+    public string? GeographicProfileId { get; private set; }
     public WalkSessionStatus Status { get; private set; }
     public GeoLocation StartingLocation { get; }
     public GeoLocation? LastKnownLocation { get; private set; }
@@ -74,6 +76,14 @@ public sealed class WalkSession
     public void SetRoute(WalkRoute route)
     {
         Route = route;
+    }
+
+    public void AssignGeographicProfile(string geographicProfileId)
+    {
+        ArgumentException.ThrowIfNullOrWhiteSpace(geographicProfileId);
+        if (GeographicProfileId is not null && GeographicProfileId != geographicProfileId)
+            throw new InvalidOperationException("A journey's original geographic profile cannot be replaced.");
+        GeographicProfileId = geographicProfileId;
     }
 
     public void ApplyAdaptation(WalkAdaptationProposal proposal, DateTimeOffset appliedAtUtc)

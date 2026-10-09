@@ -35,8 +35,22 @@ using Rover.Infrastructure.Profiles;
 using Rover.Infrastructure.Speech;
 using Rover.Infrastructure.Walks;
 
+if (args.Contains("--ontario-source-audit"))
+{
+    await OntarioFieldTestTests.Audit();
+    return 0;
+}
+
 var tests = new List<(string Name, Func<Task> Run)>
 {
+    ("Ontario pilot supports beta-wide activation and optional enrollment gates", OntarioFieldTestTests.Gates),
+    ("Ontario geographic IDs persist separately and do not restrict tester travel", OntarioFieldTestTests.GeographicProfilesAndTravel),
+    ("Ontario regional radii reach providers without stretching local walks", OntarioFieldTestTests.RegionalRadiusAndLocalStops),
+    ("Ontario municipal evidence preserves coordinates, provenance and cached deduplication", OntarioFieldTestTests.CoordinatesEvidenceAndCaching),
+    ("Ontario ArcGIS pagination rejects unsafe and incompatible responses", OntarioFieldTestTests.PaginationAndFailures),
+    ("Ontario markets preserve sparse, short and long journeys independently", OntarioFieldTestTests.IndependentMarketsAndSparseJourneys),
+    ("Ontario feedback is structured and removes raw tester identifiers", OntarioFieldTestTests.Feedback),
+    ("Ontario heritage enriches existing POIs and automatic research inherits enrollment", OntarioFieldTestTests.EnrichmentAndAutomaticStoryIdentity),
     ("Selected places require verified explicit identities", SelectedPlaceTests.Selection),
     ("Destination planning preserves interests and corridor stops", SelectedPlaceTests.Planning),
     ("Place adaptations preserve endpoints and require confirmation", SelectedPlaceTests.Adaptation),

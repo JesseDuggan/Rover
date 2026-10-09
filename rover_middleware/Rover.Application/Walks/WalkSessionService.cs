@@ -1,5 +1,7 @@
 using Rover.Domain.Walks;
 using Rover.Application.Journeys;
+using Rover.Application.LocationIntelligence;
+using System.Diagnostics;
 
 namespace Rover.Application.Walks;
 
@@ -11,6 +13,8 @@ public sealed class WalkSessionService : IWalkSessionService
     private readonly LocationTrackingOptions _trackingOptions;
     private readonly IRouteStoryPlanService? _routeStoryPlans;
     private readonly IJourneyNarrativeArcService? _narrativeArcs;
+    private readonly OntarioFieldTestOptions? _ontario;
+    private readonly IOntarioFieldTestRecorder? _fieldTests;
 
     public WalkSessionService(
         IWalkPlanner walkPlanner,
@@ -18,7 +22,9 @@ public sealed class WalkSessionService : IWalkSessionService
         TimeProvider timeProvider,
         LocationTrackingOptions? trackingOptions = null,
         IRouteStoryPlanService? routeStoryPlans = null,
-        IJourneyNarrativeArcService? narrativeArcs = null)
+        IJourneyNarrativeArcService? narrativeArcs = null,
+        OntarioFieldTestOptions? ontario = null,
+        IOntarioFieldTestRecorder? fieldTests = null)
     {
         _walkPlanner = walkPlanner;
         _repository = repository;
@@ -26,11 +32,16 @@ public sealed class WalkSessionService : IWalkSessionService
         _trackingOptions = trackingOptions ?? new LocationTrackingOptions();
         _routeStoryPlans = routeStoryPlans;
         _narrativeArcs = narrativeArcs;
+        _ontario = ontario;
+        _fieldTests = fieldTests;
     }
 
     public async Task<WalkSession> CreateAsync(CreateWalkCommand command, CancellationToken cancellationToken)
     {
+        var timer = Stopwatch.StartNew();
         var session = await _walkPlanner.PlanWalkAsync(command, cancellationToken);
+        var geographicProfile = _ontario?.Match(command.ProfileId, command.StartingLocation);
+        if (geographicProfile is { } activeProfile) session.AssignGeographicProfile(activeProfile.Value.GeographicProfileId);
         await _repository.AddAsync(session, cancellationToken);
         if (_routeStoryPlans is not null)
         {
@@ -40,6 +51,9 @@ public sealed class WalkSessionService : IWalkSessionService
         {
             await _narrativeArcs.RefreshAsync(session, cancellationToken);
         }
+        if (geographicProfile is { } market)
+            _fieldTests?.Record(new(market.Key, "journey", $"created-{command.AvailableMinutes}-minutes", timer.ElapsedMilliseconds,
+                Discovered: session.Stops.Count, WalkSessionId: session.WalkSessionId, GeographicProfileId: session.GeographicProfileId));
         return session;
     }
 

@@ -91,7 +91,7 @@ public sealed class MockWalkPlanner : IWalkPlanner
             command.WalkingPace,
             command.AccessibilityPreferences,
             stops,
-            route);
+            route) { ProfileId = command.ProfileId };
 
         return session;
     }
@@ -282,7 +282,7 @@ public sealed class MockWalkPlanner : IWalkPlanner
             summary += " This route exceeds your requested time; review the estimate before starting.";
         return new WalkSession(Guid.NewGuid().ToString("n"), command.StartingLocation, DateTimeOffset.UtcNow,
             command.AvailableMinutes, duration, route.DistanceMeters, summary, command.Interests,
-            command.WalkingPace, command.AccessibilityPreferences, stops, route);
+            command.WalkingPace, command.AccessibilityPreferences, stops, route) { ProfileId = command.ProfileId };
     }
 
     private static bool SamePlace(WalkStop a, WalkStop b) =>

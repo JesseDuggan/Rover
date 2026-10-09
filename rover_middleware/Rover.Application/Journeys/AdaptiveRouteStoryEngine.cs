@@ -324,6 +324,8 @@ public sealed class AdaptiveRouteStoryPackService : IAdaptiveRouteStoryPackServi
     private readonly TimeProvider _timeProvider;
     private readonly ILiveJourneyContextService? _liveContext;
     private readonly ILocalRouteResearcher? _researcher;
+    private readonly OntarioFieldTestOptions? _ontario;
+    private readonly IOntarioFieldTestRecorder? _fieldTests;
 
     public AdaptiveRouteStoryPackService(
         Phase16Options options,
@@ -335,7 +337,9 @@ public sealed class AdaptiveRouteStoryPackService : IAdaptiveRouteStoryPackServi
         IAdaptiveStoryLengthSelector lengthSelector,
         TimeProvider timeProvider,
         ILiveJourneyContextService? liveContext = null,
-        ILocalRouteResearcher? researcher = null)
+        ILocalRouteResearcher? researcher = null,
+        OntarioFieldTestOptions? ontario = null,
+        IOntarioFieldTestRecorder? fieldTests = null)
     {
         _options = options;
         _walks = walks;
@@ -347,6 +351,8 @@ public sealed class AdaptiveRouteStoryPackService : IAdaptiveRouteStoryPackServi
         _timeProvider = timeProvider;
         _liveContext = liveContext;
         _researcher = researcher;
+        _ontario = ontario;
+        _fieldTests = fieldTests;
     }
 
     public async Task<AdaptiveRouteStoryPackState> GenerateAsync(
@@ -355,9 +361,21 @@ public sealed class AdaptiveRouteStoryPackService : IAdaptiveRouteStoryPackServi
         CancellationToken cancellationToken)
     {
         var requestedAt = _timeProvider.GetUtcNow();
+        var ownerSession = await GetSessionAsync(walkSessionId, cancellationToken);
+        command = command with { ProfileId = ownerSession.ProfileId ?? command.ProfileId };
         var gate = GenerationGates[(uint)StringComparer.Ordinal.GetHashCode(walkSessionId) % (uint)GenerationGates.Length];
         await gate.WaitAsync(cancellationToken);
-        try { return await GenerateCoreAsync(walkSessionId, command, requestedAt, cancellationToken); }
+        try
+        {
+            var result = await GenerateCoreAsync(walkSessionId, command, requestedAt, cancellationToken);
+            var session = await GetSessionAsync(walkSessionId, cancellationToken);
+            if (_ontario?.ForJourney(session) is { } market)
+                _fieldTests?.Record(new(market.Key, "story-generation", result.Status.ToString(),
+                    (long)(_timeProvider.GetUtcNow() - requestedAt).TotalMilliseconds,
+                    Stories: result.Pack?.Stories.Count ?? 0, WalkSessionId: walkSessionId,
+                    GeographicProfileId: session.GeographicProfileId ?? market.Value.GeographicProfileId));
+            return result;
+        }
         finally { gate.Release(); }
     }
 

@@ -49,7 +49,7 @@ public static class WalkResponseMapper
             session.TrackingState.DistanceFromRouteMeters,
             routeQuality.ToResponse(),
             lifecycleConsistency.ToResponse(),
-            stops);
+            stops) { GeographicProfileId = session.GeographicProfileId };
     }
 
     public static LocationUpdateResponse ToResponse(this LocationUpdateResult result)

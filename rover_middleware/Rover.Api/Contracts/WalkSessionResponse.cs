@@ -32,7 +32,10 @@ public sealed record WalkSessionResponse(
     double DistanceFromRouteMeters,
     RouteQualityDiagnosticsResponse RouteQuality,
     StopLifecycleConsistencyResponse LifecycleConsistency,
-    IReadOnlyList<WalkStopResponse> Stops);
+    IReadOnlyList<WalkStopResponse> Stops)
+{
+    public string? GeographicProfileId { get; init; }
+}
 
 public sealed record RouteQualityDiagnosticsResponse(
     int TotalRouteDistanceMeters,
