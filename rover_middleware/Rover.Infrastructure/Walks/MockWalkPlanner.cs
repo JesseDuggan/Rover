@@ -37,7 +37,7 @@ public sealed class MockWalkPlanner : IWalkPlanner
         var discovery = isUnionSquareStart
             ? new LocalDiscoveryResult(Array.Empty<WalkStop>(), null)
             : await _localDiscoveryProvider.DiscoverForPlanningAsync(command, cancellationToken, storyPlanning ? 30 : Math.Max(desiredStops * 2, 12));
-        var discoveredStops = discovery.Stops;
+        IReadOnlyList<WalkStop> discoveredStops = discovery.Stops.Where(stop => WalkInterestPolicy.Allows(stop, command.Interests)).ToArray();
         if (_localDiscoveryProvider.RequiresRealPlaces && discoveredStops.Count < 2)
             throw new InvalidOperationException("A real-place walk could not be created: fewer than two usable places were found. "
                 + discovery.Diagnostic + " No fallback waypoints were created.");
@@ -232,22 +232,33 @@ public sealed class MockWalkPlanner : IWalkPlanner
         if (direct.DurationMinutes + requested.EstimatedVisitMinutes < command.AvailableMinutes)
         {
             var geometry = direct.Coordinates;
-            var centers = geometry.Count < 2 ? new[] { command.StartingLocation } :
-                new[] { geometry[0], geometry[geometry.Count / 2], geometry[^1] };
+            var centers = CorridorCenters(geometry);
             foreach (var center in centers.Distinct())
             {
                 var found = await _localDiscoveryProvider.DiscoverForPlanningAsync(
                     command with { StartingLocation = center, SelectedPlace = null }, ct, 12);
-                candidates.AddRange(found.Stops.Where(stop => !SamePlace(stop, requested) &&
+                candidates.AddRange(found.Stops.Where(stop => WalkInterestPolicy.Allows(stop, command.Interests) && !SamePlace(stop, requested) &&
                     (!requested.IsDestination || RouteMath.DistanceFromRouteMeters(stop.Location, geometry) <= 600)));
             }
         }
-        var unique = candidates.DistinctBy(stop => stop.StopId).ToArray();
-        var selection = _storySelector?.Enabled == true && unique.Length > 0
+        var unique = new List<WalkStop>();
+        foreach (var candidate in candidates)
+            if (!unique.Any(stop => SamePlace(stop, candidate))) unique.Add(candidate);
+        var selection = _storySelector?.Enabled == true && unique.Count > 0
             ? await _storySelector.SelectAsync(command, unique, DesiredStopCount(command.AvailableMinutes) - 1, ct)
             : null;
-        var chosen = (selection?.Stops.Count > 0 ? selection.Stops : unique)
-            .Take(11).ToList();
+        var pool = (selection?.Stops.Count > 0 ? selection.Stops.Concat(unique) : unique).ToArray();
+        var chosen = new List<WalkStop>();
+        // Pick near evenly spaced positions before considering additional candidates.
+        // This prevents the first search centre from consuming the entire stop budget.
+        foreach (var center in CorridorCenters(direct.Coordinates, 400, 12).Skip(1))
+        {
+            var next = pool.Where(stop => !chosen.Any(existing => SamePlace(existing, stop)))
+                .OrderBy(stop => RouteMath.DistanceMeters(center, stop.Location)).FirstOrDefault();
+            if (next is not null && RouteMath.DistanceMeters(center, next.Location) <= 500
+                && chosen.All(stop => RouteMath.DistanceMeters(stop.Location, next.Location) >= 250))
+                chosen.Add(next);
+        }
         var timeForStops = Math.Max(0, command.AvailableMinutes - direct.DurationMinutes - requested.EstimatedVisitMinutes);
         var retained = new List<WalkStop>();
         foreach (var stop in chosen)
@@ -258,16 +269,19 @@ public sealed class MockWalkPlanner : IWalkPlanner
             retained.Add(stop);
             timeForStops -= cost;
         }
-        IReadOnlyList<WalkStop> stops = CreateEfficientStopPlan(command, retained, retained.Count);
+        IReadOnlyList<WalkStop> stops = requested.IsDestination
+            ? Resequence(command.StartingLocation, retained.OrderBy(stop => RouteMath.ProgressPercentage(stop.Location, direct)).ToArray())
+            : CreateEfficientStopPlan(command, retained, retained.Count);
         if (requested.IsDestination)
             stops = Resequence(command.StartingLocation, stops.Append(requested).ToArray());
         else
             stops = CreateEfficientStopPlan(command, stops.Append(requested).ToArray(), stops.Count + 1);
         var route = stops.Count == 1 ? direct : await _routeProvider.CreateRouteAsync(command, stops, ct);
-        if (stops.Count > 1 && route.DurationMinutes + stops.Sum(stop => stop.EstimatedVisitMinutes) > command.AvailableMinutes)
+        while (stops.Count > 1 && route.DurationMinutes + stops.Sum(stop => stop.EstimatedVisitMinutes) > command.AvailableMinutes)
         {
-            // One bounded reroute; an explicit choice can never be trimmed.
-            var keep = stops.Where(stop => !SamePlace(stop, requested)).Take(Math.Max(0, (stops.Count - 1) / 2));
+            // Reduce evenly across the corridor; an explicit choice can never be trimmed.
+            var optional = stops.Where(stop => !SamePlace(stop, requested)).ToArray();
+            var keep = optional.Where((_, index) => index % 2 == 1).ToArray();
             stops = requested.IsDestination
                 ? Resequence(command.StartingLocation, keep.Append(requested).ToArray())
                 : CreateEfficientStopPlan(command, keep.Append(requested).ToArray(), keep.Count() + 1);
@@ -283,6 +297,33 @@ public sealed class MockWalkPlanner : IWalkPlanner
         return new WalkSession(Guid.NewGuid().ToString("n"), command.StartingLocation, DateTimeOffset.UtcNow,
             command.AvailableMinutes, duration, route.DistanceMeters, summary, command.Interests,
             command.WalkingPace, command.AccessibilityPreferences, stops, route) { ProfileId = command.ProfileId };
+    }
+
+    private static IReadOnlyList<GeoLocation> CorridorCenters(IReadOnlyList<GeoLocation> geometry,
+        double spacing = 800, int maximum = 8)
+    {
+        if (geometry.Count < 2) return geometry;
+        var lengths = geometry.Zip(geometry.Skip(1), RouteMath.DistanceMeters).ToArray();
+        var total = lengths.Sum();
+        var intervals = Math.Clamp((int)Math.Ceiling(total / spacing), 1, maximum - 1);
+        var result = new List<GeoLocation> { geometry[0] };
+        for (var n = 1; n <= intervals; n++)
+        {
+            var target = total * n / intervals;
+            var before = 0d;
+            for (var i = 0; i < lengths.Length; i++)
+            {
+                if (before + lengths[i] >= target || i == lengths.Length - 1)
+                {
+                    var ratio = lengths[i] == 0 ? 0 : Math.Clamp((target - before) / lengths[i], 0, 1);
+                    result.Add(new GeoLocation(geometry[i].Latitude + (geometry[i + 1].Latitude - geometry[i].Latitude) * ratio,
+                        geometry[i].Longitude + (geometry[i + 1].Longitude - geometry[i].Longitude) * ratio));
+                    break;
+                }
+                before += lengths[i];
+            }
+        }
+        return result;
     }
 
     private static bool SamePlace(WalkStop a, WalkStop b) =>

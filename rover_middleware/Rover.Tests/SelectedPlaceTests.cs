@@ -39,7 +39,10 @@ internal static class SelectedPlaceTests
         Check(walk.Stops.Count > 1 && walk.Stops[^1].IsDestination, "Include corridor stops and finish at destination.");
         Check(walk.Route.Coordinates[^1] == walk.Stops[^1].Location, "Walking route ends at chosen place.");
         Check(walk.Stops.All(stop => stop.StopId != "far"), "Exclude stops outside the corridor.");
-        Check(discovery.Commands.Count is > 0 and <= 3, "Bound corridor searches.");
+        Check(discovery.Commands.Count is > 0 and <= 8, "Bound corridor searches.");
+        Check(walk.Stops.All(stop => stop.StopId != "cafe"), "Do not add food when food is not selected.");
+        Check(walk.Stops.Any(stop => stop.StopId == "museum") && walk.Stops.Any(stop => stop.StopId == "monument"),
+            "Include useful discoveries near both halves of the destination corridor.");
         Check(discovery.Commands.All(command => command.Interests.SequenceEqual(Command().Interests) &&
             command.AccessibilityPreferences.SequenceEqual(Command().AccessibilityPreferences)), "Preserve interests and accessibility.");
         var shortWalk = await planner.PlanWalkAsync(Command(minutes: 15), default);
@@ -60,6 +63,32 @@ internal static class SelectedPlaceTests
         await sessions.AddAsync(walk, default);
         var service = new WalkAdaptationService(sessions, new InMemoryWalkAdaptationRepository(),
             new Nearby(), routes, TimeProvider.System, placeSearch: places, planner: planner);
+        var replacement = new NearbyDiscovery("replacement", "Historic house", "History", new(52.007, 4.0105),
+            "Sourced history", 1, 50, 2, ContentSource.LocalRecommendation, null, null, new[] { "history" });
+        var replacing = new WalkAdaptationService(sessions, new InMemoryWalkAdaptationRepository(),
+            new Nearby(new[] {
+                replacement with { DiscoveryId = "food", Category = "Cafe", Name = "McCafe" },
+                replacement with { DiscoveryId = "behind", Location = new(51.999, 3.9985) },
+                replacement with { DiscoveryId = walk.NextStop!.StopId }, replacement }), routes, TimeProvider.System);
+        var skipCommand = new WalkAdaptationCommand(Start, walk.RouteRevision, WalkAdaptationType.SkipStop,
+            60, null, null, null, Array.Empty<string>());
+        var skip = await replacing.EvaluateAsync(walk.WalkSessionId, skipCommand, default);
+        Check(skip.ProposedStops.Any(stop => stop.StopId == "replacement"), "Replace with a matching place ahead.");
+        Check(skip.ProposedStops.All(stop => stop.StopId != "food" && stop.StopId != "behind" && stop.StopId != walk.NextStop.StopId),
+            "Exclude food, backward stops and the skipped place.");
+        Check(skip.ProposedStops[^1].IsDestination && skip.EstimatedNewTotalMinutes <= 60,
+            "Replacement preserves destination and remaining time budget.");
+        var noTime = await replacing.EvaluateAsync(walk.WalkSessionId, skipCommand with { AvailableMinutes = 1 }, default);
+        Check(noTime.ProposedStops.All(stop => stop.StopId != "replacement"), "Never add a replacement outside the time budget.");
+        foreach (var detour in new[] { 5, 6 })
+        {
+            var bounded = new WalkAdaptationService(sessions, new InMemoryWalkAdaptationRepository(),
+                new Nearby(new[] { replacement }), new DetourRoutes(detour), TimeProvider.System);
+            var result = await bounded.EvaluateAsync(walk.WalkSessionId, skipCommand with { AvailableMinutes = 90 }, default);
+            Check(result.ProposedStops.Any(stop => stop.StopId == "replacement") == (detour == 5),
+                "Allow five extra walking minutes, but reject six even with spare time.");
+        }
+        Check(walk.Stops.Any(stop => stop.StopId == walk.NextStop.StopId), "Skip proposals do not mutate the walk.");
         var add = new WalkAdaptationCommand(Start, walk.RouteRevision, WalkAdaptationType.AddDiscovery,
             60, null, null, null, Array.Empty<string>()) { SelectedPlace = new("Hotel", "other") };
         var proposal = await service.EvaluateAsync(walk.WalkSessionId, add, default);
@@ -128,15 +157,27 @@ internal static class SelectedPlaceTests
         {
             Commands.Add(command);
             return Task.FromResult<IReadOnlyList<WalkStop>>(new[] { Stop("museum", new(52.005, 4.0075)),
-                Stop("monument", new(52.015, 4.0225)), Stop("far", new(52.2, 4.3)) });
+                Stop("monument", new(52.015, 4.0225)), Stop("far", new(52.2, 4.3)),
+                new WalkStop("cafe", 1, "McCafe", new(52.01, 4.015), "Coffee", "Coffee", "Cafe",
+                    ContentType.FoodAndDrink, ContentSource.LocalRecommendation, 3, 0, 30) });
         }
         private static WalkStop Stop(string id, GeoLocation location) => new(id, 1, id, location, "Sourced history.", "Sourced history.",
             "History", ContentType.History, ContentSource.LocalRecommendation, 3, 0, 30);
     }
-    private sealed class Nearby : INearbyDiscoveryProvider
+    private sealed class Nearby(IReadOnlyList<NearbyDiscovery>? options = null) : INearbyDiscoveryProvider
     {
         public Task<IReadOnlyList<NearbyDiscovery>> FindAsync(WalkSession session, GeoLocation currentLocation,
             string? interest, IReadOnlyCollection<string> dismissedDiscoveryIds, CancellationToken ct) =>
-            Task.FromResult<IReadOnlyList<NearbyDiscovery>>(Array.Empty<NearbyDiscovery>());
+            Task.FromResult<IReadOnlyList<NearbyDiscovery>>(options ?? Array.Empty<NearbyDiscovery>());
+    }
+    private sealed class DetourRoutes(int addedMinutes) : IWalkRouteProvider
+    {
+        public string ProviderName => "Mock";
+        public async Task<WalkRoute> CreateRouteAsync(CreateWalkCommand command, IReadOnlyList<WalkStop> stops, CancellationToken ct)
+        {
+            var route = await new MockWalkRouteProvider().CreateRouteAsync(command, stops, ct);
+            return new(route.RouteId, route.Provider, route.Version, route.GeneratedAtUtc, route.Coordinates, route.Bounds,
+                route.DistanceMeters, 20 + (stops.Any(stop => stop.StopId == "replacement") ? addedMinutes : 0), route.Maneuvers);
+        }
     }
 }

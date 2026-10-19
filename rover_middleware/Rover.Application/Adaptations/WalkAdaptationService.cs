@@ -67,6 +67,8 @@ public sealed class WalkAdaptationService : IWalkAdaptationService
         switch (type)
         {
             case WalkAdaptationType.SkipStop:
+                if (remaining.Count <= 1)
+                    throw new InvalidOperationException("Choose a new destination or return to the start before skipping your final stop.");
                 if (session.NextStop?.IsDestination == true)
                     throw new InvalidOperationException("Choose a new destination or return to the start before removing your endpoint.");
                 if (session.NextStop is not null)
@@ -77,6 +79,43 @@ public sealed class WalkAdaptationService : IWalkAdaptationService
                     explanation = $"Rover can skip {session.NextStop.Name} and continue with the remaining ordered stops.";
                     addedMinutes = -session.NextStop.EstimatedVisitMinutes;
                     addedDistance = -session.NextStop.DistanceFromPreviousStopMeters;
+                    var budget = command.AvailableMinutes ?? Math.Max(0, session.AvailableMinutes -
+                        (int)Math.Ceiling((_timeProvider.GetUtcNow() - (session.StartedAtUtc ?? _timeProvider.GetUtcNow())).TotalMinutes));
+                    var baseline = await _routes.CreateRouteAsync(RouteCommand(currentLocation, Math.Max(15, budget), session), proposed, cancellationToken);
+                    if (_routes.ProviderName != "Mock" && baseline.Provider == "Mock")
+                        throw new InvalidOperationException("Walking directions are temporarily unavailable. Your walk is unchanged.");
+                    proposedRoute = baseline;
+                    var options = await _discoveries.FindAsync(session, currentLocation, null,
+                        command.DismissedDiscoveryIds.Concat(session.Stops.Select(stop => stop.StopId)).ToArray(), cancellationToken);
+                    foreach (var option in options.Where(option => option.SponsoredDisclosure is null).Take(8))
+                    {
+                        var replacement = option.ToStop(1);
+                        if (!WalkInterestPolicy.Allows(replacement, session.Interests)
+                            || !(MatchesInterest(session, replacement) || option.InterestTags.Intersect(session.Interests, StringComparer.OrdinalIgnoreCase).Any())
+                            || session.Stops.Any(stop => SamePlace(stop, replacement))
+                            || RouteMath.DistanceFromRouteMeters(replacement.Location, baseline.Coordinates) > 300)
+                            continue;
+                        // Insert only ahead on the remaining route, before its fixed endpoint.
+                        var progress = RouteMath.ProgressPercentage(replacement.Location, baseline);
+                        if (progress <= 0) continue;
+                        var index = proposed.FindIndex(stop => stop.IsDestination ||
+                            RouteMath.ProgressPercentage(stop.Location, baseline) >= progress);
+                        var candidateStops = proposed.ToList();
+                        candidateStops.Insert(index < 0 ? candidateStops.Count : index, replacement);
+                        var candidateRoute = await _routes.CreateRouteAsync(RouteCommand(currentLocation, Math.Max(15, budget), session), candidateStops, cancellationToken);
+                        if (_routes.ProviderName != "Mock" && candidateRoute.Provider == "Mock") continue;
+                        if (candidateRoute.DurationMinutes - baseline.DurationMinutes > 5
+                            || candidateRoute.DurationMinutes + candidateStops.Sum(stop => stop.EstimatedVisitMinutes) > budget)
+                            continue;
+                        proposed = candidateStops;
+                        proposedRoute = candidateRoute;
+                        affected.Add(replacement.StopId);
+                        title = $"Replace {session.NextStop.Name} with {replacement.Name}";
+                        explanation = "Skip this stop and visit a matching place ahead, with at most five extra walking minutes and within your remaining time.";
+                        break;
+                    }
+                    if (proposedRoute == baseline)
+                        explanation = $"Skip {session.NextStop.Name}. No matching replacement fits ahead within your remaining time; continue to the remaining stops.";
                 }
                 break;
 
@@ -190,7 +229,7 @@ public sealed class WalkAdaptationService : IWalkAdaptationService
                 break;
         }
 
-        if (proposed.Count == 0)
+        if (proposed.Count == 0 && type != WalkAdaptationType.SkipStop)
         {
             proposed.AddRange(remaining.Take(1));
         }
@@ -210,7 +249,7 @@ public sealed class WalkAdaptationService : IWalkAdaptationService
         if (command.SelectedPlace is not null && _routes.ProviderName != "Mock" && route.Provider == "Mock")
             throw new InvalidOperationException("Walking directions to that place are temporarily unavailable. Your walk is unchanged.");
         var plannedMinutes = route.DurationMinutes + proposed.Sum(stop => stop.EstimatedVisitMinutes);
-        if (command.SelectedPlace is not null)
+        if (command.SelectedPlace is not null || type == WalkAdaptationType.SkipStop)
         {
             addedMinutes = plannedMinutes - (session.Route.DurationMinutes + remaining.Sum(stop => stop.EstimatedVisitMinutes));
             addedDistance = route.DistanceMeters - session.Route.DistanceMeters;
@@ -223,7 +262,7 @@ public sealed class WalkAdaptationService : IWalkAdaptationService
             explanation,
             addedMinutes,
             addedDistance,
-            command.SelectedPlace is not null ? plannedMinutes : Math.Max(0, session.Route.DurationMinutes + addedMinutes),
+            command.SelectedPlace is not null || type == WalkAdaptationType.SkipStop ? plannedMinutes : Math.Max(0, session.Route.DurationMinutes + addedMinutes),
             affected,
             addedStops,
             removedStops,
@@ -452,4 +491,9 @@ public sealed class WalkAdaptationService : IWalkAdaptationService
             || stop.Name.Contains(interest, StringComparison.OrdinalIgnoreCase)
             || stop.ShortDescription.Contains(interest, StringComparison.OrdinalIgnoreCase));
     }
+
+    private static bool SamePlace(WalkStop a, WalkStop b) =>
+        a.StopId.Equals(b.StopId, StringComparison.OrdinalIgnoreCase)
+        || (!string.IsNullOrEmpty(a.ProviderPlaceId) && a.ProviderPlaceId == b.ProviderPlaceId)
+        || (a.Name.Equals(b.Name, StringComparison.OrdinalIgnoreCase) && RouteMath.DistanceMeters(a.Location, b.Location) < 40);
 }

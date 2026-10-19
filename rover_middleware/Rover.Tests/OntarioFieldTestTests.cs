@@ -372,7 +372,8 @@ internal static class OntarioFieldTestTests
     {
         public bool RequiresRealPlaces => true;
         public IReadOnlyList<WalkStop> Stops { get; init; } = Enumerable.Range(1, 3).Select(i => new WalkStop($"ordinary-{i}", i,
-            $"Cafe {i}", new(43.65 + .001 * i, -79.37), "A cafe", "A cafe", "food", ContentType.FoodAndDrink,
+            i == 3 ? "Cafe" : $"Town square {i}", new(43.65 + .001 * i, -79.37), "Local place", "Local place",
+            i == 3 ? "food" : "History", i == 3 ? ContentType.FoodAndDrink : ContentType.History,
             ContentSource.LocalRecommendation, 3, 50, 30)).ToArray();
         public Task<IReadOnlyList<WalkStop>> FindStopsAsync(CreateWalkCommand command, CancellationToken token) => Task.FromResult(Stops);
         public Task<IReadOnlyList<WalkStop>> FindCandidateStopsAsync(CreateWalkCommand command, CancellationToken token, int maximumStops = 30) => Task.FromResult(Stops);

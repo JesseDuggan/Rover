@@ -58,6 +58,9 @@ public sealed class GooglePlacesLocalDiscoveryProvider : ILocalDiscoveryProvider
             cancellationToken);
 
         var selected = result.Places
+            .Where(place => WalkInterestPolicy.WantsFood(command.Interests)
+                || !place.Categories.Any(WalkInterestPolicy.IsFood)
+                || HasHeritageEvidence(place, command.Interests))
             .Select(place => new
             {
                 Place = place,
@@ -136,9 +139,18 @@ public sealed class GooglePlacesLocalDiscoveryProvider : ILocalDiscoveryProvider
 
     private static string DisplayCategory(LocationPlace place)
     {
+        if (HasHeritageEvidence(place, new[] { "history" })) return "Historic building";
         var value = place.Categories.FirstOrDefault(category => !string.IsNullOrWhiteSpace(category)) ?? "Place";
         return System.Globalization.CultureInfo.InvariantCulture.TextInfo.ToTitleCase(value.Replace('_', ' ').ToLowerInvariant());
     }
+
+    private static bool HasHeritageEvidence(LocationPlace place, IEnumerable<string> interests) =>
+        interests.Any(interest => interest.Contains("histor", StringComparison.OrdinalIgnoreCase)
+            || interest.Contains("architect", StringComparison.OrdinalIgnoreCase))
+        && place.Facts.Any(fact => fact.IsSuitableForNarration && fact.ConfidenceScore >= 0.6
+            && (fact.FactType.Contains("histor", StringComparison.OrdinalIgnoreCase)
+                || fact.FactType.Contains("heritage", StringComparison.OrdinalIgnoreCase)
+                || fact.FactType.Contains("architect", StringComparison.OrdinalIgnoreCase)));
 
     private static ContentType ContentTypeFor(string category)
     {
