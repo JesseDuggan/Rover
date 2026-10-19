@@ -43,6 +43,11 @@ if (args.Contains("--ontario-source-audit"))
 
 var tests = new List<(string Name, Func<Task> Run)>
 {
+    ("Personal library persists and isolates account ownership", PersonalLibraryTests.PersistenceAndOwnership),
+    ("Personal library enforces atomic configurable limits", PersonalLibraryTests.AtomicLimits),
+    ("Personal library validates profiles and identity", PersonalLibraryTests.ValidationAndIdentity),
+    ("Personal library replay resets sessions and preserves destinations", PersonalLibraryTests.ReplayResetsLifecycle),
+    ("Personal library rejects anonymous, expired and wrong-client tokens", PersonalLibraryTests.AuthenticationBoundary),
     ("Ontario pilot supports beta-wide activation and optional enrollment gates", OntarioFieldTestTests.Gates),
     ("Ontario geographic IDs persist separately and do not restrict tester travel", OntarioFieldTestTests.GeographicProfilesAndTravel),
     ("Ontario regional radii reach providers without stretching local walks", OntarioFieldTestTests.RegionalRadiusAndLocalStops),
@@ -256,6 +261,10 @@ var tests = new List<(string Name, Func<Task> Run)>
 };
 
 var failures = new List<string>();
+
+// Optional name filter keeps focused regression runs independent of live API fixtures.
+if (args.Length > 0)
+    tests = tests.Where(test => args.Any(filter => test.Name.Contains(filter, StringComparison.OrdinalIgnoreCase))).ToList();
 
 if (Environment.GetEnvironmentVariable("ROVER_TEST_LIVE_IMAGES") == "1")
     tests.Add(("Live Wikimedia images for Laan van Meerdervoort and nearby places", StoryImageTests.LiveWikimedia));
@@ -3227,7 +3236,7 @@ static async Task LivePlanningRefusesSyntheticFallback()
             var latitude = scenario == "filtered" ? 0 : 44.6791;
             var places = scenario == "empty" ? Array.Empty<object>() : new object[]
             {
-                new { id = "real-1", displayName = new { text = "Test Cafe" }, location = new { latitude, longitude = -76.3951 }, primaryType = "cafe" },
+                new { id = "real-1", displayName = new { text = "Test Gallery" }, location = new { latitude, longitude = -76.3951 }, primaryType = "art_gallery" },
                 new { id = "real-2", displayName = new { text = "Test Museum" }, location = new { latitude, longitude = -76.3971 }, primaryType = "museum" }
             };
             return JsonResponse(HttpStatusCode.OK, JsonSerializer.Serialize(new { places }));

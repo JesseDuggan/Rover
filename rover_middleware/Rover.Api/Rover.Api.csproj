@@ -11,6 +11,7 @@
   </ItemGroup>
 
   <ItemGroup>
+    <PackageReference Include="Microsoft.AspNetCore.Authentication.JwtBearer" Version="10.0.12" />
     <ProjectReference Include="..\Rover.Application\Rover.Application.csproj" />
     <ProjectReference Include="..\Rover.Infrastructure\Rover.Infrastructure.csproj" />
   </ItemGroup>

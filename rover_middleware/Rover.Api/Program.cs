@@ -29,6 +29,7 @@ using Rover.Infrastructure.Walks;
 LoadLocalEnvironmentFile();
 
 var builder = WebApplication.CreateBuilder(args);
+Rover.Api.Accounts.PersonalLibraryEndpoints.AddPersonalLibrary(builder.Services, builder.Configuration);
 
 ConfigureRailwayPort(builder);
 ValidateStartupConfiguration(builder);
@@ -179,6 +180,9 @@ if (app.Environment.IsDevelopment())
 }
 
 app.UseCors("LocalFlutter");
+app.UseAuthentication();
+app.UseAuthorization();
+Rover.Api.Accounts.PersonalLibraryEndpoints.MapPersonalLibrary(app);
 
 app.Use(async (context, next) =>
 {

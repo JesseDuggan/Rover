@@ -25,4 +25,7 @@ public sealed record WalkStopResponse(
     string? DiscoveryProviderName,
     string? ProviderPlaceId,
     string? SourceUrl,
-    IReadOnlyCollection<string> RequiredAttribution);
+    IReadOnlyCollection<string> RequiredAttribution)
+{
+    public bool IsDestination { get; init; }
+}

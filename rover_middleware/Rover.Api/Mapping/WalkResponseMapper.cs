@@ -186,7 +186,7 @@ public static class WalkResponseMapper
             stop.DiscoveryProviderName,
             stop.ProviderPlaceId,
             stop.SourceUrl,
-            stop.RequiredAttribution);
+            stop.RequiredAttribution) { IsDestination = stop.IsDestination };
     }
 
     private static LocationResponse ToResponse(this GeoLocation location)
