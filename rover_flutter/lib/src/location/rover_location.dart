@@ -1,3 +1,5 @@
+import 'package:flutter/foundation.dart';
+import 'package:flutter/services.dart';
 import 'package:geolocator/geolocator.dart';
 
 class RoverLatLng {
@@ -28,6 +30,7 @@ class RoverLocationReading {
     this.accuracyMeters,
     this.headingDegrees,
     this.speedMetersPerSecond,
+    this.isMocked = false,
   });
 
   final RoverLatLng location;
@@ -35,6 +38,7 @@ class RoverLocationReading {
   final double? accuracyMeters;
   final double? headingDegrees;
   final double? speedMetersPerSecond;
+  final bool isMocked;
 }
 
 enum LocationFailureKind {
@@ -100,7 +104,65 @@ abstract class RoverLocationProvider {
 }
 
 class GeolocatorLocationProvider implements RoverLocationProvider {
-  const GeolocatorLocationProvider();
+  const GeolocatorLocationProvider({this.backgroundWalking = false});
+
+  final bool backgroundWalking;
+
+  LocationSettings navigationSettings({required bool mapVisible}) {
+    if (!kIsWeb && defaultTargetPlatform == TargetPlatform.android) {
+      return AndroidSettings(
+        accuracy: mapVisible ? LocationAccuracy.bestForNavigation : LocationAccuracy.high,
+        distanceFilter: mapVisible ? 1 : 10,
+        intervalDuration: Duration(seconds: mapVisible ? 1 : 10),
+        foregroundNotificationConfig: backgroundWalking
+            ? const ForegroundNotificationConfig(
+                notificationTitle: 'Walk About is walking with you',
+                notificationText: 'Open Walk About for live navigation.',
+                notificationChannelName: 'Active walks',
+                enableWakeLock: false,
+                setOngoing: true,
+              )
+            : null,
+      );
+    }
+    return LocationSettings(
+      accuracy: mapVisible ? LocationAccuracy.bestForNavigation : LocationAccuracy.high,
+      distanceFilter: mapVisible ? 1 : 10,
+    );
+  }
+
+  Stream<RoverLocationReading> watchNavigationLocation({required bool mapVisible}) async* {
+    if (backgroundWalking && !kIsWeb && defaultTargetPlatform == TargetPlatform.android) {
+      await const MethodChannel('ai.myrover.rover/voice')
+          .invokeMethod<void>('walkingNotificationPermission');
+    }
+    yield* Geolocator.getPositionStream(
+      locationSettings: navigationSettings(mapVisible: mapVisible),
+    ).map(_readingFromPosition);
+  }
+
+  LocationSettings get streamSettings {
+    if (!kIsWeb &&
+        defaultTargetPlatform == TargetPlatform.android &&
+        backgroundWalking) {
+      return AndroidSettings(
+        accuracy: LocationAccuracy.high,
+        distanceFilter: 2,
+        intervalDuration: const Duration(seconds: 5),
+        foregroundNotificationConfig: const ForegroundNotificationConfig(
+          notificationTitle: 'Walk About is walking with you',
+          notificationText: 'Location and stories stay active with the screen locked. Open Walk About to pause or end.',
+          notificationChannelName: 'Active walks',
+          enableWakeLock: true,
+          setOngoing: true,
+        ),
+      );
+    }
+    return const LocationSettings(
+      accuracy: LocationAccuracy.high,
+      distanceFilter: 2,
+    );
+  }
 
   @override
   String get label => 'Device location';
@@ -181,13 +243,15 @@ class GeolocatorLocationProvider implements RoverLocationProvider {
   }
 
   @override
-  Stream<RoverLocationReading> watchLocation() {
-    return Geolocator.getPositionStream(
-      locationSettings: const LocationSettings(
-        accuracy: LocationAccuracy.high,
-        distanceFilter: 2,
-      ),
-    ).map(_readingFromPosition);
+  Stream<RoverLocationReading> watchLocation() async* {
+    if (backgroundWalking &&
+        !kIsWeb &&
+        defaultTargetPlatform == TargetPlatform.android) {
+      await const MethodChannel('ai.myrover.rover/voice')
+          .invokeMethod<void>('walkingNotificationPermission');
+    }
+    yield* Geolocator.getPositionStream(locationSettings: streamSettings)
+        .map(_readingFromPosition);
   }
 
   static RoverLocationReading _readingFromPosition(Position position) {
@@ -197,6 +261,7 @@ class GeolocatorLocationProvider implements RoverLocationProvider {
         longitude: position.longitude,
       ),
       recordedAtUtc: position.timestamp.toUtc(),
+      isMocked: position.isMocked,
       accuracyMeters: position.accuracy,
       headingDegrees: position.heading.isNaN || position.heading < 0
           ? null

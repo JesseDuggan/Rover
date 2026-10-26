@@ -14,6 +14,8 @@ import '../location/rover_location.dart';
 import 'google_rover_map.dart';
 import 'mapbox_config.dart';
 import 'rover_map_provider.dart';
+import 'route_arrow_strokes.dart';
+import '../ui/walk_about_theme.dart';
 
 class RoverMapView extends StatefulWidget {
   const RoverMapView({
@@ -28,6 +30,10 @@ class RoverMapView extends StatefulWidget {
     this.height = 360,
     this.showDebugOverlay = false,
     this.enableExpand = true,
+    this.overview = false,
+    this.active = true,
+    this.viewportPadding = EdgeInsets.zero,
+    this.onStopTap,
     super.key,
   });
 
@@ -42,6 +48,10 @@ class RoverMapView extends StatefulWidget {
   final double height;
   final bool showDebugOverlay;
   final bool enableExpand;
+  final bool overview;
+  final bool active;
+  final EdgeInsets viewportPadding;
+  final ValueChanged<OrderedRoverStop>? onStopTap;
 
   @override
   State<RoverMapView> createState() => _RoverMapViewState();
@@ -128,9 +138,6 @@ class _RoverMapViewState extends State<RoverMapView> {
               : null) ??
           widget.orderedStops.first.stop.coordinates,
     );
-    final stopPoints = widget.orderedStops
-        .map((orderedStop) => _toLatLng(orderedStop.stop.coordinates))
-        .toList();
     final geometry = widget.routeGeometry.map(_toLatLng).toList();
     final markers = <Marker>[
       if (widget.currentLocation != null)
@@ -170,6 +177,9 @@ class _RoverMapViewState extends State<RoverMapView> {
             children: [
               if (widget.mapProvider.mode == RoverMapMode.google)
                 GoogleRoverMap(
+                  active: widget.active,
+                  overview: widget.overview,
+                  viewportPadding: widget.viewportPadding,
                   currentLocation: widget.currentLocation,
                   orderedStops: widget.orderedStops,
                   routeGeometry: widget.routeGeometry,
@@ -179,11 +189,13 @@ class _RoverMapViewState extends State<RoverMapView> {
                   routingProvider: widget.mapProvider.routingProvider,
                   showDebugOverlay: widget.showDebugOverlay,
                   hasExpandButton: widget.enableExpand,
-                  onStopTap: (orderedStop) => _showStopDetails(
-                    context,
-                    orderedStop,
-                    _statusFor(orderedStop),
-                  ),
+                  onStopTap:
+                      widget.onStopTap ??
+                      (orderedStop) => _showStopDetails(
+                        context,
+                        orderedStop,
+                        _statusFor(orderedStop),
+                      ),
                 )
               else if (widget.mapProvider.mode == RoverMapMode.mapbox)
                 mapbox.MapWidget(
@@ -251,13 +263,18 @@ class _RoverMapViewState extends State<RoverMapView> {
                     PolylineLayer(
                       polylines: [
                         Polyline(
-                          points: geometry.isEmpty
-                              ? [center, ...stopPoints]
-                              : geometry,
+                          points: geometry,
                           strokeWidth: 4,
-                          color: Theme.of(context).colorScheme.primary
-                              .withValues(alpha: 0.72),
+                          color: WalkaboutColors.blue.withValues(alpha: .30),
                         ),
+                        for (final stroke in routeArrowStrokes(
+                          widget.routeGeometry,
+                        ))
+                          Polyline(
+                            points: stroke.map(_toLatLng).toList(),
+                            strokeWidth: 3,
+                            color: WalkaboutColors.teal.withValues(alpha: .72),
+                          ),
                       ],
                     ),
                     MarkerLayer(markers: markers),
@@ -506,19 +523,28 @@ class _RoverMapViewState extends State<RoverMapView> {
       );
     }
 
-    final route = widget.routeGeometry.isEmpty
-        ? widget.orderedStops.map((stop) => stop.stop.coordinates).toList()
-        : widget.routeGeometry;
+    final route = widget.routeGeometry;
     if (route.length >= 2) {
       await _polylineManager?.create(
         mapbox.PolylineAnnotationOptions(
           geometry: mapbox.LineString(
             coordinates: route.map(_toPosition).toList(),
           ),
-          lineColor: Colors.deepPurpleAccent.toARGB32(),
+          lineColor: WalkaboutColors.blue.withValues(alpha: .30).toARGB32(),
           lineWidth: 4,
         ),
       );
+      for (final stroke in routeArrowStrokes(route)) {
+        await _polylineManager?.create(
+          mapbox.PolylineAnnotationOptions(
+            geometry: mapbox.LineString(
+              coordinates: stroke.map(_toPosition).toList(),
+            ),
+            lineColor: WalkaboutColors.teal.withValues(alpha: .72).toARGB32(),
+            lineWidth: 3,
+          ),
+        );
+      }
     }
 
     final circles = <mapbox.CircleAnnotationOptions>[
@@ -855,6 +881,10 @@ class _RoverMapViewState extends State<RoverMapView> {
     _StopBubbleStatus status,
   ) {
     final stop = orderedStop.stop;
+    if (widget.onStopTap != null) {
+      widget.onStopTap!(orderedStop);
+      return;
+    }
     showModalBottomSheet<void>(
       context: context,
       showDragHandle: true,

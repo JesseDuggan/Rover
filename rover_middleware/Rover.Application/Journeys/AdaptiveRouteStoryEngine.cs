@@ -445,10 +445,10 @@ public sealed class AdaptiveRouteStoryPackService : IAdaptiveRouteStoryPackServi
             if (_options.JourneyCollectionsEnabled && retainedStories.Length > 0)
             {
                 // Refresh adds chapters without removing playable stories or renewing their expiry.
-                stories = retainedStories.Concat(stories).DistinctBy(story => story.StoryId, StringComparer.OrdinalIgnoreCase)
-                    .DistinctBy(story => story.Title, StringComparer.OrdinalIgnoreCase).Take(120)
+                stories = StoryDuplicates.Remove(retainedStories.Concat(stories)).Take(120)
                     .OrderBy(story => story.OpensAtRouteMeters).ToArray();
             }
+            else stories = StoryDuplicates.Remove(stories);
             if (stories.Count == 0 && generating.Pack is { } retained)
             {
                 stories = retained.Stories.Where(story => IsFresh(story, retained))

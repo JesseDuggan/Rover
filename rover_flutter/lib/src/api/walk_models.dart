@@ -1,4 +1,5 @@
 import '../adventure/roam.dart';
+import 'walk_place_models.dart';
 import '../location/rover_location.dart';
 
 enum WalkStatus {
@@ -81,6 +82,14 @@ class CreateWalkRequest {
     required this.interests,
     required this.walkingPace,
     required this.accessibilityPreferences,
+    this.naturalRequest = '',
+    this.companions = 'Solo',
+    this.routeShape = 'Loop route',
+    this.environment = 'Either',
+    this.includePaidAttractions = false,
+    this.surpriseMe = false,
+    this.selectedPlace,
+    this.profileId,
   });
 
   final double latitude;
@@ -89,6 +98,14 @@ class CreateWalkRequest {
   final List<String> interests;
   final String walkingPace;
   final List<String> accessibilityPreferences;
+  final String naturalRequest;
+  final String companions;
+  final String routeShape;
+  final String environment;
+  final bool includePaidAttractions;
+  final bool surpriseMe;
+  final WalkPlaceSelection? selectedPlace;
+  final String? profileId;
 
   Map<String, Object?> toJson() {
     return {
@@ -98,6 +115,14 @@ class CreateWalkRequest {
       'interests': interests,
       'walkingPace': walkingPace,
       'accessibilityPreferences': accessibilityPreferences,
+      'naturalRequest': naturalRequest,
+      'companions': companions,
+      'routeShape': routeShape,
+      'environment': environment,
+      'includePaidAttractions': includePaidAttractions,
+      'surpriseMe': surpriseMe,
+      if (selectedPlace != null) 'selectedPlace': selectedPlace!.toJson(),
+      if (profileId != null) 'profileId': profileId,
     };
   }
 }
@@ -178,7 +203,10 @@ class WalkSession {
     return RoverRoam(
       title: 'Rover walk',
       summary: routeSummary,
-      walkingMinutes: estimatedDurationMinutes,
+      // The API duration includes visits; RoverRoam adds them separately.
+      walkingMinutes: (estimatedDurationMinutes - stops.fold<int>(
+        0, (total, stop) => total + stop.estimatedVisitMinutes,
+      )).clamp(0, estimatedDurationMinutes),
       distanceMiles: estimatedDistanceMeters / 1609.344,
       startingPoint: 'Current location',
       stops: stops.map((stop) => stop.toRoverStop()).toList(),

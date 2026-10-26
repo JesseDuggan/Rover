@@ -42,16 +42,16 @@ void main() {
   });
 
   final routeExpectations = <String, String>{
-    '/welcome': 'You bring the time. ROVER creates the adventure.',
-    '/onboarding': 'What should Riley call you?',
-    '/home': 'What do you want to do?',
-    '/home/adventure-request': 'Start casual. Riley will build the walk from your current device location.',
-    '/home/route-preview': 'No adventure request yet.',
-    '/home/active-roam': 'No active walk',
+    '/welcome': 'Your adventure, curated as you go.',
+    '/onboarding': 'What should we call you?',
+    '/home': 'Create your walk',
+    '/home/adventure-request': 'Create your walk',
+    '/home/route-preview': 'Create your walk',
+    '/home/active-roam': 'Create your walk',
     '/home/stop-details': 'No stop selected.',
-    '/roams': 'Your walks and saved discoveries.',
-    '/profile': 'Set up Riley so future ROAMs feel more like you.',
-    '/profile/settings': 'Riley keeps these on this device for now. No account or backend is connected.',
+    '/roams': 'Saved walks',
+    '/profile': 'Your interests',
+    '/profile/settings': 'Your voice, narration, and walking preferences.',
     '/profile/on-device-ai': 'On-device AI',
   };
 
@@ -73,14 +73,14 @@ void main() {
 
     await tester.tap(find.widgetWithText(FilledButton, 'Get Started'));
     await tester.pumpAndSettle();
-    expect(find.text('What should Riley call you?'), findsOneWidget);
+    expect(find.text('What should we call you?'), findsOneWidget);
 
     await tester.pumpWidget(_app(repository: repository));
     await tester.pumpAndSettle();
     await tester.tap(find.widgetWithText(TextButton, 'Continue as Guest'));
     await tester.pumpAndSettle();
 
-    expect(find.text('What do you want to do?'), findsOneWidget);
+    expect(find.text('Create your walk'), findsOneWidget);
     expect((await repository.load()).continueAsGuest, isTrue);
   });
 
@@ -97,9 +97,14 @@ void main() {
     await tester.tap(find.widgetWithText(FilledButton, 'Next'));
     await tester.pumpAndSettle();
 
-    await tester.tap(find.text('food'));
-    await tester.tap(find.text('hidden gems'));
-    await tester.tap(find.widgetWithText(FilledButton, 'Next'));
+    expect(find.text('Your interests'), findsOneWidget);
+    await tester.tap(find.widgetWithText(FilterChip, 'History'));
+    await tester.tap(find.widgetWithText(FilterChip, 'Art'));
+    await tester.pumpAndSettle();
+    await tester.tap(find.widgetWithText(FilterChip, 'Art'));
+    final next = find.widgetWithText(FilledButton, 'Next');
+    await tester.ensureVisible(next);
+    await tester.tap(next);
     await tester.pumpAndSettle();
 
     await tester.tap(find.text('steady'));
@@ -126,7 +131,7 @@ void main() {
     await tester.pumpAndSettle();
 
     expect(find.text('Jesse'), findsOneWidget);
-    expect(find.text('food, hidden gems'), findsOneWidget);
+    expect((await repository.load()).interests, ['history']);
     expect(find.text('Prefer step-free stops'), findsOneWidget);
 
     await tester.pumpWidget(
@@ -149,7 +154,7 @@ void main() {
 
     await tester.tap(find.widgetWithText(FilledButton, 'Edit preferences'));
     await tester.pumpAndSettle();
-    expect(find.text('What should Riley call you?'), findsOneWidget);
+    expect(find.text('What should we call you?'), findsOneWidget);
 
     await tester.tap(find.widgetWithText(TextButton, 'Skip'));
     await tester.pumpAndSettle();
@@ -158,7 +163,7 @@ void main() {
     await tester.tap(find.widgetWithText(OutlinedButton, 'Reset onboarding'));
     await tester.pumpAndSettle();
 
-    expect(find.text('ROVER'), findsOneWidget);
+    expect(find.text('Walkabout'), findsOneWidget);
     expect((await repository.load()).completedOnboarding, isFalse);
   });
 
@@ -168,22 +173,22 @@ void main() {
     await tester.pumpWidget(_app(initialLocation: '/home'));
     await tester.pumpAndSettle();
 
-    expect(find.text('What do you want to do?'), findsOneWidget);
+    expect(find.text('Create your walk'), findsOneWidget);
 
-    await tester.tap(find.text('Explore'));
+    await tester.tap(find.text('Plan'));
     await tester.pumpAndSettle();
-    expect(find.text('Explore nearby places.'), findsOneWidget);
+    expect(find.text('Your itinerary'), findsOneWidget);
 
-    await tester.tap(find.text('My ROAMs'));
+    await tester.tap(find.text('Stories'));
     await tester.pumpAndSettle();
-    expect(find.text('Your walks and saved discoveries.'), findsOneWidget);
+    expect(find.text('Walk stories'), findsOneWidget);
+    await tester.tap(find.text('Routes'));
+    await tester.pumpAndSettle();
+    expect(find.text('Route options'), findsOneWidget);
 
     await tester.tap(find.text('Profile'));
     await tester.pumpAndSettle();
-    expect(
-      find.text('Set up Riley so future ROAMs feel more like you.'),
-      findsOneWidget,
-    );
+    expect(find.text('Your interests'), findsOneWidget);
   });
 
   testWidgets('detail routes are reachable and Android back pops them', (
@@ -192,20 +197,31 @@ void main() {
     await tester.pumpWidget(_app(initialLocation: '/home'));
     await tester.pumpAndSettle();
 
-    await tester.tap(find.text('Build an adventure request'));
+    await tester.tap(find.text('Profile'));
     await tester.pumpAndSettle();
-    expect(
-      find.text(
-        'Start casual. Riley will build the walk from your current device location.',
-      ),
-      findsOneWidget,
+    // Build the lazy row, then render its final scroll position before tapping.
+    await tester.scrollUntilVisible(
+      find.text('Stop details'),
+      150,
+      scrollable: find.byType(Scrollable).first,
     );
+    await tester.pumpAndSettle();
+    expect(find.text('Stop details').hitTestable(), findsOneWidget);
+    await tester.tap(find.text('Stop details'));
+    await tester.pumpAndSettle();
+    expect(find.text('No stops in your current walk.'), findsOneWidget);
 
     final didPop = await tester.binding.handlePopRoute();
     await tester.pumpAndSettle();
 
     expect(didPop, isTrue);
-    expect(find.text('What do you want to do?'), findsOneWidget);
+    await tester.scrollUntilVisible(
+      find.text('Your interests'),
+      -150,
+      scrollable: find.byType(Scrollable).first,
+    );
+    await tester.pumpAndSettle();
+    expect(find.text('Your interests').hitTestable(), findsOneWidget);
   });
 
   testWidgets('branch navigation preserves nested navigation state', (
@@ -214,93 +230,63 @@ void main() {
     await tester.pumpWidget(_app(initialLocation: '/home'));
     await tester.pumpAndSettle();
 
-    await tester.tap(find.text('Build an adventure request'));
+    await tester.tap(find.text('Profile'));
     await tester.pumpAndSettle();
-    expect(
-      find.text(
-        'Start casual. Riley will build the walk from your current device location.',
-      ),
-      findsOneWidget,
+    await tester.scrollUntilVisible(
+      find.text('Stop details'),
+      150,
+      scrollable: find.byType(Scrollable).first,
     );
-
-    await tester.tap(find.text('Explore'));
     await tester.pumpAndSettle();
-    expect(find.text('Explore nearby places.'), findsOneWidget);
-
-    await tester.tap(find.text('Home'));
+    expect(find.text('Stop details').hitTestable(), findsOneWidget);
+    await tester.tap(find.text('Stop details'));
     await tester.pumpAndSettle();
-    expect(
-      find.text(
-        'Start casual. Riley will build the walk from your current device location.',
-      ),
-      findsOneWidget,
-    );
+    expect(find.text('No stops in your current walk.'), findsOneWidget);
+
+    await tester.tap(find.text('Plan'));
+    await tester.pumpAndSettle();
+    expect(find.text('Your itinerary'), findsOneWidget);
+
+    await tester.tap(find.text('Profile'));
+    await tester.pumpAndSettle();
+    expect(find.text('No stops in your current walk.'), findsOneWidget);
   });
 
-  testWidgets('creates and edits a complete adventure request', (tester) async {
-    tester.view.physicalSize = const Size(430, 3000);
-    tester.view.devicePixelRatio = 1;
-    addTearDown(tester.view.resetPhysicalSize);
-    await tester.pumpWidget(_app(initialLocation: '/home/adventure-request'));
+  testWidgets('custom duration validates before applying', (tester) async {
+    await tester.pumpWidget(_app(initialLocation: '/home'));
     await tester.pumpAndSettle();
-
-    await tester.tap(find.text('architecture'));
+    await tester.scrollUntilVisible(
+      find.text('Custom'),
+      150,
+      scrollable: find.byType(Scrollable).first,
+    );
+    await tester.tap(find.text('Custom'));
     await tester.pumpAndSettle();
-    await tester.tap(find.text('Family'));
+    await tester.enterText(find.widgetWithText(TextField, 'Minutes'), '10');
+    await tester.tap(find.text('Done'));
     await tester.pumpAndSettle();
-    await tester.tap(find.text('Outdoor'));
+    expect(find.text('Enter 20 to 240 minutes'), findsOneWidget);
+    await tester.enterText(find.widgetWithText(TextField, 'Minutes'), '45');
+    await tester.tap(find.text('Done'));
     await tester.pumpAndSettle();
-    await tester.tap(find.widgetWithText(FilledButton, 'Create My Walk'));
-    await tester.pumpAndSettle();
-
-    expect(find.text('Route preview'), findsOneWidget);
-    expect(find.text('No route created yet'), findsOneWidget);
-    expect(find.text('Corner mural'), findsNothing);
-    expect(find.text('Window cafe'), findsNothing);
-    expect(find.text('Pocket park bench'), findsNothing);
-    expect(find.text('Total estimated time'), findsNothing);
-    expect(find.textContaining('mock://'), findsNothing);
-
-    await tester.tap(find.widgetWithText(OutlinedButton, 'Edit request'));
-    await tester.pumpAndSettle();
-    expect(find.text('Adventure request'), findsOneWidget);
-    expect(find.textContaining('Device location active:'), findsOneWidget);
+    expect(find.text('45 min'), findsOneWidget);
+    expect(tester.takeException(), isNull);
   });
 
-  testWidgets('adventure request validation is clear and friendly', (
+  testWidgets('create stays minimal with interests only in Profile', (
     tester,
   ) async {
-    tester.view.physicalSize = const Size(430, 3000);
+    tester.view.physicalSize = const Size(430, 1600);
     tester.view.devicePixelRatio = 1;
     addTearDown(tester.view.resetPhysicalSize);
+    addTearDown(tester.view.resetDevicePixelRatio);
     await tester.pumpWidget(_app(initialLocation: '/home/adventure-request'));
     await tester.pumpAndSettle();
-
-    await tester.enterText(find.byType(TextFormField).at(1), '10');
-    await tester.pumpAndSettle();
-    await tester.tap(find.widgetWithText(FilledButton, 'Create My Walk'));
-    await tester.pumpAndSettle();
-
-    expect(
-      find.text(
-        'Give Riley at least 20 minutes so the ROAM does not feel rushed.',
-      ),
-      findsOneWidget,
-    );
-  });
-
-  testWidgets('device location is the only adventure starting point', (
-    tester,
-  ) async {
-    tester.view.physicalSize = const Size(430, 3000);
-    tester.view.devicePixelRatio = 1;
-    addTearDown(tester.view.resetPhysicalSize);
-    await tester.pumpWidget(_app(initialLocation: '/home/adventure-request'));
-    await tester.pumpAndSettle();
-
-    expect(find.text('Starting point'), findsNothing);
-    expect(find.text('Use device location'), findsNothing);
-    expect(find.textContaining('Device location'), findsWidgets);
+    expect(find.text('Create your walk'), findsOneWidget);
+    expect(find.text('What would you like to discover?'), findsOneWidget);
+    expect(find.text('Time available'), findsOneWidget);
+    expect(find.text('Create my walk'), findsOneWidget);
+    expect(find.byType(FilterChip), findsNothing);
   });
 
   testWidgets('empty active ROAM has no demo and offers a new walk', (
@@ -308,20 +294,18 @@ void main() {
   ) async {
     await tester.pumpWidget(_app(initialLocation: '/home/active-roam'));
     await tester.pumpAndSettle();
-    expect(find.text('No active walk'), findsOneWidget);
+    expect(find.text('Create your walk'), findsOneWidget);
     expect(find.textContaining('Union Square'), findsNothing);
     expect(find.text('Itinerary'), findsNothing);
     expect(find.text('Rover voice'), findsNothing);
-    await tester.tap(find.widgetWithText(FilledButton, 'Create a walk'));
-    await tester.pumpAndSettle();
-    expect(find.text('Adventure request'), findsOneWidget);
+    expect(find.widgetWithText(FilledButton, 'Create my walk'), findsOneWidget);
   });
 
   testWidgets('not-found screen is reachable', (tester) async {
     await tester.pumpWidget(_app(initialLocation: '/missing-roam'));
     await tester.pumpAndSettle();
 
-    expect(find.text('ROAM not found'), findsOneWidget);
+    expect(find.text('Walk not found'), findsOneWidget);
     expect(find.widgetWithText(FilledButton, 'Go Home'), findsOneWidget);
   });
 }

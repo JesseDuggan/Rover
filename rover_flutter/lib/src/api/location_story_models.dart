@@ -198,9 +198,11 @@ class LocationStoryResponse {
     this.cachedAtUtc,
     this.lastVerifiedUtc,
     this.expiresUtc,
+    this.researchStatus,
   });
 
   final String storyTitle;
+  final String? researchStatus;
   final String shortSpokenNarration;
   final String? tellMeMore;
   final String? placeId;
@@ -225,6 +227,7 @@ class LocationStoryResponse {
 
   Map<String, Object?> toJson() => {
     'storyTitle': storyTitle,
+    'researchStatus': researchStatus,
     'shortSpokenNarration': shortSpokenNarration,
     'tellMeMore': tellMeMore,
     'placeId': placeId,
@@ -245,6 +248,7 @@ class LocationStoryResponse {
   factory LocationStoryResponse.fromJson(Map<String, dynamic> json) {
     return LocationStoryResponse(
       storyTitle: json['storyTitle'] as String? ?? 'Nearby story',
+      researchStatus: json['researchStatus'] as String?,
       shortSpokenNarration: json['shortSpokenNarration'] as String? ?? '',
       tellMeMore: json['tellMeMore'] as String?,
       placeId: json['placeId'] as String?,

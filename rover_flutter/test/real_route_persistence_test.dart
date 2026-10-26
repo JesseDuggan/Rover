@@ -4,6 +4,7 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:rover/src/active_roam/active_roam_controller.dart';
 import 'package:rover/src/active_roam/active_roam_repository.dart';
 import 'package:rover/src/active_roam/active_roam_session.dart';
+import 'package:rover/src/active_roam/screen_awake_controller.dart';
 import 'package:rover/src/adventure/roam.dart';
 import 'package:rover/src/location/rover_location.dart';
 
@@ -11,6 +12,7 @@ void main() {
   test('new installation has no invented route', () async {
     final controller = ActiveRoamController(
       repository: MemoryActiveRoamRepository(),
+      screenAwakeController: MemoryScreenAwakeController(),
     );
     await controller.load();
     expect(controller.session.roam.stops, isEmpty);

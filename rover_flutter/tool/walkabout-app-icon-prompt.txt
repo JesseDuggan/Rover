@@ -1,0 +1,6 @@
+Generated with the built-in image generation tool from the supplied Walkabout logo.
+Production source: assets/brand/walkabout-app-icon.png
+Regenerate platform sizes with: ./tool/generate_app_icons.ps1
+
+Prompt:
+Use case: precise-object-edit. Asset type: Walkabout mobile launcher icon. Edit the attached Walkabout logo into a square, production-ready app icon. Preserve the original recognizable flowing folded W exactly in spirit and shape, including its blue-to-turquoise-to-yellow-to-orange-to-magenta ribbon colours, magenta location pin, and navy dashed route around it. Remove all text, the WALKABOUT wordmark and tagline. Centre only the W + pin + dashed route mark on a pure flat white background. Square 1024x1024 composition; entire mark must fit inside a central circle of diameter 78% of the canvas so circular launcher masks never cut the pin or the dashes. Crisp clean edges, readable at small size. No decorative border, no rounded-square frame, no shadows, no extra icons or text. Keep the original design rather than inventing another W.

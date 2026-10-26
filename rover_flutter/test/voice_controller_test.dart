@@ -25,6 +25,331 @@ import 'package:rover/src/voice/rover_voice_controller.dart';
 import 'package:rover/src/voice/rover_voice_state.dart';
 
 void main() {
+  test('manual story interrupts navigation and ignores the proximity gate', () async {
+    final tts = BlockingTextToSpeech();
+    final controller = RoverVoiceController(
+      walkRepository: FakeVoiceWalkRepository(),
+      textToSpeech: tts,
+      speechRecognizer: FakeSpeechRecognizer(),
+      audioSession: FakeAudioSession(),
+      adaptiveRouteStoriesEnabled: true,
+    );
+    final session = _googleNavigationSession();
+    final navigation = controller.syncWithSession(session);
+    await tts.firstSpeakStarted.future;
+    expect(controller.canPlayAdaptiveRouteStory(_adaptiveSelection(), session), isFalse);
+    expect(await controller.playAdaptiveRouteStoryWithResult(
+      _adaptiveSelection(), session, userRequested: true,
+    ), AdaptiveStoryPlaybackResult.completed);
+    tts.releaseFirstSpeak.complete();
+    await navigation;
+    expect(tts.spoken.first, 'Turn left onto Main Street');
+    expect(tts.spoken.last, 'Second fact.');
+    controller.dispose();
+  });
+
+  test('GPS arrival updates do not interrupt an explicitly requested story', () async {
+    final tts = BlockingTextToSpeech();
+    final controller = RoverVoiceController(
+      walkRepository: FakeVoiceWalkRepository(),
+      textToSpeech: tts,
+      speechRecognizer: FakeSpeechRecognizer(),
+      audioSession: FakeAudioSession(),
+      adaptiveRouteStoriesEnabled: true,
+    );
+    final playback = controller.playAdaptiveRouteStoryWithResult(
+      _adaptiveSelection(), _session(), userRequested: true,
+    );
+    await tts.firstSpeakStarted.future;
+    await controller.syncWithSession(_googleNavigationSession().copyWith(
+      arrivalCandidate: true, arrivalCandidateStopId: _stop.id,
+    ));
+    expect(tts.spoken, ['First fact.']);
+    tts.releaseFirstSpeak.complete();
+    expect(await playback, AdaptiveStoryPlaybackResult.completed);
+    controller.dispose();
+  });
+
+  test('automatic stories can start a sentence before a turn without needing the full story gap', () async {
+    final controller = RoverVoiceController(
+      walkRepository: FakeVoiceWalkRepository(),
+      textToSpeech: FakeTextToSpeech(),
+      speechRecognizer: FakeSpeechRecognizer(),
+      audioSession: FakeAudioSession(),
+      adaptiveRouteStoriesEnabled: true,
+    );
+    final session = _session().copyWith(
+      roam: _session().roam.copyWith(
+        routeProvider: 'GoogleRoutes',
+        routeManeuvers: const [
+          RoverRouteManeuver(
+            sequenceNumber: 0,
+            instruction: 'Walk ahead',
+            distanceMeters: 60,
+            durationMinutes: 1,
+            maneuverType: 'DEPART',
+          ),
+          RoverRouteManeuver(
+            sequenceNumber: 1,
+            instruction: 'Turn left',
+            distanceMeters: 100,
+            durationMinutes: 1,
+            maneuverType: 'TURN_LEFT',
+          ),
+        ],
+      ),
+    );
+    final selection = _adaptiveSelection();
+    final long = AdaptiveRouteStorySelection(
+      story: selection.story,
+      variant: const RouteStoryNarrationVariant(
+        length: 'Standard',
+        estimatedDurationSeconds: 120,
+        narration: 'First fact. Second fact.',
+        claimIds: [],
+      ),
+      reason: 'test',
+    );
+    expect(session.storyNavigationGuidance!.distanceMeters, 60);
+    expect(controller.canPlayAdaptiveRouteStory(long, session), isTrue);
+    expect(
+      controller.canPlayAdaptiveRouteStory(
+        long,
+        session.copyWith(routeProgressPercentage: 15),
+      ),
+      isFalse,
+    );
+    controller.dispose();
+  });
+  test('question answers are explicit, notice-first, and never interrupt another answer', () async {
+    final tts = BlockingTextToSpeech();
+    final controller = RoverVoiceController(
+      walkRepository: FakeVoiceWalkRepository(),
+      textToSpeech: tts,
+      speechRecognizer: FakeSpeechRecognizer(),
+      audioSession: FakeAudioSession(),
+      adaptiveRouteStoriesEnabled: true,
+    );
+    controller.setQuestionInteractionActive(true);
+    expect(
+      controller.canPlayAdaptiveRouteStory(_adaptiveSelection(), _session()),
+      isFalse,
+    );
+    final playback = controller.playQuestionAnswer(_questionSelection());
+    await tts.firstSpeakStarted.future;
+    expect(tts.spoken.single, startsWith('Content note: war and loss.'));
+    expect(await controller.playQuestionAnswer(_questionSelection()), isFalse);
+    await controller.stopQuestionAnswer();
+    tts.releaseFirstSpeak.complete();
+    expect(await playback, isFalse);
+    controller.setQuestionInteractionActive(false);
+    expect(
+      controller.canPlayAdaptiveRouteStory(_adaptiveSelection(), _session()),
+      isTrue,
+    );
+    controller.dispose();
+  });
+
+  test(
+    'navigation takes priority over question audio and closing cannot stop it',
+    () async {
+      final tts = BlockingTextToSpeech();
+      final controller = RoverVoiceController(
+        walkRepository: FakeVoiceWalkRepository(),
+        textToSpeech: tts,
+        speechRecognizer: FakeSpeechRecognizer(),
+        audioSession: FakeAudioSession(),
+        adaptiveRouteStoriesEnabled: true,
+      );
+      final playback = controller.playQuestionAnswer(
+        _questionSelection(),
+        session: _session(),
+      );
+      await tts.firstSpeakStarted.future;
+      await controller.syncWithSession(_googleNavigationSession());
+      expect(tts.spoken.last, 'Turn left onto Main Street');
+      final stops = tts.stopCount;
+      await controller.stopQuestionAnswer();
+      expect(tts.stopCount, stops);
+      tts.releaseFirstSpeak.complete();
+      expect(await playback, isFalse);
+      controller.dispose();
+    },
+  );
+
+  test(
+    'question playback is blocked for ended walks and imminent navigation',
+    () async {
+      final controller = RoverVoiceController(
+        walkRepository: FakeVoiceWalkRepository(),
+        textToSpeech: FakeTextToSpeech(),
+        speechRecognizer: FakeSpeechRecognizer(),
+        audioSession: FakeAudioSession(),
+        adaptiveRouteStoriesEnabled: true,
+      );
+      expect(
+        await controller.playQuestionAnswer(
+          _questionSelection(),
+          session: _session().copyWith(status: RoamSessionStatus.ended),
+        ),
+        isFalse,
+      );
+      expect(
+        await controller.playQuestionAnswer(
+          _questionSelection(),
+          session: _googleNavigationSession(),
+        ),
+        isFalse,
+      );
+      controller.dispose();
+    },
+  );
+
+  test(
+    'sensitive stories require a request and speak their notice first',
+    () async {
+      final tts = FakeTextToSpeech();
+      final controller = RoverVoiceController(
+        walkRepository: FakeVoiceWalkRepository(),
+        textToSpeech: tts,
+        speechRecognizer: FakeSpeechRecognizer(),
+        audioSession: FakeAudioSession(),
+        adaptiveRouteStoriesEnabled: true,
+      );
+      final original = _adaptiveSelection();
+      final story = AdaptiveRouteStory.fromJson({
+        ...original.story.toJson(),
+        'audienceSuitability': 'sensitive',
+        'sensitivityNotice': 'Content note: war and loss.',
+        'uncertainClaims': ['Accounts disagree.'],
+        'temporalClassification': 'evergreen',
+      });
+      final selection = AdaptiveRouteStorySelection(
+        story: story,
+        variant: original.variant,
+        reason: 'test',
+      );
+      expect(
+        await controller.playAdaptiveRouteStory(selection, _session()),
+        isFalse,
+      );
+      expect(tts.spoken, isEmpty);
+      expect(
+        await controller.playAdaptiveRouteStory(
+          selection,
+          _session(),
+          userRequested: true,
+        ),
+        isTrue,
+      );
+      expect(tts.spoken.first, 'Content note: war and loss.');
+      final restored = AdaptiveRouteStory.fromJson(story.toJson());
+      expect(restored.canAutoplay, isFalse);
+      expect(restored.uncertainClaims, ['Accounts disagree.']);
+      expect(
+        AdaptiveRouteStory.fromJson({'storyId': 'legacy'}).canAutoplay,
+        isFalse,
+      );
+      controller.dispose();
+    },
+  );
+
+  test(
+    'verified off-route arrival interrupts a story and permits resumption',
+    () async {
+      final tts = BlockingTextToSpeech();
+      final controller = RoverVoiceController(
+        walkRepository: FakeVoiceWalkRepository(),
+        textToSpeech: tts,
+        speechRecognizer: FakeSpeechRecognizer(),
+        audioSession: FakeAudioSession(),
+        adaptiveRouteStoriesEnabled: true,
+      );
+      final selection = _adaptiveSelection();
+      final playback = controller.playAdaptiveRouteStoryWithResult(
+        selection,
+        _session(),
+      );
+      await tts.firstSpeakStarted.future;
+      final arrived = _session().copyWith(
+        isOffRoute: true,
+        arrivalCandidate: true,
+        arrivalCandidateStopId: _stop.id,
+        currentGpsAccuracyMeters: 8,
+      );
+      expect(controller.canPlayAdaptiveRouteStory(selection, arrived), isFalse);
+      await controller.syncWithSession(arrived);
+      tts.releaseFirstSpeak.complete();
+      expect(await playback, AdaptiveStoryPlaybackResult.interrupted);
+      expect(tts.spoken, contains('You have arrived at Union Square.'));
+      expect(
+        controller.hasAutomaticallyResumableAdaptiveStory('adaptive-1'),
+        isTrue,
+      );
+      await controller.syncWithSession(arrived);
+      expect(
+        tts.spoken.where((text) => text.startsWith('You have arrived')),
+        hasLength(1),
+      );
+      expect(
+        await controller.playAdaptiveRouteStory(selection, _session()),
+        isTrue,
+      );
+      expect(tts.spoken.last, 'Second fact.');
+      expect(
+        tts.spoken,
+        containsAllInOrder([
+          'First fact.',
+          'You have arrived at Union Square.',
+          'Welcome to Union Square.',
+          'Look around for the monument.',
+          'Continuing the story. First fact.',
+          'Second fact.',
+        ]),
+      );
+      controller.dispose();
+    },
+  );
+
+  test(
+    'arrival data never plays outside the geofence or after ending',
+    () async {
+      final tts = FakeTextToSpeech();
+      final controller = RoverVoiceController(
+        walkRepository: FakeVoiceWalkRepository(),
+        textToSpeech: tts,
+        speechRecognizer: FakeSpeechRecognizer(),
+        audioSession: FakeAudioSession(),
+        adaptiveRouteStoriesEnabled: true,
+      );
+      final arrived = _session(completedStopIds: {_stop.id}).copyWith(
+        recentNarrationStopId: _stop.id,
+        arrivalCandidate: true,
+        arrivalCandidateStopId: _stop.id,
+        currentGpsAccuracyMeters: 8,
+      );
+      await controller.syncWithSession(
+        arrived.copyWith(completedStopIds: {}, currentGpsAccuracyMeters: 90),
+      );
+      await controller.syncWithSession(
+        arrived.copyWith(skippedStopIds: {_stop.id}),
+      );
+      await controller.syncWithSession(
+        arrived.copyWith(
+          simulatedLocation: const RoverLatLng(latitude: 0, longitude: 0),
+        ),
+      );
+      await controller.syncWithSession(
+        arrived.copyWith(status: RoamSessionStatus.ended),
+      );
+      await controller.syncWithSession(
+        arrived.copyWith(status: RoamSessionStatus.paused),
+      );
+      expect(tts.spoken, isEmpty);
+      controller.dispose();
+    },
+  );
+
   test(
     'story mode ignores arrival proximity but respects turns and quiet',
     () async {
@@ -51,6 +376,37 @@ void main() {
         ),
         isFalse,
       );
+      final story = _adaptiveSelection();
+      final wandering = near.copyWith(
+        isOffRoute: true,
+        arrivalCandidate: false,
+        clearArrivalCandidateStopId: true,
+        currentGpsAccuracyMeters: 8,
+        simulatedLocation: RoverLatLng(
+          latitude: story.story.latitude,
+          longitude: story.story.longitude,
+        ),
+      );
+      expect(controller.canPlayAdaptiveRouteStory(story, wandering), isTrue);
+      expect(
+        controller.canPlayAdaptiveRouteStory(
+          story,
+          wandering.copyWith(currentGpsAccuracyMeters: 90),
+        ),
+        isFalse,
+      );
+      expect(
+        controller.canPlayAdaptiveRouteStory(
+          story,
+          wandering.copyWith(
+            simulatedLocation: RoverLatLng(
+              latitude: story.story.latitude + 1,
+              longitude: story.story.longitude,
+            ),
+          ),
+        ),
+        isFalse,
+      );
       await controller.applyStoryControl(
         const RoverStoryControlCommand(RoverStoryControlAction.quietTenMinutes),
       );
@@ -58,6 +414,7 @@ void main() {
         controller.canPlayAdaptiveRouteStory(_adaptiveSelection(), near),
         isFalse,
       );
+      expect(controller.canPlayAdaptiveRouteStory(story, wandering), isFalse);
       expect(
         controller.canPlayAdaptiveRouteStory(
           _adaptiveSelection(),
@@ -70,7 +427,7 @@ void main() {
     },
   );
   test(
-    'new candidate narrates even when recent arrival is already heard',
+    'new verified arrival narrates even when recent arrival is already heard',
     () async {
       final tts = FakeTextToSpeech();
       final narrated = <String>[];
@@ -87,14 +444,15 @@ void main() {
         id: 'previous-stop',
         name: 'Previous cafe',
       );
-      final session = _session(completedStopIds: {'previous-stop'}).copyWith(
-        roam: _session().roam.copyWith(stops: [previous, _stop]),
-        recentNarrationStopId: previous.id,
-        recentNarrationStopOverride: previous,
-        narratedArrivalStopIds: {previous.id},
-        arrivalCandidate: true,
-        arrivalCandidateStopId: _stop.id,
-      );
+      final session = _session(completedStopIds: {'previous-stop', _stop.id})
+          .copyWith(
+            roam: _session().roam.copyWith(stops: [previous, _stop]),
+            recentNarrationStopId: previous.id,
+            recentNarrationStopOverride: previous,
+            narratedArrivalStopIds: {previous.id},
+            arrivalCandidate: true,
+            arrivalCandidateStopId: _stop.id,
+          );
       await controller.syncWithSession(session);
       await controller.syncWithSession(session);
       expect(tts.spoken.first, 'You have arrived at Union Square.');
@@ -119,11 +477,12 @@ void main() {
         },
       );
       final second = _stop.copyWith(id: 'second-stop', name: 'Next cafe');
-      final session = _session().copyWith(
-        roam: _session().roam.copyWith(stops: [_stop, second]),
-        arrivalCandidate: true,
-        arrivalCandidateStopId: _stop.id,
-      );
+      final session = _session(completedStopIds: {_stop.id, second.id})
+          .copyWith(
+            roam: _session().roam.copyWith(stops: [_stop, second]),
+            arrivalCandidate: true,
+            arrivalCandidateStopId: _stop.id,
+          );
       final first = controller.syncWithSession(session);
       await tts.firstSpeakStarted.future;
       final stopsBefore = tts.stopCount;
@@ -144,7 +503,7 @@ void main() {
   );
 
   test(
-    'story mode preserves preparing audio across a routine arrival',
+    'story mode preserves preparing audio across unconfirmed proximity',
     () async {
       final tts = FakeTextToSpeech();
       final audio = BlockingAudioSession();
@@ -218,51 +577,88 @@ void main() {
     expect(player.played, hasLength(1));
   });
 
-  test('departure instruction is not an imminent story interruption', () async {
-    final controller = RoverVoiceController(
-      walkRepository: FakeVoiceWalkRepository(),
-      textToSpeech: FakeTextToSpeech(),
-      speechRecognizer: FakeSpeechRecognizer(),
-      audioSession: FakeAudioSession(),
-    );
-    final base = _session();
-    final session = base.copyWith(
-      distanceToNextStopMeters: 500,
-      routeProgressPercentage: 0,
-      roam: base.roam.copyWith(
-        routeProvider: 'GoogleRoutes',
-        routeManeuvers: const [
-          RoverRouteManeuver(
-            sequenceNumber: 1,
-            instruction: 'Head north',
-            distanceMeters: 120,
-            durationMinutes: 2,
-            maneuverType: 'DEPART',
+  for (final departureType in ['DEPART', 'STRAIGHT', 'MANEUVER_UNSPECIFIED']) {
+    test(
+      '$departureType departure is not an imminent story interruption',
+      () async {
+        final controller = RoverVoiceController(
+          walkRepository: FakeVoiceWalkRepository(),
+          textToSpeech: FakeTextToSpeech(),
+          speechRecognizer: FakeSpeechRecognizer(),
+          audioSession: FakeAudioSession(),
+        );
+        final base = _session();
+        final session = base.copyWith(
+          distanceToNextStopMeters: 500,
+          routeProgressPercentage: 0,
+          roam: base.roam.copyWith(
+            routeProvider: 'GoogleRoutes',
+            routeManeuvers: [
+              RoverRouteManeuver(
+                sequenceNumber: 1,
+                instruction: 'Head north',
+                distanceMeters: 120,
+                durationMinutes: 2,
+                maneuverType: departureType,
+              ),
+              RoverRouteManeuver(
+                sequenceNumber: 2,
+                instruction: 'Turn right',
+                distanceMeters: 100,
+                durationMinutes: 2,
+                maneuverType: 'TURN_RIGHT',
+              ),
+            ],
           ),
-          RoverRouteManeuver(
-            sequenceNumber: 2,
-            instruction: 'Turn right',
-            distanceMeters: 100,
-            durationMinutes: 2,
-            maneuverType: 'TURN_RIGHT',
+        );
+        expect(session.navigationGuidance?.distanceMeters, 0);
+        expect(session.storyNavigationGuidance?.distanceMeters, 120);
+        final longStory = AdaptiveRouteStorySelection(
+          story: _adaptiveSelection().story,
+          variant: const RouteStoryNarrationVariant(
+            length: 'Deep',
+            estimatedDurationSeconds: 180,
+            narration: 'A longer story requested by the listener.',
+            claimIds: ['claim-1'],
           ),
-        ],
-      ),
+          reason: 'Manual listening',
+        );
+        expect(
+          controller.canPlayAdaptiveRouteStory(longStory, session),
+          isFalse,
+        );
+        expect(
+          controller.canPlayAdaptiveRouteStory(
+            longStory,
+            session,
+            userRequested: true,
+          ),
+          isTrue,
+        );
+        expect(
+          controller.canPlayAdaptiveRouteStory(_adaptiveSelection(), session),
+          isTrue,
+        );
+        final nearTurn = session.copyWith(
+          routeProgressPercentage: 100 / 220 * 100,
+        );
+        expect(nearTurn.storyNavigationGuidance?.distanceMeters, 20);
+        expect(
+          controller.canPlayAdaptiveRouteStory(
+            longStory,
+            nearTurn,
+            userRequested: true,
+          ),
+          isTrue,
+        );
+        expect(
+          controller.canPlayAdaptiveRouteStory(_adaptiveSelection(), nearTurn),
+          isFalse,
+        );
+        controller.dispose();
+      },
     );
-    expect(session.navigationGuidance?.distanceMeters, 0);
-    expect(session.storyNavigationGuidance?.distanceMeters, 120);
-    expect(
-      controller.canPlayAdaptiveRouteStory(_adaptiveSelection(), session),
-      isTrue,
-    );
-    final nearTurn = session.copyWith(routeProgressPercentage: 100 / 220 * 100);
-    expect(nearTurn.storyNavigationGuidance?.distanceMeters, 20);
-    expect(
-      controller.canPlayAdaptiveRouteStory(_adaptiveSelection(), nearTurn),
-      isFalse,
-    );
-    controller.dispose();
-  });
+  }
   test(
     'short story plays at 95 metres but arrival boundary stays protected',
     () async {
@@ -485,6 +881,7 @@ void main() {
       audioSession: FakeAudioSession(),
     );
     final session = _googleNavigationSession().copyWith(
+      completedStopIds: {'stop-1'},
       arrivalCandidate: true,
       arrivalCandidateStopId: 'stop-1',
     );
@@ -493,6 +890,90 @@ void main() {
 
     expect(tts.spoken.first, 'You have arrived at Union Square.');
     expect(tts.spoken, isNot(contains('Turn left onto Main Street')));
+    controller.dispose();
+  });
+
+  for (final status in ['empty', 'failed']) {
+    test('nearby research reports $status without speaking', () async {
+      final tts = FakeTextToSpeech();
+      final repository = PendingLocationStoryRepository();
+      final controller = RoverVoiceController(
+        walkRepository: repository,
+        textToSpeech: tts,
+        speechRecognizer: FakeSpeechRecognizer(),
+        audioSession: FakeAudioSession(),
+      );
+      final work = controller.tellLocationStory(
+        location: const RoverLatLng(latitude: 50, longitude: 8),
+        routeId: null,
+        routeGeometry: const [],
+        narrationStyle: 'just-walking',
+        requireSources: true,
+      );
+      expect(repository.lastRequest?.narrationStyle, 'just-walking');
+      expect(repository.lastRequest?.radiusMeters, 500);
+      repository.pending.complete(
+        LocationStoryResponse.fromJson({'researchStatus': status}),
+      );
+      expect(await work, isFalse);
+      expect(tts.spoken, isEmpty);
+      expect(
+        controller.errorMessage,
+        contains(status == 'empty' ? 'Research finished' : 'could not finish'),
+      );
+      controller.dispose();
+    });
+  }
+
+  test('stopped location research cannot start late narration', () async {
+    final tts = FakeTextToSpeech();
+    final repository = PendingLocationStoryRepository();
+    final controller = RoverVoiceController(
+      walkRepository: repository,
+      textToSpeech: tts,
+      speechRecognizer: FakeSpeechRecognizer(),
+      audioSession: FakeAudioSession(),
+    );
+    final work = controller.tellLocationStory(
+      location: const RoverLatLng(latitude: 50, longitude: 8),
+      routeId: null,
+      routeGeometry: const [],
+    );
+    await controller.stopAll();
+    repository.pending.complete(
+      const LocationStoryResponse(
+        storyTitle: 'Late story',
+        shortSpokenNarration: 'Do not play this.',
+        factIdsUsed: [],
+        sourceReferences: [],
+        confidence: 1,
+        requiredAttribution: [],
+        warnings: [],
+      ),
+    );
+    expect(await work, isFalse);
+    expect(tts.spoken, isEmpty);
+    controller.dispose();
+  });
+
+  test('automatic nearby narration rejects unsourced responses', () async {
+    final tts = FakeTextToSpeech();
+    final controller = RoverVoiceController(
+      walkRepository: MismatchedLocationStoryRepository(),
+      textToSpeech: tts,
+      speechRecognizer: FakeSpeechRecognizer(),
+      audioSession: FakeAudioSession(),
+    );
+    expect(
+      await controller.tellLocationStory(
+        location: const RoverLatLng(latitude: 50, longitude: 8),
+        routeId: null,
+        routeGeometry: const [],
+        requireSources: true,
+      ),
+      isFalse,
+    );
+    expect(tts.spoken, isEmpty);
     controller.dispose();
   });
 
@@ -584,7 +1065,7 @@ void main() {
   });
 
   test(
-    'precise geofence entry candidate narrates once before confirmation',
+    'candidate without a verified fix waits for confirmed arrival',
     () async {
       final tts = FakeTextToSpeech();
       final controller = RoverVoiceController(
@@ -604,14 +1085,14 @@ void main() {
       await controller.syncWithSession(session);
       await controller.syncWithSession(session);
 
-      expect(tts.spoken.length, 3);
-      expect(tts.spoken.first, contains('You have arrived at Union Square.'));
+      expect(tts.spoken, isEmpty);
 
       await controller.syncWithSession(
         session.copyWith(completedStopIds: {'stop-1'}),
       );
 
       expect(tts.spoken.length, 3);
+      expect(tts.spoken.first, contains('You have arrived at Union Square.'));
       controller.dispose();
     },
   );
@@ -714,6 +1195,76 @@ void main() {
     );
     controller.dispose();
   });
+
+  test('paused POI stays paused on GPS updates and resumes once', () async {
+    final tts = BlockingTextToSpeech(blockAt: 1);
+    final narrated = <String>[];
+    final controller = RoverVoiceController(
+      walkRepository: FakeVoiceWalkRepository(),
+      textToSpeech: tts,
+      speechRecognizer: FakeSpeechRecognizer(),
+      audioSession: FakeAudioSession(),
+      adaptiveRouteStoriesEnabled: true,
+      onArrivalNarrated: (id) async {
+        narrated.add(id);
+      },
+    );
+    final session = _session(completedStopIds: {'stop-1'});
+    final arrival = controller.syncWithSession(session);
+    await tts.firstSpeakStarted.future;
+    await controller.pauseNarration();
+    tts.releaseFirstSpeak.complete();
+    await arrival;
+    await controller.syncWithSession(session);
+    expect(controller.state, RoverAudioState.narrationPaused);
+    expect(tts.spoken, hasLength(2));
+    expect(
+      controller.canPlayAdaptiveRouteStory(_adaptiveSelection(), session),
+      isFalse,
+    );
+    await controller.syncWithSession(_googleNavigationSession().copyWith(completedStopIds: {'stop-1'}));
+    expect(tts.spoken.last, contains('Turn left onto Main Street'));
+    expect(controller.state, RoverAudioState.narrationPaused);
+    await controller.resumeNarration();
+    await controller.syncWithSession(session);
+    expect(tts.spoken, hasLength(5));
+    expect(
+      tts.spoken.where((s) => s.startsWith('You have arrived')),
+      hasLength(1),
+    );
+    expect(narrated, ['stop-1']);
+    controller.dispose();
+  });
+
+  test(
+    'Stop dismisses POI auto-retry and Play starts from the beginning',
+    () async {
+      final tts = BlockingTextToSpeech(blockAt: 1);
+      final controller = RoverVoiceController(
+        walkRepository: FakeVoiceWalkRepository(),
+        textToSpeech: tts,
+        speechRecognizer: FakeSpeechRecognizer(),
+        audioSession: FakeAudioSession(),
+        adaptiveRouteStoriesEnabled: true,
+      );
+      final session = _session(completedStopIds: {'stop-1'});
+      final arrival = controller.syncWithSession(session);
+      await tts.firstSpeakStarted.future;
+      await controller.stopNarration();
+      tts.releaseFirstSpeak.complete();
+      await arrival;
+      await controller.syncWithSession(session);
+      expect(controller.state, RoverAudioState.idle);
+      expect(controller.hasNarration, isFalse);
+      expect(tts.spoken, hasLength(2));
+      await controller.playNarration(_stop);
+      expect(tts.spoken.skip(2), [
+        'Welcome to Union Square.',
+        'Look around for the monument.',
+      ]);
+      controller.dispose();
+    },
+  );
 
   test('play pause resume replay and stop drive TTS safely', () async {
     final tts = FakeTextToSpeech();
@@ -1065,6 +1616,38 @@ final _stop = RoverStop(
   contentType: 'Landmark',
 );
 
+AdaptiveRouteStorySelection _questionSelection() {
+  final base = _adaptiveSelection();
+  final variant = RouteStoryNarrationVariant(
+    length: 'Standard',
+    estimatedDurationSeconds: 20,
+    narration: base.variant.narration,
+    claimIds: const ['c1'],
+  );
+  return AdaptiveRouteStorySelection(
+    story: AdaptiveRouteStory.fromJson({
+      ...base.story.toJson(),
+      'expiresUtc': DateTime.now()
+          .toUtc()
+          .add(const Duration(hours: 1))
+          .toIso8601String(),
+      'audienceSuitability': 'sensitive',
+      'sensitivityNotice': 'Content note: war and loss.',
+      'claims': [
+        {
+          'claimId': 'c1',
+          'text': 'First fact. Second fact.',
+          'sourceIds': ['source-1'],
+          'confidence': 0.9,
+        },
+      ],
+      'variants': [variant.toJson()],
+    }),
+    variant: variant,
+    reason: 'Explicit question',
+  );
+}
+
 AdaptiveRouteStorySelection _adaptiveSelection() {
   final now = DateTime.utc(2026, 9, 7);
   return AdaptiveRouteStorySelection(
@@ -1098,6 +1681,7 @@ AdaptiveRouteStorySelection _adaptiveSelection() {
         ),
       ],
       evidenceScore: 0.9,
+      audienceSuitability: 'family',
     ),
     variant: const RouteStoryNarrationVariant(
       length: 'Standard',
@@ -1649,6 +2233,18 @@ class FakeVoiceWalkRepository implements WalkRepository {
     LocationUpdateRequest request,
   ) {
     throw UnimplementedError();
+  }
+}
+
+class PendingLocationStoryRepository extends FakeVoiceWalkRepository {
+  final pending = Completer<LocationStoryResponse>();
+  LocationStoryRequest? lastRequest;
+  @override
+  Future<LocationStoryResponse> createLocationStory(
+    LocationStoryRequest request,
+  ) {
+    lastRequest = request;
+    return pending.future;
   }
 }
 

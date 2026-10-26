@@ -199,6 +199,22 @@ class RoamSession {
   RoverNavigationGuidance? get storyNavigationGuidance =>
       _navigationGuidance(skipDeparture: true);
 
+  bool isNearStoryAnchor(double latitude, double longitude) {
+    final accuracy = currentGpsAccuracyMeters;
+    return accuracy != null &&
+        accuracy.isFinite &&
+        accuracy >= 0 &&
+        accuracy <= 40 &&
+        latitude.isFinite &&
+        longitude.isFinite &&
+        _distanceBetween(
+                  simulatedLocation,
+                  RoverLatLng(latitude: latitude, longitude: longitude),
+                ) *
+                1609.344 <=
+            225;
+  }
+
   RoverNavigationGuidance? _navigationGuidance({bool skipDeparture = false}) {
     if (status != RoamSessionStatus.active ||
         isOffRoute ||
@@ -224,7 +240,11 @@ class RoamSession {
       final isArrival =
           maneuver.maneuverType.contains('DESTINATION') ||
           maneuver.instruction.toLowerCase().contains('destination');
-      final isDeparture = maneuver.maneuverType.toUpperCase() == 'DEPART';
+      final type = maneuver.maneuverType.toUpperCase();
+      final isDeparture =
+          type == 'DEPART' ||
+          type == 'STRAIGHT' ||
+          (maneuverStart == 0 && type == 'MANEUVER_UNSPECIFIED');
       if (!isArrival && !(skipDeparture && isDeparture) && remaining >= -12) {
         return RoverNavigationGuidance(
           maneuver: maneuver,

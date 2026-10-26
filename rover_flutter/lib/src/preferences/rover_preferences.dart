@@ -8,6 +8,7 @@ class RoverPreferences {
     this.availableTime = '',
     this.mobility = '',
     this.contentDepth = '',
+    this.includePaidAttractions = false,
     this.storyDensity = 'Highlights',
     this.excludedStoryCategories = const [],
     this.audioPreference = '',
@@ -25,6 +26,7 @@ class RoverPreferences {
   final String availableTime;
   final String mobility;
   final String contentDepth;
+  final bool includePaidAttractions;
   final String storyDensity;
   final List<String> excludedStoryCategories;
   final String audioPreference;
@@ -45,6 +47,7 @@ class RoverPreferences {
     String? availableTime,
     String? mobility,
     String? contentDepth,
+    bool? includePaidAttractions,
     String? storyDensity,
     List<String>? excludedStoryCategories,
     String? audioPreference,
@@ -62,6 +65,8 @@ class RoverPreferences {
       availableTime: availableTime ?? this.availableTime,
       mobility: mobility ?? this.mobility,
       contentDepth: contentDepth ?? this.contentDepth,
+      includePaidAttractions:
+          includePaidAttractions ?? this.includePaidAttractions,
       storyDensity: storyDensity ?? this.storyDensity,
       excludedStoryCategories:
           excludedStoryCategories ?? this.excludedStoryCategories,
@@ -84,6 +89,7 @@ class RoverPreferences {
       'availableTime': availableTime,
       'mobility': mobility,
       'contentDepth': contentDepth,
+      'includePaidAttractions': includePaidAttractions,
       'storyDensity': storyDensity,
       'excludedStoryCategories': excludedStoryCategories,
       'audioPreference': audioPreference,
@@ -105,6 +111,7 @@ class RoverPreferences {
       availableTime: map['availableTime'] as String? ?? '',
       mobility: map['mobility'] as String? ?? '',
       contentDepth: map['contentDepth'] as String? ?? '',
+      includePaidAttractions: map['includePaidAttractions'] as bool? ?? false,
       storyDensity: map['storyDensity'] as String? ?? 'Highlights',
       excludedStoryCategories:
           (map['excludedStoryCategories'] as List<dynamic>?)?.cast<String>() ??

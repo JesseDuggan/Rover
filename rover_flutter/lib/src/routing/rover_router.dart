@@ -2,6 +2,12 @@ import 'package:flutter/material.dart';
 import 'package:go_router/go_router.dart';
 
 import '../camera_explorer/camera_explorer_screen.dart';
+import '../memories/memories_screen.dart';
+import '../friends/friends_screen.dart';
+import '../sharing/shared_walks.dart';
+import '../accounts/account_library_screens.dart';
+import '../just_walking/just_walking_screen.dart';
+import '../active_roam/active_roam_controller.dart';
 import '../preferences/preferences_controller.dart';
 import '../on_device_ai/rover_ai_diagnostics_screen.dart';
 import '../shell/rover_shell.dart';
@@ -13,7 +19,8 @@ GoRouter createRoverRouter(
 }) {
   final rootNavigatorKey = GlobalKey<NavigatorState>();
   final homeNavigatorKey = GlobalKey<NavigatorState>(debugLabel: 'home');
-  final exploreNavigatorKey = GlobalKey<NavigatorState>(debugLabel: 'explore');
+  final planNavigatorKey = GlobalKey<NavigatorState>(debugLabel: 'plan');
+  final routesNavigatorKey = GlobalKey<NavigatorState>(debugLabel: 'routes');
   final roamsNavigatorKey = GlobalKey<NavigatorState>(debugLabel: 'roams');
   final profileNavigatorKey = GlobalKey<NavigatorState>(debugLabel: 'profile');
 
@@ -31,8 +38,46 @@ GoRouter createRoverRouter(
     },
     routes: [
       GoRoute(
+        path: '/shared-walks',
+        builder: (context, state) => const SharedWalksScreen(),
+      ),
+      GoRoute(
+        path: '/friends',
+        builder: (context, state) => const FriendsScreen(),
+      ),
+      GoRoute(
+        path: '/invite',
+        builder: (context, state) =>
+            FriendsScreen(invitation: state.uri.queryParameters['code']),
+      ),
+      GoRoute(
+        path: '/memories',
+        builder: (context, state) => const MemoriesScreen(),
+      ),
+      GoRoute(path: '/explore', redirect: (context, state) => '/home'),
+      GoRoute(
+        path: '/roams',
+        redirect: (context, state) => '/profile/saved-walks',
+      ),
+      GoRoute(
+        path: '/roams/history',
+        redirect: (context, state) => '/profile/history',
+      ),
+      GoRoute(
+        path: '/roams/saved-discoveries',
+        redirect: (context, state) => '/profile/saved-discoveries',
+      ),
+      GoRoute(
+        path: '/just-walking',
+        builder: (context, state) => const JustWalkingScreen(),
+      ),
+      GoRoute(
         path: '/welcome',
         name: 'welcome',
+        redirect: (context, state) =>
+            preferencesController.preferences.completedOnboarding
+            ? '/home'
+            : null,
         builder: (context, state) => const WelcomeScreen(),
       ),
       GoRoute(
@@ -48,33 +93,35 @@ GoRouter createRoverRouter(
       GoRoute(
         path: '/account',
         name: 'account',
-        builder: (context, state) => const AccountChoiceScreen(),
+        builder: (context, state) => const WalkaboutAccountScreen(),
         routes: [
           GoRoute(
             path: 'create',
             name: 'account-create',
-            builder: (context, state) => const CreateAccountScreen(),
+            builder: (context, state) => const WalkaboutAccountScreen(),
           ),
           GoRoute(
             path: 'sign-in',
             name: 'account-sign-in',
-            builder: (context, state) => const SignInScreen(),
+            builder: (context, state) => const WalkaboutAccountScreen(),
           ),
           GoRoute(
             path: 'verify-email',
             name: 'account-verify-email',
-            builder: (context, state) => const VerifyEmailScreen(),
+            builder: (context, state) => const WalkaboutAccountScreen(),
           ),
           GoRoute(
             path: 'forgot-password',
             name: 'account-forgot-password',
-            builder: (context, state) => const ForgotPasswordScreen(),
+            builder: (context, state) => const WalkaboutAccountScreen(),
           ),
         ],
       ),
       StatefulShellRoute.indexedStack(
         builder: (context, state, navigationShell) {
-          return RoverShell(navigationShell: navigationShell);
+          return WalkaboutJourneyHost(
+            child: RoverShell(navigationShell: navigationShell),
+          );
         },
         branches: [
           StatefulShellBranch(
@@ -83,8 +130,12 @@ GoRouter createRoverRouter(
               GoRoute(
                 path: '/home',
                 name: 'home',
-                builder: (context, state) => const HomeScreen(),
+                builder: (context, state) => const WalkaboutWalkScreen(),
                 routes: [
+                  GoRoute(
+                    path: 'create',
+                    builder: (context, state) => const HomeScreen(),
+                  ),
                   GoRoute(
                     path: 'adventure-request',
                     name: 'adventure-request',
@@ -93,12 +144,19 @@ GoRouter createRoverRouter(
                   GoRoute(
                     path: 'route-preview',
                     name: 'route-preview',
+                    redirect: (context, state) {
+                      final session = ActiveRoamScope.of(context).session;
+                      return session.apiWalkSessionId == null ||
+                              session.roam.stops.isEmpty
+                          ? '/home'
+                          : null;
+                    },
                     builder: (context, state) => const RoutePreviewScreen(),
                   ),
                   GoRoute(
                     path: 'active-roam',
                     name: 'active-roam',
-                    builder: (context, state) => const ActiveRoamScreen(),
+                    builder: (context, state) => const WalkaboutWalkScreen(),
                   ),
                   GoRoute(
                     path: 'stop-details',
@@ -110,12 +168,11 @@ GoRouter createRoverRouter(
             ],
           ),
           StatefulShellBranch(
-            navigatorKey: exploreNavigatorKey,
+            navigatorKey: planNavigatorKey,
             routes: [
               GoRoute(
-                path: '/explore',
-                name: 'explore',
-                builder: (context, state) => const ExploreScreen(),
+                path: '/plan',
+                builder: (context, state) => const WalkaboutPlanScreen(),
               ),
             ],
           ),
@@ -123,21 +180,17 @@ GoRouter createRoverRouter(
             navigatorKey: roamsNavigatorKey,
             routes: [
               GoRoute(
-                path: '/roams',
-                name: 'saved-roams',
-                builder: (context, state) => const SavedRoamsScreen(),
-                routes: [
-                  GoRoute(
-                    path: 'history',
-                    name: 'walk-history',
-                    builder: (context, state) => const WalkHistoryScreen(),
-                  ),
-                  GoRoute(
-                    path: 'saved-discoveries',
-                    name: 'saved-discoveries',
-                    builder: (context, state) => const SavedDiscoveriesScreen(),
-                  ),
-                ],
+                path: '/stories',
+                builder: (context, state) => const WalkaboutStoriesScreen(),
+              ),
+            ],
+          ),
+          StatefulShellBranch(
+            navigatorKey: routesNavigatorKey,
+            routes: [
+              GoRoute(
+                path: '/routes',
+                builder: (context, state) => const WalkaboutRoutesScreen(),
               ),
             ],
           ),
@@ -149,6 +202,37 @@ GoRouter createRoverRouter(
                 name: 'profile',
                 builder: (context, state) => const ProfileScreen(),
                 routes: [
+                  GoRoute(
+                    path: 'stops',
+                    builder: (context, state) =>
+                        const WalkaboutStopListScreen(),
+                    routes: [
+                      GoRoute(
+                        path: ':stopId',
+                        builder: (context, state) => WalkaboutStopScreen(
+                          stopId: state.pathParameters['stopId']!,
+                        ),
+                      ),
+                    ],
+                  ),
+                  GoRoute(
+                    path: 'history',
+                    builder: (context, state) => const WalkHistoryScreen(),
+                  ),
+                  GoRoute(
+                    path: 'saved-discoveries',
+                    builder: (context, state) => const SavedDiscoveriesScreen(),
+                  ),
+                  GoRoute(
+                    path: 'saved-walks',
+                    builder: (context, state) =>
+                        const PersonalLibraryScreen(kind: 'walks'),
+                  ),
+                  GoRoute(
+                    path: 'walking-profiles',
+                    builder: (context, state) =>
+                        const PersonalLibraryScreen(kind: 'profiles'),
+                  ),
                   GoRoute(
                     path: 'settings',
                     name: 'settings',
@@ -171,7 +255,7 @@ GoRouter createRoverRouter(
                   GoRoute(
                     path: 'account',
                     name: 'account-settings',
-                    builder: (context, state) => const AccountSettingsScreen(),
+                    builder: (context, state) => const WalkaboutAccountScreen(),
                   ),
                   GoRoute(
                     path: 'voice-test',

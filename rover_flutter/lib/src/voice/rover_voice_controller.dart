@@ -35,6 +35,7 @@ class RoverVoiceController extends ChangeNotifier {
   static const int _approachingStopPriority = 65;
   static const int _arrivalPriority = 80;
   static const int _navigationPriority = 90;
+  static const int _manualStoryPriority = 95;
   static const int _safetyPriority = 100;
 
   RoverVoiceController({
@@ -69,6 +70,7 @@ class RoverVoiceController extends ChangeNotifier {
   final Future<void> Function(String stopId)? _onArrivalNarrated;
   final bool _adaptiveRouteStoriesEnabled;
   final Set<String> _autoNarratedStopKeys = {};
+  final Set<String> _dismissedArrivalStopKeys = {};
   final Set<String> _arrivalNarrationInFlightKeys = {};
   final Set<String> _prefetchedStopKeys = {};
   final Set<String> _narratedJourneyFactIds = {};
@@ -79,6 +81,8 @@ class RoverVoiceController extends ChangeNotifier {
   List<String> _narrationSegments = const [];
   int _segmentIndex = 0;
   String? _activeNarrationStopId;
+  String? _latestWalkSessionId;
+  String? _pausedNarrationStopId;
   bool _activeNarrationAudioCacheEligible = false;
   String? _conversationId;
   String _captionText = '';
@@ -92,6 +96,92 @@ class RoverVoiceController extends ChangeNotifier {
   DateTime? _arrivalAudioGateUntil;
   int _latestRouteRevision = 0;
   int _activeAudioPriority = 0;
+  bool _questionInteractionActive = false;
+  int? _questionPlaybackGeneration;
+
+  void setQuestionInteractionActive(bool value) {
+    _questionInteractionActive = value;
+  }
+
+  bool canPlayQuestionAnswer(
+    AdaptiveRouteStorySelection answer, {
+    RoamSession? session,
+  }) {
+    if (_isDisposed ||
+        _arrivalAudioGateActive ||
+        _activeAdaptiveStory != null ||
+        _activeScheduledStory != null ||
+        ![
+          RoverAudioState.idle,
+          RoverAudioState.narrationPaused,
+          RoverAudioState.error,
+        ].contains(_state) ||
+        answer.story.expiresUtc?.isAfter(DateTime.now().toUtc()) != true ||
+        answer.story.sources.isEmpty ||
+        answer.story.claims.isEmpty ||
+        answer.variant.narration.trim().isEmpty ||
+        answer.variant.claimIds.isEmpty ||
+        !answer.variant.claimIds.every(
+          (id) => answer.story.claims.any((c) => c.claimId == id),
+        )) {
+      return false;
+    }
+    return session == null ||
+        (session.status == RoamSessionStatus.active &&
+            canPlayAdaptiveRouteStory(answer, session,
+                userRequested: true, interruptNavigation: false));
+  }
+
+  Future<bool> playQuestionAnswer(
+    AdaptiveRouteStorySelection answer, {
+    RoamSession? session,
+  }) async {
+    if (!canPlayQuestionAnswer(answer, session: session)) return false;
+    final generation = _playbackGeneration + 1;
+    _questionPlaybackGeneration = generation;
+    final narration = answer.story.spokenNarration(answer.variant);
+    _captionText = narration;
+    _errorMessage = null;
+    try {
+      return await _speakAnswer(
+        narration,
+        priority: _userRequestedPriority,
+        purpose: 'StoryQuestionAnswer',
+        audioCacheEligible: false,
+      );
+    } finally {
+      if (_questionPlaybackGeneration == generation) {
+        _questionPlaybackGeneration = null;
+      }
+    }
+  }
+
+  // Closing an answer must never stop an arrival or turn instruction that took over.
+  Future<void> stopQuestionAnswer() async {
+    if (_isDisposed) return;
+    if (_questionPlaybackGeneration != _playbackGeneration) return;
+    _questionPlaybackGeneration = null;
+    final generation = ++_playbackGeneration;
+    await _premiumVoice?.stop();
+    if (_isDisposed || generation != _playbackGeneration) return;
+    await _textToSpeech.stop();
+    if (_isDisposed || generation != _playbackGeneration) return;
+    _activeAudioPriority = 0;
+    _setState(RoverAudioState.idle);
+  }
+
+  Future<bool> playHereNarration(String text) async {
+    if (_isDisposed || text.trim().isEmpty) return false;
+    final generation = _playbackGeneration + 1;
+    _questionPlaybackGeneration = generation;
+    try {
+      return await _speakAnswer(text, priority: _userRequestedPriority,
+          purpose: 'TellMeAboutHere', audioCacheEligible: false);
+    } finally {
+      if (_questionPlaybackGeneration == generation) _questionPlaybackGeneration = null;
+    }
+  }
+
   int _playbackGeneration = 0;
   int _staleJourneyJobs = 0;
   _ScheduledJourneyStory? _activeScheduledStory;
@@ -106,6 +196,9 @@ class RoverVoiceController extends ChangeNotifier {
   bool _isDisposed = false;
 
   RoverAudioState get state => _state;
+  String? get activeStoryId => _activeAdaptiveStory?.selection.story.storyId;
+  String? get narrationStopId => _activeNarrationStopId;
+  String? get pausedNarrationStopId => _pausedNarrationStopId;
   double get speechRate => _speechRate;
   String get captionText => _captionText;
   String get transcriptText => _transcriptText;
@@ -132,6 +225,7 @@ class RoverVoiceController extends ChangeNotifier {
 
   Future<void> syncWithSession(RoamSession session) async {
     final walkSessionId = session.apiWalkSessionId;
+    _latestWalkSessionId = walkSessionId;
     if (walkSessionId != null) {
       _autoNarratedStopKeys.addAll(
         session.narratedArrivalStopIds.map(
@@ -169,19 +263,23 @@ class RoverVoiceController extends ChangeNotifier {
     }
     _latestRouteRevision = session.routeRevision;
 
-    // Story mode keeps routine arrivals on screen; only navigation takes the audio floor.
-    if (_adaptiveRouteStoriesEnabled) {
-      if (session.status == RoamSessionStatus.completed ||
-          session.status == RoamSessionStatus.ended) {
-        await stopAll();
-      } else if (session.status == RoamSessionStatus.active) {
-        await _considerNavigationGuidance(session);
-      }
+    if (session.status == RoamSessionStatus.completed ||
+        session.status == RoamSessionStatus.ended) {
+      await stopAll();
+      return;
+    }
+    if (session.status != RoamSessionStatus.active) return;
+
+    // An explicit Play owns narration until it finishes or the user stops it.
+    // Safety announcements retain their higher priority.
+    if (_activeAdaptiveStory != null &&
+        _activeAudioPriority == _manualStoryPriority) {
       return;
     }
 
     final recentStop = session.recentNarrationStop;
-    final isArrivalSensitive = _isArrivalSensitiveSession(session);
+    final arrivalStop = _pendingVerifiedArrival(session);
+    final isArrivalSensitive = arrivalStop != null;
     if (isArrivalSensitive) {
       await _interruptAdaptiveStory('arrival');
       _arrivalAudioGateUntil = DateTime.now().add(const Duration(seconds: 30));
@@ -197,40 +295,17 @@ class RoverVoiceController extends ChangeNotifier {
 
     unawaited(_prefetchUpcomingNarration(session));
 
-    RoverStop? candidateStop;
-    for (final stop in session.roam.stops) {
-      if (stop.id == session.arrivalCandidateStopId) {
-        candidateStop = stop;
-        break;
+    if (arrivalStop != null && walkSessionId != null) {
+      if (_pausedNarrationStopId == arrivalStop.id) {
+        await _considerNavigationGuidance(session);
+        return;
       }
-    }
-    if (recentStop != null && recentStop.id == session.arrivalCandidateStopId) {
-      candidateStop = recentStop;
-    }
-    if (candidateStop != null &&
-        walkSessionId != null &&
-        !_autoNarratedStopKeys.contains('$walkSessionId:${candidateStop.id}')) {
-      final key = '$walkSessionId:${candidateStop.id}';
+      final key = '$walkSessionId:${arrivalStop.id}';
       await _playAutomaticArrival(
         key,
-        candidateStop,
-        completed: session.completedStopIds.contains(candidateStop.id),
-        candidate: true,
-      );
-      return;
-    }
-
-    if (recentStop != null &&
-        session.apiWalkSessionId != null &&
-        session.isNearRecentNarrationStop &&
-        !_autoNarratedStopKeys.contains('$walkSessionId:${recentStop.id}') &&
-        session.completedStopIds.contains(recentStop.id)) {
-      final key = '${session.apiWalkSessionId}:${recentStop.id}';
-      await _playAutomaticArrival(
-        key,
-        recentStop,
-        completed: true,
-        candidate: session.arrivalCandidateStopId == recentStop.id,
+        arrivalStop,
+        completed: session.completedStopIds.contains(arrivalStop.id),
+        candidate: session.arrivalCandidateStopId == arrivalStop.id,
       );
       return;
     }
@@ -249,14 +324,7 @@ class RoverVoiceController extends ChangeNotifier {
       return;
     }
 
-    final stop = session.recentNarrationStop ?? session.currentStop;
-    if (walkSessionId == null || !session.completedStopIds.contains(stop.id)) {
-      unawaited(considerJourneyNarration(session));
-      return;
-    }
-
-    final key = '$walkSessionId:${stop.id}';
-    await _playAutomaticArrival(key, stop, completed: true, candidate: false);
+    unawaited(considerJourneyNarration(session));
   }
 
   Future<void> _playAutomaticArrival(
@@ -277,6 +345,11 @@ class RoverVoiceController extends ChangeNotifier {
         'voice',
         'auto arrival narration already in progress stop=${stop.name}',
       );
+      return;
+    }
+    if (_activeNarrationStopId == stop.id &&
+        (_state == RoverAudioState.speakingNarration ||
+            _state == RoverAudioState.preparingNarration)) {
       return;
     }
     _arrivalNarrationInFlightKeys.add(key);
@@ -571,7 +644,9 @@ class RoverVoiceController extends ChangeNotifier {
         _state == RoverAudioState.preparingNarration) {
       return;
     }
-
+    await _interruptAdaptiveStory('arrival');
+    _pausedNarrationStopId = null;
+    _arrivalNarrationStopKey = null;
     _activeNarrationStopId = stop.id;
     _activeNarrationAudioCacheEligible = _stopAudioCacheEligible(stop);
     _narrationSegments = _segmentsFor(stop);
@@ -581,10 +656,21 @@ class RoverVoiceController extends ChangeNotifier {
   }
 
   Future<void> playNarration(RoverStop stop) async {
+    if (!_canStartPriority(_arrivalPriority)) return;
+    if (_pausedNarrationStopId == stop.id) {
+      await resumeNarration();
+      return;
+    }
+    if (_activeNarrationStopId == stop.id &&
+        (_state == RoverAudioState.speakingNarration ||
+            _state == RoverAudioState.preparingNarration)) {
+      return;
+    }
     if (_activeNarrationStopId != stop.id || _narrationSegments.isEmpty) {
       await prepareAndPlayNarration(stop);
       return;
     }
+    if (_segmentIndex >= _narrationSegments.length) _segmentIndex = 0;
     await _speakNarrationFromCurrentSegment();
   }
 
@@ -592,22 +678,73 @@ class RoverVoiceController extends ChangeNotifier {
     if (_state != RoverAudioState.speakingNarration) {
       return;
     }
-    await _premiumVoice?.pause();
-    await _textToSpeech.pause();
+    final generation = ++_playbackGeneration;
+    _pausedNarrationStopId = _activeNarrationStopId;
     _setState(RoverAudioState.narrationPaused);
+    await _premiumVoice?.pause();
+    if (_isDisposed || generation != _playbackGeneration) return;
+    await _textToSpeech.pause();
   }
 
   Future<void> resumeNarration() async {
     if (_state != RoverAudioState.narrationPaused) {
       return;
     }
-    await _speakNarrationFromCurrentSegment();
+    _pausedNarrationStopId = null;
+    final stopId = _activeNarrationStopId;
+    final walkId = _latestWalkSessionId;
+    final played = await _speakNarrationFromCurrentSegment();
+    if (played &&
+        stopId != null &&
+        walkId != null &&
+        _arrivalNarrationStopKey == '$walkId:$stopId') {
+      _autoNarratedStopKeys.add('$walkId:$stopId');
+      _arrivalAudioGateUntil = null;
+      await _onArrivalNarrated?.call(stopId);
+    }
+  }
+
+  String? _arrivalNarrationStopKey;
+
+  // Dismiss only this POI narration; navigation and the interrupted story remain.
+  Future<void> stopNarration() async {
+    if (_state == RoverAudioState.narrationPaused &&
+        _pausedNarrationStopId == null) {
+      return;
+    }
+    if (_activeNarrationStopId == null ||
+        ![
+          RoverAudioState.preparingNarration,
+          RoverAudioState.speakingNarration,
+          RoverAudioState.narrationPaused,
+        ].contains(_state) ||
+        _activeAdaptiveStory != null) {
+      return;
+    }
+    final key = _arrivalNarrationStopKey;
+    if (key != null) _dismissedArrivalStopKeys.add(key);
+    _pausedNarrationStopId = null;
+    _arrivalNarrationStopKey = null;
+    _arrivalAudioGateUntil = null;
+    final generation = ++_playbackGeneration;
+    _narrationSegments = const [];
+    _segmentIndex = 0;
+    _activeNarrationStopId = null;
+    _activeAudioPriority = 0;
+    _setState(RoverAudioState.idle);
+    await _premiumVoice?.stop();
+    if (_isDisposed || generation != _playbackGeneration) return;
+    await _textToSpeech.stop();
   }
 
   Future<bool> replayNarration(
     RoverStop stop, {
     bool withArrivalAnnouncement = false,
   }) async {
+    _pausedNarrationStopId = null;
+    _arrivalNarrationStopKey = withArrivalAnnouncement
+        ? '$_latestWalkSessionId:${stop.id}'
+        : null;
     await _premiumVoice?.stop();
     await _textToSpeech.stop();
     _activeNarrationStopId = stop.id;
@@ -622,6 +759,7 @@ class RoverVoiceController extends ChangeNotifier {
   }
 
   Future<void> stopAll() async {
+    _pausedNarrationStopId = null;
     _playbackGeneration++;
     _activeScheduledStory = null;
     _interruptedScheduledStory = null;
@@ -720,7 +858,7 @@ class RoverVoiceController extends ChangeNotifier {
     );
   }
 
-  Future<void> tellLocationStory({
+  Future<bool> tellLocationStory({
     required RoverLatLng location,
     required String? routeId,
     required List<RoverLatLng> routeGeometry,
@@ -728,26 +866,54 @@ class RoverVoiceController extends ChangeNotifier {
     String? selectedPlaceName,
     String? selectedPlaceFallbackNarration,
     String label = 'Location Story',
+    List<String> interests = const [],
+    bool requireSources = false,
+    String narrationStyle = 'short-spoken',
+    bool Function()? isStillRelevant,
   }) async {
-    if (!canAsk) {
-      return;
+    if (_isDisposed || !canAsk) {
+      return false;
     }
 
+    final requestGeneration = ++_playbackGeneration;
     _setState(RoverAudioState.thinking);
     try {
       final response = await walkRepository.createLocationStory(
         LocationStoryRequest(
           location: location,
-          radiusMeters: 1500,
+          radiusMeters: narrationStyle == 'just-walking' ? 500 : 1500,
           routeId: routeId,
           routeGeometry: routeGeometry,
-          interests: const [],
+          interests: interests,
           selectedPlaceIds: selectedPlaceId == null
               ? const []
               : [selectedPlaceId],
-          narrationStyle: 'short-spoken',
+          narrationStyle: narrationStyle,
         ),
       );
+      if (_isDisposed || requestGeneration != _playbackGeneration) return false;
+      if (isStillRelevant != null && !isStillRelevant()) {
+        _setState(RoverAudioState.idle);
+        return false;
+      }
+      if (response.researchStatus == 'failed' ||
+          response.researchStatus == 'empty') {
+        _errorMessage = response.researchStatus == 'failed'
+            ? 'Nearby research could not finish. Please try again shortly.'
+            : 'Research finished. No verified story was found for this place.';
+        _setState(RoverAudioState.error);
+        return false;
+      }
+      if (requireSources &&
+          (response.sourceReferences.isEmpty ||
+              response.factIdsUsed.isEmpty ||
+              response.shortSpokenNarration.trim().isEmpty ||
+              (response.expiresUtc?.isBefore(DateTime.now().toUtc()) ??
+                  false))) {
+        _errorMessage = 'No verified story is available for this place yet.';
+        _setState(RoverAudioState.error);
+        return false;
+      }
       final responseMatchesSelection =
           selectedPlaceId == null ||
           (response.placeId?.toLowerCase() == selectedPlaceId.toLowerCase());
@@ -764,7 +930,7 @@ class RoverVoiceController extends ChangeNotifier {
           _errorMessage =
               'Rover could not load the selected ${selectedPlaceName ?? 'place'} story.';
           _setState(RoverAudioState.error);
-          return;
+          return false;
         }
         answer = fallback;
       } else {
@@ -794,17 +960,54 @@ class RoverVoiceController extends ChangeNotifier {
               'verified=${response.lastVerifiedUtc?.toIso8601String() ?? 'unknown'}',
         );
       }
-      await _speakAnswer(
+      return await _speakAnswer(
         answer,
         priority: _userRequestedPriority,
         purpose: 'TellMeNearby',
         localOnly: response.offlineCached,
       );
     } on RoverApiException catch (exception) {
+      if (_isDisposed || requestGeneration != _playbackGeneration) return false;
       _errorMessage =
           'Tell Me Nearby could not load live location context: ${exception.message}';
       _setState(RoverAudioState.error);
+      return false;
     }
+  }
+
+  Future<bool> playAreaStory(
+    AdaptiveRouteStory story, {
+    bool regionalContext = false,
+  }) async {
+    if (_isDisposed ||
+        !canAsk ||
+        story.sources.isEmpty ||
+        story.claims.isEmpty ||
+        story.expiresUtc?.isAfter(DateTime.now().toUtc()) != true) {
+      return false;
+    }
+    final variants =
+        story.variants
+            .where((v) => v.narration.trim().isNotEmpty && v.length != 'Deep')
+            .toList()
+          ..sort(
+            (a, b) => b.estimatedDurationSeconds.compareTo(
+              a.estimatedDurationSeconds,
+            ),
+          );
+    if (variants.isEmpty) return false;
+    final narration = story.spokenNarration(variants.first);
+    _captionText = narration;
+    _errorMessage = null;
+    return _speakAnswer(
+      regionalContext
+          ? 'This story comes from the surrounding region, not necessarily your current location. $narration'
+          : narration,
+      priority: _contextualPriority,
+      purpose: 'area_story',
+      storyId: story.storyId,
+      audioCacheEligible: false,
+    );
   }
 
   Future<void> replayAnswer() async {
@@ -828,8 +1031,9 @@ class RoverVoiceController extends ChangeNotifier {
 
   Future<void> prefetchAdaptiveRouteStory(AdaptiveRouteStory story) async {
     if (_isDisposed ||
-        (story.expiresUtc?.isAfter(DateTime.now().toUtc()) == false))
+        (story.expiresUtc?.isAfter(DateTime.now().toUtc()) == false)) {
       return;
+    }
     final variants = story.variants
         .where(
           (variant) =>
@@ -880,7 +1084,7 @@ class RoverVoiceController extends ChangeNotifier {
       return AdaptiveStoryPlaybackResult.blocked;
     }
     final priority = userRequested
-        ? _userRequestedPriority
+        ? _manualStoryPriority
         : _contextualPriority;
     if (!_canStartPriority(priority) || _activeAdaptiveStory != null) {
       return AdaptiveStoryPlaybackResult.blocked;
@@ -896,9 +1100,13 @@ class RoverVoiceController extends ChangeNotifier {
             selection: selection,
             walkSessionId: session.apiWalkSessionId ?? '',
             routeRevision: session.routeRevision,
-            segments: _storySegments(selection.variant.narration),
+            userRequested: userRequested,
+            segments: _storySegments(
+              selection.story.spokenNarration(selection.variant),
+            ),
           );
     _interruptedAdaptiveStory = null;
+    playback.userPaused = false;
     if (playback.segments.isEmpty) return AdaptiveStoryPlaybackResult.blocked;
     _activeAdaptiveStory = playback;
     _errorMessage = null;
@@ -991,22 +1199,66 @@ class RoverVoiceController extends ChangeNotifier {
     AdaptiveRouteStorySelection selection,
     RoamSession session, {
     bool userRequested = false,
+    bool interruptNavigation = true,
   }) {
+    if (_isDisposed || session.status != RoamSessionStatus.active) return false;
+    if (userRequested && interruptNavigation) {
+      return _canStartPriority(_manualStoryPriority);
+    }
+    if (_pausedNarrationStopId != null) return false;
+    final interrupted = _interruptedAdaptiveStory;
+    final resuming =
+        interrupted != null &&
+        interrupted.selection.story.storyId == selection.story.storyId &&
+        interrupted.selection.variant.length == selection.variant.length &&
+        interrupted.walkSessionId == session.apiWalkSessionId &&
+        interrupted.routeRevision == session.routeRevision;
+    if (!userRequested && _questionInteractionActive) return false;
     if (!userRequested && storiesAreQuiet) return false;
+    if (!userRequested && resuming && interrupted.userPaused) return false;
+    if (!userRequested &&
+        !(resuming && interrupted.userRequested) &&
+        (!selection.story.canAutoplay || selection.variant.length == 'Deep')) {
+      return false;
+    }
     final availableSeconds = _adaptiveRouteStoriesEnabled
         ? session.storySecondsUntilNavigation
         : session.storySecondsUntilInterruption;
-    if (availableSeconds != null &&
-        selection.variant.estimatedDurationSeconds > availableSeconds - 15) {
+    // Adaptive stories resume at sentence boundaries; only the next sentence
+    // needs room. Keep the legacy full-story scheduler unchanged.
+    final requiredSeconds = _adaptiveRouteStoriesEnabled
+        ? (resuming
+              ? _sentenceSeconds(interrupted.segments[interrupted.segmentIndex])
+              : storyStartSeconds(selection.story, selection.variant))
+        : selection.variant.estimatedDurationSeconds;
+    if (!userRequested &&
+        availableSeconds != null &&
+        requiredSeconds > availableSeconds - 15) {
       return false;
     }
-    if ((!_adaptiveRouteStoriesEnabled &&
+    if (_pendingVerifiedArrival(session) != null ||
+        _arrivalNarrationInFlightKeys.isNotEmpty ||
+        (!_adaptiveRouteStoriesEnabled &&
             _isArrivalSensitiveSession(session)) ||
         (session.storyNavigationGuidance?.distanceMeters ?? 9999) <= 45) {
       return false;
     }
-    return userRequested || !session.isOffRoute;
+    return userRequested ||
+        !session.isOffRoute ||
+        (_adaptiveRouteStoriesEnabled &&
+            session.isNearStoryAnchor(
+              selection.story.relevanceLatitude,
+              selection.story.relevanceLongitude,
+            ));
   }
+
+  static int storyStartSeconds(
+    AdaptiveRouteStory story,
+    RouteStoryNarrationVariant variant,
+  ) => _sentenceSeconds(_storySegments(story.spokenNarration(variant)).first);
+
+  static int _sentenceSeconds(String text) =>
+      (text.trim().split(RegExp(r'\s+')).length / 2.5).ceil();
 
   Future<void> pauseAdaptiveRouteStory() async {
     if (_state != RoverAudioState.speakingAnswer) return;
@@ -1312,6 +1564,7 @@ class RoverVoiceController extends ChangeNotifier {
   }
 
   bool _shouldEvaluateJourneyNarration(RoamSession session) {
+    if (_questionInteractionActive) return false;
     if (storiesAreQuiet) {
       return false;
     }
@@ -1628,10 +1881,48 @@ class RoverVoiceController extends ChangeNotifier {
     return true;
   }
 
+  RoverStop? _pendingVerifiedArrival(RoamSession session) {
+    if (session.status != RoamSessionStatus.active ||
+        session.apiWalkSessionId == null) {
+      return null;
+    }
+    final recent = session.recentNarrationStop;
+    final stops = [?recent, ...session.roam.stops];
+    for (final stop in stops) {
+      if (session.skippedStopIds.contains(stop.id) ||
+          session.narratedArrivalStopIds.contains(stop.id) ||
+          _autoNarratedStopKeys.contains(
+            '${session.apiWalkSessionId}:${stop.id}',
+          ) ||
+          _dismissedArrivalStopKeys.contains(
+            '${session.apiWalkSessionId}:${stop.id}',
+          )) {
+        continue;
+      }
+      final accuracy = session.currentGpsAccuracyMeters;
+      final inside =
+          session.simulatedLocation.distanceTo(stop.coordinates) <=
+          stop.arrivalRadiusMeters;
+      final confirmed = session.completedStopIds.contains(stop.id);
+      // A candidate alone is not arrival. Off-route device entries also need
+      // an accurate GPS fix physically inside the stop's own radius.
+      final deviceEntry =
+          session.arrivalCandidateStopId == stop.id &&
+          session.arrivalCandidate &&
+          accuracy != null &&
+          accuracy.isFinite &&
+          accuracy >= 0 &&
+          accuracy <= 25;
+      if (inside && (confirmed || deviceEntry)) return stop;
+    }
+    return null;
+  }
+
   bool _isArrivalSensitiveSession(RoamSession session) {
     if (session.hasPendingArrivalNarration(
       hasNarrated: (id) =>
-          _autoNarratedStopKeys.contains('${session.apiWalkSessionId}:$id'),
+          _autoNarratedStopKeys.contains('${session.apiWalkSessionId}:$id') ||
+          _dismissedArrivalStopKeys.contains('${session.apiWalkSessionId}:$id'),
     )) {
       return true;
     }
@@ -1668,6 +1959,9 @@ class RoverVoiceController extends ChangeNotifier {
   }
 
   bool _canStartPriority(int priority) {
+    if (_pausedNarrationStopId != null && priority < _arrivalPriority) {
+      return false;
+    }
     if (_state != RoverAudioState.speakingAnswer &&
         _state != RoverAudioState.preparingNarration &&
         _state != RoverAudioState.speakingNarration) {
@@ -1784,7 +2078,9 @@ class RoverVoiceController extends ChangeNotifier {
   @override
   void dispose() {
     _isDisposed = true;
+    _playbackGeneration++;
     unawaited(_speechRecognizer.cancel());
+    unawaited(_premiumVoice?.stop());
     unawaited(_textToSpeech.dispose());
     super.dispose();
   }
@@ -1830,12 +2126,14 @@ class _AdaptiveRouteStoryPlayback {
     required this.walkSessionId,
     required this.routeRevision,
     required this.segments,
+    required this.userRequested,
   });
 
   final AdaptiveRouteStorySelection selection;
   final String walkSessionId;
   final int routeRevision;
   final List<String> segments;
+  final bool userRequested;
   int segmentIndex = 0;
   bool wasInterrupted = false;
   bool userPaused = false;

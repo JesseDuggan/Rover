@@ -17,6 +17,7 @@ import 'problem_details.dart';
 import 'profile_models.dart';
 import 'rover_api_config.dart';
 import 'speech_models.dart';
+import 'story_question_models.dart';
 import 'walk_models.dart';
 
 class RoverApiClient {
@@ -26,6 +27,43 @@ class RoverApiClient {
 
   final RoverApiConfig config;
   final HttpClient _httpClient;
+
+  Future<Map<String, dynamic>> searchDrivePlaces(String query, double lat, double lng) =>
+    _sendJson('GET', '/api/drive-places?query=${Uri.encodeQueryComponent(query)}&lat=$lat&lng=$lng');
+
+  Future<Map<String, dynamic>> planScenicDrive(Map<String, dynamic> request) =>
+    _sendJson('POST', '/api/scenic-drives', body: request,
+      responseTimeout: const Duration(seconds: 210));
+
+  Future<StoryQuestionResponse> researchStoryQuestion(
+    StoryQuestionRequest request,
+  ) async => StoryQuestionResponse.fromJson(
+    await _sendJson(
+      'POST',
+      '/api/story-questions',
+      body: request.toJson(),
+      responseTimeout: const Duration(seconds: 105),
+    ),
+  );
+
+  Future<Map<String, dynamic>> researchAreaStories({
+    required double latitude,
+    required double longitude,
+    required List<String> interests,
+    required List<String> excludedTitles,
+    int searchRadiusMeters = 1000,
+  }) => _sendJson(
+    'POST',
+    '/api/area-stories',
+    body: {
+      'latitude': latitude,
+      'longitude': longitude,
+      'interests': interests,
+      'excludedTitles': excludedTitles,
+      'searchRadiusMeters': searchRadiusMeters,
+    },
+    responseTimeout: const Duration(seconds: 105),
+  );
 
   Future<Map<String, dynamic>> getHealth() async {
     return _sendJson('GET', '/health');
@@ -142,8 +180,23 @@ class RoverApiClient {
     await _send('DELETE', '/api/profiles/$profileId');
   }
 
-  Future<WalkSession> createWalk(CreateWalkRequest request) async {
-    final json = await _sendJson('POST', '/api/walks', body: request.toJson());
+  Future<Map<String, dynamic>> searchWalkPlaces({
+    required String query,
+    required double latitude,
+    required double longitude,
+  }) => _sendJson(
+    'GET',
+    '/api/walk-places?query=${Uri.encodeQueryComponent(query)}&lat=$latitude&lng=$longitude',
+  );
+
+  Future<WalkSession> createWalk(
+    CreateWalkRequest request, {
+    String? profileId,
+  }) async {
+    final json = await _sendJson('POST', '/api/walks', body: {
+      ...request.toJson(),
+      if (request.profileId == null && profileId != null) 'profileId': profileId,
+    });
     return WalkSession.fromJson(json);
   }
 
@@ -298,6 +351,16 @@ class RoverApiClient {
     return LocationStoryResponse.fromJson(json);
   }
 
+  Future<LocationStoryResponse> createDriveStopStory({
+    required String id, required String name, required double latitude, required double longitude,
+  }) async {
+    final json = await _sendJson('POST', '/api/drive-stop-story', body: {
+      'placeId': id, 'query': name,
+      'location': {'latitude': latitude, 'longitude': longitude},
+    }, responseTimeout: const Duration(seconds: 105));
+    return LocationStoryResponse.fromJson(json);
+  }
+
   Future<LocationObservationResolution> resolveLocationObservation(
     LocationObservationResolveRequest request,
   ) async {
@@ -325,6 +388,23 @@ class RoverApiClient {
     );
     return LocationObservationResolution.fromJson(json);
   }
+
+  Future<Map<String, dynamic>> getStoryImages(
+    List<String> sourceUrls, {
+    double? latitude,
+    double? longitude,
+  }) => _sendJson(
+    'POST',
+    '/api/story-images',
+    body: {
+      'sourceUrls': sourceUrls,
+      if (latitude != null && longitude != null) ...{
+        'latitude': latitude,
+        'longitude': longitude,
+      },
+    },
+    responseTimeout: const Duration(seconds: 16),
+  );
 
   Future<LocationStoryContext> getLocationContext({
     required double latitude,
@@ -469,8 +549,14 @@ class RoverApiClient {
     String method,
     String path, {
     Map<String, Object?>? body,
+    Duration? responseTimeout,
   }) async {
-    final decoded = await _send(method, path, body: body);
+    final decoded = await _send(
+      method,
+      path,
+      body: body,
+      responseTimeout: responseTimeout,
+    );
     if (decoded is Map<String, dynamic>) {
       return decoded;
     }
@@ -525,6 +611,7 @@ class RoverApiClient {
     String method,
     String path, {
     Map<String, Object?>? body,
+    Duration? responseTimeout,
   }) async {
     final operationName = '$method $path';
     final stopwatch = Stopwatch()..start();
@@ -541,7 +628,9 @@ class RoverApiClient {
         request.write(jsonEncode(body));
       }
 
-      final response = await request.close().timeout(config.responseTimeout);
+      final response = await request.close().timeout(
+        responseTimeout ?? config.responseTimeout,
+      );
       final source = await response.transform(utf8.decoder).join();
       final decoded = source.trim().isEmpty ? null : jsonDecode(source);
 

@@ -1,5 +1,18 @@
 import 'dart:async';
 
+import 'walk_about_screens.dart';
+import 'tell_here_screen.dart';
+import '../location/location_controller.dart';
+import 'walk_about_theme.dart';
+import '../camera_explorer/camera_explorer_screen.dart';
+import '../memories/memory_store.dart';
+import '../memories/walk_trail_screen.dart';
+import '../sharing/shared_walks.dart';
+import '../memories/memories_screen.dart';
+import '../adventure/adventure_request.dart';
+import '../adventure/adventure_request_controller.dart';
+import '../location/background_walk_policy.dart';
+
 import 'package:flutter/material.dart';
 import 'package:flutter/foundation.dart';
 import 'package:flutter/services.dart';
@@ -10,9 +23,8 @@ import '../active_roam/active_roam_controller.dart';
 import '../active_roam/active_roam_session.dart';
 import '../adaptive_stories/adaptive_route_story_controller.dart';
 import '../adaptive_stories/rover_phase16_flags.dart';
-import '../adaptive_stories/route_story_question_dialog.dart';
-import '../adventure/adventure_request.dart';
-import '../adventure/adventure_request_controller.dart';
+import '../story_questions/story_question_controller.dart';
+import '../story_questions/story_question_sheet.dart';
 import '../adventure/roam.dart';
 import '../api/adaptation_models.dart';
 import '../api/adaptive_route_story_models.dart';
@@ -26,8 +38,8 @@ import '../api/rover_api_client.dart';
 import '../api/walk_repository.dart';
 import '../diagnostics/field_diagnostics.dart';
 import '../diagnostics/performance_diagnostics.dart';
-import '../location/location_controller.dart';
 import '../location/rover_location.dart';
+import '../just_walking/story_images.dart';
 import '../maps/rover_map_view.dart';
 import '../maps/rover_map_provider.dart';
 import '../on_device_ai/rover_on_device_ai_scope.dart';
@@ -37,6 +49,9 @@ import '../profile/installation_id_repository.dart';
 import '../voice/rover_premium_voice.dart';
 import '../voice/rover_voice_controller.dart';
 import '../voice/rover_voice_state.dart';
+import '../voice/stop_narration_controls.dart';
+
+part 'walkabout_journey_screens.dart';
 
 const _phase15Enabled = bool.fromEnvironment(
   'ROVER_PHASE15_ENABLED',
@@ -49,8 +64,8 @@ class WelcomeScreen extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     return BrandedScaffold(
-      title: 'ROVER',
-      subtitle: 'You bring the time. ROVER creates the adventure.',
+      title: 'Walkabout',
+      subtitle: 'Your adventure, curated as you go.',
       actions: [
         FilledButton(
           onPressed: () => context.go('/onboarding'),
@@ -66,7 +81,7 @@ class WelcomeScreen extends StatelessWidget {
           child: const Text('Continue as Guest'),
         ),
       ],
-      child: const RileyPlaceholder(),
+      child: const Center(child: WalkaboutBrand()),
     );
   }
 }
@@ -84,7 +99,7 @@ class AccountChoiceScreen extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     return BrandedScaffold(
-      title: 'ROVER account',
+      title: 'Walkabout account',
       subtitle: 'Save your walks, discoveries, and preferences across devices.',
       actions: [
         FilledButton.icon(
@@ -255,22 +270,6 @@ class _OnboardingScreenState extends State<OnboardingScreen> {
   int _step = 0;
   bool _seeded = false;
 
-  static const _interestOptions = [
-    'history',
-    'food',
-    'architecture',
-    'nature',
-    'art',
-    'movies',
-    'current events',
-    'hidden gems',
-    'culture',
-    'notable people',
-    'film and television',
-    'unusual facts',
-    'events',
-    'weather',
-  ];
   static const _paceOptions = ['easy', 'steady', 'brisk'];
   static const _timeOptions = [
     '30 minutes',
@@ -295,7 +294,7 @@ class _OnboardingScreenState extends State<OnboardingScreen> {
     final preferences = PreferencesScope.of(context).preferences;
     _firstNameController.text = preferences.firstName;
     _mobilityController.text = preferences.mobility;
-    _interests = preferences.interests.toSet();
+    _interests = preferences.interests.map((value) => value.toLowerCase()).toSet();
     _walkingPace = preferences.walkingPace;
     _availableTime = preferences.availableTime;
     _contentDepth = preferences.contentDepth;
@@ -311,9 +310,9 @@ class _OnboardingScreenState extends State<OnboardingScreen> {
   Widget build(BuildContext context) {
     final steps = [
       _OnboardingStep(
-        title: 'What should Riley call you?',
+        title: 'What should we call you?',
         subtitle:
-            'A first name helps ROVER make the adventure feel like yours.',
+            'A first name helps Walkabout make the walk feel like yours.',
         child: TextField(
           controller: _firstNameController,
           textInputAction: TextInputAction.next,
@@ -324,23 +323,23 @@ class _OnboardingScreenState extends State<OnboardingScreen> {
         ),
       ),
       _OnboardingStep(
-        title: 'What catches your eye?',
-        subtitle: 'Pick any mix. Riley will use these as hints, not homework.',
+        title: 'Your interests',
+        subtitle: 'What would you like to discover?',
         child: Wrap(
           spacing: 8,
           runSpacing: 8,
           children: [
-            for (final interest in _interestOptions)
+            for (final interest in {...walkInterests, ..._interests}.where((value) => value.isNotEmpty))
               FilterChip(
-                label: Text(interest),
+                label: Text('${interest[0].toUpperCase()}${interest.substring(1)}'),
                 selected: _interests.contains(interest),
-                onSelected: (selected) {
-                  setState(() {
-                    selected
-                        ? _interests.add(interest)
-                        : _interests.remove(interest);
-                  });
-                },
+                onSelected: (selected) => setState(() {
+                  if (selected) {
+                    _interests.add(interest);
+                  } else {
+                    _interests.remove(interest);
+                  }
+                }),
               ),
           ],
         ),
@@ -369,7 +368,7 @@ class _OnboardingScreenState extends State<OnboardingScreen> {
         ),
       ),
       _OnboardingStep(
-        title: 'Anything Riley should plan around?',
+        title: 'Anything we should plan around?',
         subtitle: 'Share mobility or accessibility notes in your own words, or skip for now.',
         child: TextField(
           controller: _mobilityController,
@@ -384,8 +383,8 @@ class _OnboardingScreenState extends State<OnboardingScreen> {
         ),
       ),
       _OnboardingStep(
-        title: 'How should ROVER tell the story?',
-        subtitle: 'A few preference switches keep future ROAMs tuned to you.',
+        title: 'How should Walkabout tell the story?',
+        subtitle: 'A few preference switches keep future walks tuned to you.',
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
@@ -450,7 +449,7 @@ class _OnboardingScreenState extends State<OnboardingScreen> {
 
     return Scaffold(
       appBar: AppBar(
-        title: const Text('Riley setup'),
+        title: const Text('Your Walkabout profile'),
         actions: [TextButton(onPressed: _finish, child: const Text('Skip'))],
       ),
       body: SafeArea(
@@ -588,80 +587,8 @@ class _ChoiceGroup extends StatelessWidget {
 
 class HomeScreen extends StatelessWidget {
   const HomeScreen({super.key});
-
   @override
-  Widget build(BuildContext context) {
-    return DestinationScaffold(
-      title: 'Home',
-      subtitle: 'What do you want to do?',
-      children: [
-        Text(
-          'I have 90 minutes. Take me for a walk.',
-          style: Theme.of(context).textTheme.headlineSmall
-              ?.copyWith(fontWeight: FontWeight.w800),
-        ),
-        const SizedBox(height: 8),
-        Text(
-          'Tell Riley what you have in mind for your walk.',
-          style: Theme.of(context).textTheme.bodyLarge
-              ?.copyWith(color: Theme.of(context).colorScheme.onSurfaceVariant),
-        ),
-        const SizedBox(height: 12),
-        Wrap(
-          spacing: 8,
-          runSpacing: 8,
-          children: [
-            ActionChip(
-              avatar: const Icon(Icons.timer_outlined),
-              label: const Text('I have 30 minutes'),
-              onPressed: () => context.go('/home/adventure-request?minutes=30'),
-            ),
-            ActionChip(
-              avatar: const Icon(Icons.timer_outlined),
-              label: const Text('I have 60 minutes'),
-              onPressed: () => context.go('/home/adventure-request?minutes=60'),
-            ),
-            ActionChip(
-              avatar: const Icon(Icons.timer_outlined),
-              label: const Text('I have 90 minutes'),
-              onPressed: () => context.go('/home/adventure-request?minutes=90'),
-            ),
-            ActionChip(
-              avatar: const Icon(Icons.near_me_outlined),
-              label: const Text('Show me what\'s nearby'),
-              onPressed: () =>
-                  context.go('/home/adventure-request?nearby=true'),
-            ),
-            ActionChip(
-              avatar: const Icon(Icons.auto_awesome_outlined),
-              label: const Text('Surprise me'),
-              onPressed: () =>
-                  context.go('/home/adventure-request?surprise=true'),
-            ),
-          ],
-        ),
-        const SizedBox(height: 12),
-        FeatureCard(
-          title: 'Build an adventure request',
-          subtitle: 'Set time, starting point, route style, and mood.',
-          icon: Icons.add_location_alt_outlined,
-          onTap: () => context.go('/home/adventure-request'),
-        ),
-        FeatureCard(
-          title: 'Route preview',
-          subtitle: 'Review your walk request.',
-          icon: Icons.map_outlined,
-          onTap: () => context.go('/home/route-preview'),
-        ),
-        FeatureCard(
-          title: 'Active ROAM',
-          subtitle: 'Resume your walk.',
-          icon: Icons.near_me_outlined,
-          onTap: () => context.go('/home/active-roam'),
-        ),
-      ],
-    );
-  }
+  Widget build(BuildContext context) => const WalkHomeScreen();
 }
 
 class ExploreScreen extends StatelessWidget {
@@ -684,585 +611,16 @@ class ExploreScreen extends StatelessWidget {
   }
 }
 
-class AdventureRequestScreen extends StatefulWidget {
+class AdventureRequestScreen extends StatelessWidget {
   const AdventureRequestScreen({super.key});
-
   @override
-  State<AdventureRequestScreen> createState() => _AdventureRequestScreenState();
+  Widget build(BuildContext context) => const WalkHomeScreen(fineTune: true);
 }
 
-class _AdventureRequestScreenState extends State<AdventureRequestScreen> {
-  final _formKey = GlobalKey<FormState>();
-  final _minutesController = TextEditingController();
-  final _naturalRequestController = TextEditingController();
-
-  late Set<String> _interests;
-  late String _routeMode;
-  late String _pace;
-  late String _routeShape;
-  late String _companions;
-  late String _environment;
-  late String _budget;
-  late bool _surpriseMe;
-  bool _seeded = false;
-
-  static const _interestOptions = [
-    'history',
-    'food',
-    'architecture',
-    'nature',
-    'art',
-    'movies',
-    'current events',
-    'hidden gems',
-  ];
-  static const _routeModes = ['Walking', 'Accessible route'];
-  static const _paces = ['Easy', 'Steady', 'Brisk'];
-  static const _routeShapes = ['Loop route', 'Different destination'];
-  static const _companionOptions = ['Solo', 'Couple', 'Family', 'Group'];
-  static const _environments = ['Indoor', 'Outdoor', 'Either'];
-  static const _budgets = ['Free-only', 'Include paid attractions'];
-
-  @override
-  void didChangeDependencies() {
-    super.didChangeDependencies();
-    if (_seeded) {
-      return;
-    }
-
-    final saved = AdventureRequestScope.of(context).request;
-    final preferences = PreferencesScope.of(context).preferences;
-    final request = saved ?? _requestFromPreferences(preferences);
-    final uri = GoRouterState.of(context).uri;
-    final minutes = uri.queryParameters['minutes'];
-    final cameraPlace = uri.queryParameters['cameraPlace']?.trim();
-
-    _minutesController.text = minutes ?? request.availableMinutes.toString();
-    _naturalRequestController.text = cameraPlace == null || cameraPlace.isEmpty
-        ? request.naturalRequest
-        : 'I have ${minutes ?? request.availableMinutes} minutes. Build a walk that visits $cameraPlace.';
-    _interests = {
-      ...request.interests,
-      if (cameraPlace != null && cameraPlace.isNotEmpty) 'hidden gems',
-    };
-    _routeMode = request.routeMode;
-    _pace = request.pace;
-    _routeShape = request.routeShape;
-    _companions = request.companions;
-    _environment = request.environment;
-    _budget = request.budget;
-    _surpriseMe = uri.queryParameters['surprise'] == 'true'
-        ? true
-        : request.surpriseMe;
-    _seeded = true;
-  }
-
-  AdventureRequest _requestFromPreferences(RoverPreferences preferences) {
-    final minutes = _minutesFromPreference(preferences.availableTime);
-    final interests =
-        preferences.interests
-            .map((interest) => interest.trim().toLowerCase())
-            .where((interest) => interest.isNotEmpty)
-            .toSet()
-            .toList()
-          ..sort();
-    final mobility = preferences.mobility.trim();
-
-    return AdventureRequest.empty.copyWith(
-      availableMinutes: minutes,
-      routeMode: _routeModeFromPreference(mobility),
-      interests: interests,
-      pace: _paceFromPreference(preferences.walkingPace),
-      budget: preferences.contentDepth.toLowerCase().contains('paid')
-          ? 'Include paid attractions'
-          : AdventureRequest.empty.budget,
-      naturalRequest: interests.isEmpty
-          ? 'I have $minutes minutes. Take me for a walk.'
-          : 'I have $minutes minutes. Build a ${interests.join(', ')} walk.',
-    );
-  }
-
-  int _minutesFromPreference(String value) {
-    final match = RegExp(r'\d+').firstMatch(value);
-    if (match == null) {
-      return AdventureRequest.empty.availableMinutes;
-    }
-
-    final parsed = int.tryParse(match.group(0)!);
-    if (parsed == null) {
-      return AdventureRequest.empty.availableMinutes;
-    }
-
-    return value.toLowerCase().contains('hour') ? parsed * 60 : parsed;
-  }
-
-  String _paceFromPreference(String value) {
-    return switch (value.toLowerCase()) {
-      'easy' => 'Easy',
-      'brisk' => 'Brisk',
-      'steady' => 'Steady',
-      _ => AdventureRequest.empty.pace,
-    };
-  }
-
-  String _routeModeFromPreference(String mobility) {
-    final value = mobility.toLowerCase();
-    if (value.contains('access') ||
-        value.contains('wheelchair') ||
-        value.contains('stairs') ||
-        value.contains('mobility')) {
-      return 'Accessible route';
-    }
-
-    return AdventureRequest.empty.routeMode;
-  }
-
-  @override
-  Widget build(BuildContext context) {
-    final locationController = LocationScope.of(context);
-    final location = locationController.location;
-    final failure = locationController.failure;
-
-    return Scaffold(
-      appBar: AppBar(title: const Text('Adventure request')),
-      body: SafeArea(
-        child: Form(
-          key: _formKey,
-          child: ListView(
-            padding: const EdgeInsets.fromLTRB(20, 12, 20, 28),
-            children: [
-              Text(
-                'What do you want to do?',
-                style: Theme.of(context).textTheme.headlineSmall
-                    ?.copyWith(fontWeight: FontWeight.w800),
-              ),
-              const SizedBox(height: 8),
-              Text(
-                'Start casual. Riley will build the walk from your current device location.',
-                style: Theme.of(context).textTheme.titleMedium?.copyWith(
-                  color: Theme.of(context).colorScheme.onSurfaceVariant,
-                ),
-              ),
-              const SizedBox(height: 20),
-              TextFormField(
-                controller: _naturalRequestController,
-                minLines: 2,
-                maxLines: 4,
-                textInputAction: TextInputAction.newline,
-                decoration: const InputDecoration(
-                  labelText: 'Natural request',
-                  helperText: 'Example: I have 90 minutes. Take me for a walk.',
-                ),
-              ),
-              const SizedBox(height: 16),
-              TextFormField(
-                controller: _minutesController,
-                keyboardType: TextInputType.number,
-                textInputAction: TextInputAction.next,
-                decoration: const InputDecoration(
-                  labelText: 'Available time',
-                  suffixText: 'minutes',
-                ),
-                validator: _validateMinutes,
-              ),
-              const SizedBox(height: 16),
-              _LocationRequestPanel(
-                location: location,
-                failure: failure,
-                isLoading: locationController.isLoading,
-                onRetry: _retryDeviceLocation,
-              ),
-              const SizedBox(height: 20),
-              _ChoiceGroup(
-                label: 'Walking or accessible route',
-                value: _routeMode,
-                options: _routeModes,
-                onChanged: (value) => setState(() => _routeMode = value),
-              ),
-              const SizedBox(height: 20),
-              _InterestPicker(
-                interests: _interests,
-                options: _interestOptions,
-                surpriseMe: _surpriseMe,
-                onChanged: (interest, selected) {
-                  setState(() {
-                    selected
-                        ? _interests.add(interest)
-                        : _interests.remove(interest);
-                  });
-                },
-              ),
-              const SizedBox(height: 20),
-              _ChoiceGroup(
-                label: 'Desired pace',
-                value: _pace,
-                options: _paces,
-                onChanged: (value) => setState(() => _pace = value),
-              ),
-              const SizedBox(height: 20),
-              _ChoiceGroup(
-                label: 'Route shape',
-                value: _routeShape,
-                options: _routeShapes,
-                onChanged: (value) => setState(() => _routeShape = value),
-              ),
-              const SizedBox(height: 20),
-              _ChoiceGroup(
-                label: 'Who is roaming?',
-                value: _companions,
-                options: _companionOptions,
-                onChanged: (value) => setState(() => _companions = value),
-              ),
-              const SizedBox(height: 20),
-              _ChoiceGroup(
-                label: 'Indoor/outdoor preference',
-                value: _environment,
-                options: _environments,
-                onChanged: (value) => setState(() => _environment = value),
-              ),
-              const SizedBox(height: 20),
-              _ChoiceGroup(
-                label: 'Attraction budget',
-                value: _budget,
-                options: _budgets,
-                onChanged: (value) => setState(() => _budget = value),
-              ),
-              const SizedBox(height: 20),
-              SwitchListTile(
-                contentPadding: EdgeInsets.zero,
-                title: const Text('Surprise me'),
-                subtitle: const Text(
-                  'Let Riley help with your walk preferences.',
-                ),
-                value: _surpriseMe,
-                onChanged: (value) => setState(() => _surpriseMe = value),
-              ),
-              const SizedBox(height: 24),
-              FilledButton(
-                onPressed: locationController.isLoading ? null : _save,
-                child: const Text('Create My Walk'),
-              ),
-            ],
-          ),
-        ),
-      ),
-    );
-  }
-
-  String? _validateMinutes(String? value) {
-    final minutes = int.tryParse(value?.trim() ?? '');
-    if (minutes == null) {
-      return 'How many minutes can Riley plan around?';
-    }
-
-    final request = AdventureRequest.empty.copyWith(
-      availableMinutes: minutes,
-      startingPoint: 'check',
-      interests: const ['check'],
-    );
-    final timeMessage = request.validate().where(
-      (message) => message.contains('minutes') || message.contains('hours'),
-    );
-
-    return timeMessage.isEmpty ? null : timeMessage.first;
-  }
-
-  Future<void> _save() async {
-    final form = _formKey.currentState;
-    if (form == null || !form.validate()) {
-      return;
-    }
-
-    final locationController = LocationScope.of(context);
-    final locationResult = await locationController.ensureDeviceLocation();
-    if (!mounted) {
-      return;
-    }
-    if (!locationResult.isSuccess) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(
-          content: Text('ROVER needs device location to create this walk.'),
-        ),
-      );
-      return;
-    }
-
-    final request = AdventureRequest(
-      availableMinutes: int.parse(_minutesController.text.trim()),
-      startingPoint: 'Current device location',
-      routeMode: _routeMode,
-      interests: _interests.toList()..sort(),
-      pace: _pace,
-      routeShape: _routeShape,
-      companions: _companions,
-      environment: _environment,
-      budget: _budget,
-      surpriseMe: _surpriseMe,
-      naturalRequest: _naturalRequestController.text.trim(),
-    );
-    final messages = request.validate();
-    if (messages.isNotEmpty) {
-      ScaffoldMessenger.of(context)
-          .showSnackBar(SnackBar(content: Text(messages.first)));
-      return;
-    }
-
-    AdventureRequestScope.of(context).save(request);
-    context.go('/home/route-preview');
-  }
-
-  Future<void> _retryDeviceLocation() async {
-    await LocationScope.of(context).ensureDeviceLocation(forceRefresh: true);
-  }
-
-  @override
-  void dispose() {
-    _minutesController.dispose();
-    _naturalRequestController.dispose();
-    super.dispose();
-  }
-}
-
-class _LocationRequestPanel extends StatelessWidget {
-  const _LocationRequestPanel({
-    required this.location,
-    required this.failure,
-    required this.isLoading,
-    required this.onRetry,
-  });
-
-  final RoverLatLng? location;
-  final LocationFailure? failure;
-  final bool isLoading;
-  final VoidCallback onRetry;
-
-  @override
-  Widget build(BuildContext context) {
-    final scheme = Theme.of(context).colorScheme;
-    return DecoratedBox(
-      decoration: BoxDecoration(
-        border: Border.all(color: scheme.outlineVariant),
-        borderRadius: BorderRadius.circular(8),
-      ),
-      child: Padding(
-        padding: const EdgeInsets.all(12),
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            Row(
-              children: [
-                Icon(
-                  location == null
-                      ? Icons.location_searching
-                      : Icons.location_on,
-                  color: scheme.primary,
-                ),
-                const SizedBox(width: 8),
-                Expanded(
-                  child: Text(
-                    'Starting location',
-                    style: Theme.of(context).textTheme.titleMedium,
-                  ),
-                ),
-              ],
-            ),
-            const SizedBox(height: 8),
-            Text(
-              isLoading
-                  ? 'Finding your device location...'
-                  : location == null
-                  ? 'Device location is required and will be used automatically.'
-                  : 'Device location active: $location',
-            ),
-            if (failure != null) ...[
-              const SizedBox(height: 8),
-              Text(
-                '${failure!.message} ${failure!.recovery}',
-                style: TextStyle(color: scheme.error),
-              ),
-            ],
-            if (!isLoading && location == null) ...[
-              const SizedBox(height: 12),
-              FilledButton.icon(
-                onPressed: onRetry,
-                icon: const Icon(Icons.refresh),
-                label: const Text('Retry device location'),
-              ),
-            ],
-            if (isLoading) ...[
-              const SizedBox(height: 12),
-              const LinearProgressIndicator(),
-            ],
-          ],
-        ),
-      ),
-    );
-  }
-}
-
-class _InterestPicker extends StatelessWidget {
-  const _InterestPicker({
-    required this.interests,
-    required this.options,
-    required this.surpriseMe,
-    required this.onChanged,
-  });
-
-  final Set<String> interests;
-  final List<String> options;
-  final bool surpriseMe;
-  final void Function(String interest, bool selected) onChanged;
-
-  @override
-  Widget build(BuildContext context) {
-    return Semantics(
-      label: 'Interests',
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          Text('Interests', style: Theme.of(context).textTheme.titleMedium),
-          const SizedBox(height: 8),
-          Text(
-            surpriseMe
-                ? 'Surprise mode can work without interests.'
-                : 'Pick at least one interest, or turn on Surprise me.',
-            style: Theme.of(context).textTheme.bodyMedium?.copyWith(
-              color: Theme.of(context).colorScheme.onSurfaceVariant,
-            ),
-          ),
-          const SizedBox(height: 8),
-          Wrap(
-            spacing: 8,
-            runSpacing: 8,
-            children: [
-              for (final interest in options)
-                FilterChip(
-                  label: Text(interest),
-                  selected: interests.contains(interest),
-                  onSelected: (selected) => onChanged(interest, selected),
-                ),
-            ],
-          ),
-        ],
-      ),
-    );
-  }
-}
-
-class RoutePreviewScreen extends StatefulWidget {
+class RoutePreviewScreen extends StatelessWidget {
   const RoutePreviewScreen({super.key});
-
   @override
-  State<RoutePreviewScreen> createState() => _RoutePreviewScreenState();
-}
-
-class _RoutePreviewScreenState extends State<RoutePreviewScreen> {
-  bool _isSubmitting = false;
-  String? _errorMessage;
-
-  @override
-  Widget build(BuildContext context) {
-    final request = AdventureRequestScope.of(context).request;
-    final controller = ActiveRoamScope.of(context);
-    return DetailScaffold(
-      title: 'Route preview',
-      subtitle: request == null
-          ? 'No adventure request yet.'
-          : 'Your walk request',
-      actions: [
-        OutlinedButton(
-          onPressed: _isSubmitting
-              ? null
-              : () => context.go('/home/adventure-request'),
-          child: Text(request == null ? 'Create request' : 'Edit request'),
-        ),
-        if (request != null)
-          FilledButton(
-            onPressed: _isSubmitting
-                ? null
-                : () => _createMiddlewareWalk(controller, request),
-            child: Text(_isSubmitting ? 'Finding places...' : 'Create My Walk'),
-          ),
-      ],
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          if (_isSubmitting) const LinearProgressIndicator(),
-          if (request != null) ...[
-            _PreferenceRow(
-              label: 'Available time',
-              value: '${request.availableMinutes} minutes',
-            ),
-            _PreferenceRow(
-              label: 'Interests',
-              value: request.interests.join(', '),
-            ),
-            _PreferenceRow(label: 'Pace', value: request.pace),
-          ],
-          const SizedBox(height: 16),
-          if (_errorMessage != null && request != null)
-            _ErrorPanel(
-              message: _errorMessage!,
-              onRetry: _isSubmitting
-                  ? () {}
-                  : () => _createMiddlewareWalk(controller, request),
-            )
-          else if (!_isSubmitting)
-            const PlaceholderPanel(
-              icon: Icons.route_outlined,
-              label: 'No route created yet',
-            ),
-        ],
-      ),
-    );
-  }
-
-  Future<void> _createMiddlewareWalk(
-    ActiveRoamController controller,
-    AdventureRequest request,
-  ) async {
-    if (_isSubmitting) {
-      return;
-    }
-    setState(() {
-      _isSubmitting = true;
-      _errorMessage = null;
-    });
-
-    final locationController = LocationScope.of(context);
-    final locationResult = await locationController.ensureDeviceLocation(
-      forceRefresh: true,
-    );
-    if (!mounted) {
-      return;
-    }
-    final location = locationResult.location;
-    if (location == null) {
-      setState(() {
-        _isSubmitting = false;
-        _errorMessage =
-            'ROVER needs an active device location to create a live walk. '
-            'Check Location Services and location permission, then try again.';
-      });
-      return;
-    }
-
-    await controller.createWalk(request: request, location: location);
-
-    if (!mounted) {
-      return;
-    }
-
-    final error = controller.session.errorMessage;
-    setState(() {
-      _isSubmitting = false;
-      _errorMessage = error;
-    });
-
-    if (error == null && controller.session.apiWalkSessionId != null) {
-      context.go('/home/active-roam');
-    }
-  }
+  Widget build(BuildContext context) => const WalkPreviewScreen();
 }
 
 class ActiveRoamScreen extends StatefulWidget {
@@ -1312,7 +670,8 @@ class _ActiveRoamScreenState extends State<ActiveRoamScreen> {
         voiceController: _voiceController,
         isForeground: () =>
             mounted &&
-            (WidgetsBinding.instance.lifecycleState == null ||
+            (supportsBackgroundWalking ||
+                WidgetsBinding.instance.lifecycleState == null ||
                 WidgetsBinding.instance.lifecycleState ==
                     AppLifecycleState.resumed),
       );
@@ -1335,7 +694,7 @@ class _ActiveRoamScreenState extends State<ActiveRoamScreen> {
     final session = controller.session;
     if (session.roam.stops.isEmpty) {
       return DetailScaffold(
-        title: 'Active ROAM',
+        title: 'Active walk',
         subtitle: 'No active walk',
         actions: [
           FilledButton(
@@ -1377,9 +736,9 @@ class _ActiveRoamScreenState extends State<ActiveRoamScreen> {
         session.completedStopIds.length >= session.roam.stops.length;
 
     return DetailScaffold(
-      title: 'Active ROAM',
+      title: 'Active walk',
       subtitle: isApiWalk
-          ? 'Connected to the local Rover middleware with foreground location during active navigation.'
+          ? 'Location and stories remain active during your walk, including with the screen locked on Android.'
           : 'Create a live walk from your current location to start navigation.',
       actions: [
         OutlinedButton.icon(
@@ -1387,6 +746,17 @@ class _ActiveRoamScreenState extends State<ActiveRoamScreen> {
           icon: const Icon(Icons.photo_camera_outlined),
           label: const Text('Camera Explorer'),
         ),
+        if (session.apiWalkSessionId != null)
+          OutlinedButton.icon(
+            icon: const Icon(Icons.photo_library_outlined),
+            label: const Text('Walk memories'),
+            onPressed: () async {
+              await _voiceController.stopAll();
+              if (!context.mounted) return;
+              await Navigator.of(context).push(MaterialPageRoute<void>(builder: (_) => MemoriesScreen(
+                journey: MemoryJourney(id: session.apiWalkSessionId!, route: session.roam))));
+            },
+          ),
         if (status == RoamSessionStatus.notStarted ||
             status == RoamSessionStatus.ended)
           FilledButton.icon(
@@ -1418,7 +788,7 @@ class _ActiveRoamScreenState extends State<ActiveRoamScreen> {
                 ? () => _confirmCancel(context, controller)
                 : controller.end,
             icon: const Icon(Icons.stop_circle_outlined),
-            label: Text(isApiWalk ? 'Cancel walk' : 'End ROAM'),
+            label: Text(isApiWalk ? 'Cancel walk' : 'End walk'),
           ),
         if (allStopsArrived && status == RoamSessionStatus.active)
           FilledButton.icon(
@@ -1578,8 +948,7 @@ class _ActiveRoamScreenState extends State<ActiveRoamScreen> {
             const SizedBox(height: 16),
             const PlaceholderPanel(
               icon: Icons.flag_circle_outlined,
-              label:
-                  'ROAM complete. Nice work getting Riley all the way through.',
+              label: 'Walk complete. Thanks for exploring with us.',
             ),
             const SizedBox(height: 12),
             FilledButton.icon(
@@ -1618,7 +987,9 @@ class _ActiveRoamScreenState extends State<ActiveRoamScreen> {
     );
 
     if (cancel == true) {
+      await _voiceController.stopAll();
       await controller.cancelApiWalk();
+      if (context.mounted) context.go('/home');
     }
   }
 }
@@ -2238,11 +1609,11 @@ class _AdaptationPanelState extends State<_AdaptationPanel> {
                         : () => unawaited(
                             controller.evaluateAdaptation(
                               requestedType: 'SkipStop',
-                              userRequest: 'Skip the next stop',
+                              userRequest: 'Skip the next stop and find a matching replacement ahead',
                             ),
                           ),
                     icon: const Icon(Icons.skip_next),
-                    label: const Text('Skip Next'),
+                    label: const Text('Skip and replace'),
                   ),
                   OutlinedButton.icon(
                     onPressed: controller.isBusy
@@ -2526,6 +1897,7 @@ class _AdaptationActions extends StatelessWidget {
       'ShortenWalk' => 'Shorten Walk',
       'ReturnToStart' => 'Return',
       'RejoinRoute' => 'Rejoin Route',
+      'FollowDirection' => 'Follow New Direction',
       _ => 'Apply Change',
     };
 
@@ -2585,6 +1957,7 @@ class _AdaptationActions extends StatelessWidget {
       return;
     }
 
+    if (controller.session.errorMessage != null || controller.session.pendingAdaptation != null) return;
     final placeText = addedNames.isEmpty
         ? _acceptedRouteOptionText(proposal)
         : addedNames.length == 1
@@ -2690,10 +2063,16 @@ class _AdaptiveRouteStoryPanel extends StatelessWidget {
                 Chip(label: Text(controller.readinessLabel)),
                 IconButton(
                   tooltip: 'Refresh route stories',
-                  onPressed: controller.isBusy
+                  onPressed: controller.isBusy || controller.isRefreshing
                       ? null
                       : () => unawaited(controller.refreshPack(session)),
-                  icon: const Icon(Icons.refresh),
+                  icon: controller.isRefreshing
+                      ? const SizedBox(
+                          width: 20,
+                          height: 20,
+                          child: CircularProgressIndicator(strokeWidth: 2),
+                        )
+                      : const Icon(Icons.refresh),
                 ),
               ],
             ),
@@ -2706,6 +2085,15 @@ class _AdaptiveRouteStoryPanel extends StatelessWidget {
                         ? 'downloaded for offline use'
                         : 'online sources'}',
             ),
+            Semantics(
+              liveRegion: true,
+              child: Text(
+                controller.listeningStatus(session),
+                style: const TextStyle(fontWeight: FontWeight.w600),
+              ),
+            ),
+            if (controller.refreshMessage != null)
+              Text(controller.refreshMessage!),
             Text(controller.researchStatus),
             if (pack?.collection case final collection?) ...[
               Text(
@@ -2720,7 +2108,9 @@ class _AdaptiveRouteStoryPanel extends StatelessWidget {
               ListTile(
                 contentPadding: EdgeInsets.zero,
                 title: Text(story.title),
-                subtitle: Text(controller.automaticStoryStatus(story, session)),
+                subtitle: Text(story.isBroaderContext
+                    ? '${story.geographicLabel}\n${controller.automaticStoryStatus(story, session)}'
+                    : controller.automaticStoryStatus(story, session)),
                 trailing: const Icon(Icons.chevron_right),
                 selected: selection?.story.storyId == story.storyId,
                 onTap: controller.isBusy
@@ -2729,9 +2119,7 @@ class _AdaptiveRouteStoryPanel extends StatelessWidget {
               ),
             const SizedBox(height: 8),
             OutlinedButton.icon(
-              onPressed: controller.isBusy
-                  ? null
-                  : () => _askAboutRoute(context),
+              onPressed: () => _askAboutRoute(context),
               icon: const Icon(Icons.question_answer_outlined),
               label: const Text('Ask about route'),
             ),
@@ -2767,7 +2155,16 @@ class _AdaptiveRouteStoryPanel extends StatelessWidget {
                 style: Theme.of(context).textTheme.bodySmall,
               ),
               const SizedBox(height: 6),
+              if (selection.story.sensitivityNotice case final notice?)
+                Text(
+                  notice,
+                  style: const TextStyle(fontWeight: FontWeight.w600),
+                ),
               Text(selection.variant.narration),
+              if (selection.story.uncertainClaims.isNotEmpty)
+                Text(
+                  'Source uncertainty: ${selection.story.uncertainClaims.join(' ')}',
+                ),
               const SizedBox(height: 10),
               Wrap(
                 spacing: 8,
@@ -2829,6 +2226,13 @@ class _AdaptiveRouteStoryPanel extends StatelessWidget {
                     label: const Text('Sources'),
                   ),
                 ],
+              ),
+              StoryImages(
+                key: ValueKey('pictures-${selection.story.storyId}'),
+                sourceUrls: selection.story.sources
+                    .map((s) => s.url)
+                    .whereType<String>()
+                    .toList(),
               ),
             ],
           ],
@@ -2903,10 +2307,29 @@ class _AdaptiveRouteStoryPanel extends StatelessWidget {
   }
 
   Future<void> _askAboutRoute(BuildContext context) async {
-    final question = await showRouteStoryQuestionDialog(context);
-    if (!context.mounted) return;
-    if (question == null || question.trim().isEmpty) return;
-    await controller.askAboutRoute(session, voiceController, question);
+    final active = ActiveRoamScope.of(context);
+    final walkId = active.session.apiWalkSessionId;
+    await showStoryQuestionSheet(
+      context,
+      title: 'Ask about route',
+      voice: voiceController,
+      currentSession: () => active.session,
+      currentContext: () {
+        final current = active.session;
+        final reading = active.latestLocationReading;
+        if (reading == null ||
+            current.apiWalkSessionId != walkId ||
+            current.status != RoamSessionStatus.active) {
+          return null;
+        }
+        return StoryQuestionContext(
+          reading: reading,
+          walkId: walkId,
+          routeRevision: current.routeRevision,
+          routeGeometry: current.roam.routeGeometry,
+        );
+      },
+    );
   }
 }
 
@@ -2929,7 +2352,7 @@ class _VoiceNarrationPanel extends StatelessWidget {
     final canAsk = isApiWalk && voiceController.canAsk;
     final activeController = ActiveRoamScope.of(context);
     return Semantics(
-      label: 'Rover voice narration and Ask Rover controls',
+      label: 'Walk About narration and question controls',
       child: DecoratedBox(
         decoration: BoxDecoration(
           border: Border.all(
@@ -2948,7 +2371,7 @@ class _VoiceNarrationPanel extends StatelessWidget {
                   const SizedBox(width: 8),
                   Expanded(
                     child: Text(
-                      'Rover voice',
+                      'Walk About voice',
                       style: Theme.of(context).textTheme.titleLarge,
                     ),
                   ),
@@ -3436,7 +2859,7 @@ class SavedRoamsScreen extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     return DestinationScaffold(
-      title: 'My ROAMs',
+      title: 'My walks',
       subtitle: 'Your walks and saved discoveries.',
       children: [
         FeatureCard(
@@ -3474,12 +2897,16 @@ class WalkHistoryScreen extends StatelessWidget {
 
     return DetailScaffold(
       title: 'Walk history',
-      subtitle: 'Walk recaps appear after a ROAM is completed or intentionally ended.',
+      subtitle: 'Walk recaps appear after a walk is completed or intentionally ended.',
+      actions: [OutlinedButton.icon(icon: const Icon(Icons.photo_library_outlined),
+        label: const Text('Adventure memories'),
+        onPressed: () => Navigator.of(context).push(MaterialPageRoute<void>(
+          builder: (_) => const MemoriesScreen(showHistory: true, captureEnabled: false))))],
       child: finished
           ? _PreferenceRow(
               label: session.status == RoamSessionStatus.completed
-                  ? 'Completed ROAM'
-                  : 'Ended ROAM',
+                  ? 'Completed walk'
+                  : 'Ended walk',
               value:
                   '${session.completedStopIds.length} stops visited - ${session.roam.distanceMiles.toStringAsFixed(1)} mi planned',
             )
@@ -3506,61 +2933,41 @@ class SavedDiscoveriesScreen extends StatelessWidget {
 
 class ProfileScreen extends StatelessWidget {
   const ProfileScreen({super.key});
-
   @override
-  Widget build(BuildContext context) {
-    final preferences = PreferencesScope.of(context).preferences;
-    final greeting = preferences.firstName.isEmpty
-        ? 'Guest rover'
-        : '${preferences.firstName}\'s ROVER';
-
-    return DestinationScaffold(
-      title: 'Profile',
-      subtitle: preferences.completedOnboarding
-          ? 'Your adventure preferences are saved locally.'
-          : 'Set up Riley so future ROAMs feel more like you.',
-      children: [
-        PlaceholderPanel(icon: Icons.account_circle_outlined, label: greeting),
-        FeatureCard(
-          title: 'Review preferences',
-          subtitle: 'Edit or reset your local personalization.',
-          icon: Icons.settings_outlined,
-          onTap: () => context.go('/profile/settings'),
+  Widget build(BuildContext context) => WalkProfileScreen(
+    floatingActionButton: const WalkaboutMic(),
+    extra: [
+      ListTile(
+        leading: const Icon(Icons.photo_library_outlined),
+        title: const Text('Walk Memories'),
+        onTap: () => context.push('/memories'),
+      ),
+      ListTile(
+        leading: const Icon(Icons.policy_outlined),
+        title: const Text('Legal notices'),
+        onTap: () => showLicensePage(
+          context: context,
+          applicationName: 'Walkabout',
+          applicationVersion: '1.0.0',
         ),
-        FeatureCard(
-          title: 'Account',
-          subtitle: 'Sign in, sync across devices, export data, or delete account data.',
-          icon: Icons.admin_panel_settings_outlined,
-          onTap: () => context.go('/profile/account'),
+      ),
+      if (kDebugMode)
+        ListTile(
+          leading: const Icon(Icons.graphic_eq),
+          title: const Text('Voice test'),
+          onTap: () => context.go('/profile/voice-test'),
         ),
-        FeatureCard(
-          title: 'Legal notices',
-          subtitle: 'Review application, map, and open-source licenses.',
-          icon: Icons.policy_outlined,
-          onTap: () => showLicensePage(
-            context: context,
-            applicationName: 'ROVER',
-            applicationVersion: '1.0.0',
-          ),
+      if (kDebugMode)
+        ListTile(
+          leading: const Icon(Icons.memory_outlined),
+          title: const Text('On-device AI'),
+          onTap: () => context.go('/profile/on-device-ai'),
         ),
-        if (kDebugMode)
-          FeatureCard(
-            title: 'Voice test',
-            subtitle: 'Check premium Rover voice and fallback behavior.',
-            icon: Icons.graphic_eq,
-            onTap: () => context.go('/profile/voice-test'),
-          ),
-        if (kDebugMode)
-          FeatureCard(
-            title: 'On-device AI',
-            subtitle: 'View the Android capability snapshot.',
-            icon: Icons.memory_outlined,
-            onTap: () => context.go('/profile/on-device-ai'),
-          ),
-        const _ProfileSyncPanel(),
-      ],
-    );
-  }
+      const _ProfileSyncPanel(),
+      ListTile(leading: const Icon(Icons.people_outline), title: const Text('Friends'),
+        onTap: () => context.push('/friends')),
+    ],
+  );
 }
 
 class VoiceTestScreen extends StatefulWidget {
@@ -3958,7 +3365,7 @@ class SettingsScreen extends StatelessWidget {
 
     return DetailScaffold(
       title: 'Preferences',
-      subtitle: 'Riley keeps these on this device for now. No account or backend is connected.',
+      subtitle: 'Your voice, narration, and walking preferences.',
       actions: [
         FilledButton(
           onPressed: () => context.go('/onboarding'),
@@ -4594,7 +4001,7 @@ class RoverNotFoundScreen extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     return BrandedScaffold(
-      title: 'ROAM not found',
+      title: 'Walk not found',
       subtitle: 'That path wandered off. Let\'s get you back to the trailhead.',
       actions: [
         FilledButton(
@@ -4618,7 +4025,7 @@ class RoverErrorScreen extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     return BrandedScaffold(
-      title: 'ROVER hit a bump',
+      title: 'Walkabout hit a bump',
       subtitle: 'Something unexpected happened, but your adventure can restart safely.',
       actions: [
         FilledButton(

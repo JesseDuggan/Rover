@@ -9,6 +9,7 @@ import 'package:flutter_compass/flutter_compass.dart';
 import 'package:geolocator/geolocator.dart';
 import 'package:go_router/go_router.dart';
 
+import '../ui/walk_about_theme.dart';
 import '../active_roam/active_roam_controller.dart';
 import '../active_roam/active_roam_session.dart';
 import '../api/location_story_models.dart';
@@ -35,7 +36,17 @@ import 'identification_photo.dart';
 import 'photo_identification_sheet.dart';
 
 class CameraExplorerScreen extends StatefulWidget {
-  const CameraExplorerScreen({this.hotelRateRepository, super.key});
+  const CameraExplorerScreen({
+    this.hotelRateRepository,
+    this.embedded = false,
+    this.voiceController,
+    this.onVoice,
+    super.key,
+  });
+
+  final bool embedded;
+  final RoverVoiceController? voiceController;
+  final VoidCallback? onVoice;
 
   final HotelRateRepository? hotelRateRepository;
 
@@ -77,6 +88,8 @@ class _CameraExplorerScreenState extends State<CameraExplorerScreen>
   bool _cameraPermissionDenied = false;
   bool _muted = false;
   bool _loadingCamera = false;
+  int _cameraGeneration = 0;
+  bool _scanMode = false;
   bool _loadingPois = false;
   bool _addingToWalk = false;
   bool _analyzingCapture = false;
@@ -94,12 +107,14 @@ class _CameraExplorerScreenState extends State<CameraExplorerScreen>
     WidgetsBinding.instance.addObserver(this);
     _hotelRateRepository =
         widget.hotelRateRepository ?? HttpHotelRateRepository();
-    _voiceController = RoverVoiceController(
-      walkRepository: _walkRepository,
-      premiumVoice: RoverPremiumVoiceCoordinator(
-        walkRepository: _walkRepository,
-      ),
-    );
+    _voiceController =
+        widget.voiceController ??
+        RoverVoiceController(
+          walkRepository: _walkRepository,
+          premiumVoice: RoverPremiumVoiceCoordinator(
+            walkRepository: _walkRepository,
+          ),
+        );
     unawaited(_initialize());
   }
 
@@ -122,7 +137,8 @@ class _CameraExplorerScreenState extends State<CameraExplorerScreen>
       unawaited(_lensService.cancel());
     }
     unawaited(_deleteCapture(_activeCapturePath));
-    _voiceController.dispose();
+    _cameraGeneration++;
+    if (widget.voiceController == null) _voiceController.dispose();
     super.dispose();
   }
 
@@ -135,6 +151,8 @@ class _CameraExplorerScreenState extends State<CameraExplorerScreen>
         'camera',
         'app backgrounded; releasing camera',
       );
+      _cameraGeneration++;
+      _loadingCamera = false;
       unawaited(_cameraController?.dispose());
       _cameraController = null;
       _captureRevision++;
@@ -143,7 +161,7 @@ class _CameraExplorerScreenState extends State<CameraExplorerScreen>
       }
       unawaited(_deleteCapture(_activeCapturePath));
       _activeCapturePath = null;
-      unawaited(_voiceController.stopAll());
+      if (widget.voiceController == null) unawaited(_voiceController.stopAll());
       unawaited(_compassSubscription?.cancel());
       _compassSubscription = null;
       if (mounted) {
@@ -202,9 +220,11 @@ class _CameraExplorerScreenState extends State<CameraExplorerScreen>
       _cameraPermissionDenied = false;
       _error = null;
     });
+    final generation = ++_cameraGeneration;
     final started = DateTime.now();
     try {
       final cameras = await availableCameras();
+      if (!mounted || generation != _cameraGeneration) return;
       CameraDescription? rearCamera;
       for (final camera in cameras) {
         if (camera.lensDirection == CameraLensDirection.back) {
@@ -233,7 +253,7 @@ class _CameraExplorerScreenState extends State<CameraExplorerScreen>
         'camera',
         'initialized rear camera in ${_cameraInitializationTime!.inMilliseconds} ms',
       );
-      if (!mounted) {
+      if (!mounted || generation != _cameraGeneration) {
         await controller.dispose();
         return;
       }
@@ -258,7 +278,7 @@ class _CameraExplorerScreenState extends State<CameraExplorerScreen>
             : 'Camera Explorer could not start the camera.';
       });
     } finally {
-      if (mounted) {
+      if (mounted && generation == _cameraGeneration) {
         setState(() => _loadingCamera = false);
       }
     }
@@ -579,6 +599,7 @@ class _CameraExplorerScreenState extends State<CameraExplorerScreen>
 
   @override
   Widget build(BuildContext context) {
+    if (widget.embedded) return _buildEmbedded(context);
     final session = ActiveRoamScope.of(context).session;
     final controller = _cameraController;
     final recognitionEnabled =
@@ -677,6 +698,202 @@ class _CameraExplorerScreenState extends State<CameraExplorerScreen>
                 ),
               ),
           ],
+        ),
+      ),
+    );
+  }
+
+  Widget _buildEmbedded(BuildContext context) {
+    final camera = _cameraController;
+    final ready = camera?.value.isInitialized == true;
+    return Column(
+      children: [
+        Expanded(
+          child: Stack(
+            fit: StackFit.expand,
+            children: [
+              if (ready)
+                CameraPreview(camera!)
+              else
+                _CameraFallback(
+                  loading: _loadingCamera,
+                  permissionDenied: _cameraPermissionDenied,
+                  error: _error,
+                ),
+              if (ready)
+                _OverlayLayer(
+                  overlays: _overlays,
+                  topInset: 72,
+                  onSelected: _showEmbeddedPlace,
+                ),
+              if (_error != null || _analyzingCapture)
+                Positioned(
+                  top: 12,
+                  left: 20,
+                  right: 20,
+                  child: Card(
+                    child: Padding(
+                      padding: const EdgeInsets.all(12),
+                      child: Text(
+                        _analyzingCapture ? 'Processing image...' : _error!,
+                        maxLines: 3,
+                        overflow: TextOverflow.ellipsis,
+                      ),
+                    ),
+                  ),
+                ),
+              if (!ready && !_loadingCamera)
+                Positioned(
+                  bottom: 12,
+                  left: 20,
+                  right: 20,
+                  child: Wrap(
+                    alignment: WrapAlignment.center,
+                    spacing: 8,
+                    children: [
+                      FilledButton.icon(
+                        onPressed: _initializeCamera,
+                        icon: const Icon(Icons.refresh),
+                        label: const Text('Retry camera'),
+                      ),
+                      if (_cameraPermissionDenied)
+                        TextButton.icon(
+                          onPressed: Geolocator.openAppSettings,
+                          icon: const Icon(Icons.settings_outlined),
+                          label: const Text('Settings'),
+                        ),
+                    ],
+                  ),
+                ),
+            ],
+          ),
+        ),
+        Material(
+          color: Colors.white.withValues(alpha: .9),
+          child: Padding(
+            padding: const EdgeInsets.all(14),
+            child: Wrap(
+              alignment: WrapAlignment.center,
+              spacing: 12,
+              runSpacing: 8,
+              crossAxisAlignment: WrapCrossAlignment.center,
+              children: [
+                OutlinedButton.icon(
+                  style: OutlinedButton.styleFrom(
+                    backgroundColor: !_scanMode
+                        ? const Color(0xFFE8F2FF)
+                        : null,
+                  ),
+                  onPressed: ready && !_analyzingCapture
+                      ? () {
+                          setState(() => _scanMode = false);
+                          unawaited(_identifyObject());
+                        }
+                      : null,
+                  icon: const Icon(Icons.center_focus_strong),
+                  label: const Text('Identify object'),
+                ),
+                OutlinedButton.icon(
+                  style: OutlinedButton.styleFrom(
+                    backgroundColor: _scanMode ? const Color(0xFFE8F2FF) : null,
+                  ),
+                  onPressed: ready && _recognitionEnabled && !_analyzingCapture
+                      ? () {
+                          setState(() => _scanMode = true);
+                          unawaited(_whatAmILookingAt());
+                        }
+                      : null,
+                  icon: const Icon(Icons.document_scanner_outlined),
+                  label: const Text('Scan sign'),
+                ),
+                IconButton.filled(
+                  tooltip: 'Walkabout AI',
+                  onPressed: widget.onVoice,
+                  style: IconButton.styleFrom(
+                    backgroundColor: WalkaboutColors.pink,
+                  ),
+                  icon: const Icon(Icons.mic_none),
+                ),
+                if (!_recognitionEnabled)
+                  const Text('Sign scanning unavailable in this build.'),
+              ],
+            ),
+          ),
+        ),
+      ],
+    );
+  }
+
+  Future<void> _showEmbeddedPlace(CameraOverlayCandidate overlay) async {
+    _selectOverlay(overlay);
+    final stops = ActiveRoamScope.of(context).session.roam.stops;
+    final matches = stops.where(
+      (s) =>
+          s.id == overlay.place.id ||
+          (s.providerPlaceId != null && s.providerPlaceId == overlay.place.id),
+    );
+    await showModalBottomSheet<void>(
+      context: context,
+      showDragHandle: true,
+      builder: (sheetContext) => SafeArea(
+        child: SingleChildScrollView(
+          padding: const EdgeInsets.all(22),
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Text(
+                overlay.place.name,
+                style: const TextStyle(fontWeight: FontWeight.w600),
+              ),
+              Text(
+                '${overlay.place.category} - ${distanceLabel(overlay.distanceMeters)}',
+              ),
+              const SizedBox(height: 12),
+              Text(
+                overlay.place.description,
+                maxLines: 3,
+                overflow: TextOverflow.ellipsis,
+              ),
+              const SizedBox(height: 12),
+              Wrap(
+                spacing: 8,
+                runSpacing: 8,
+                children: [
+                  if (matches.isNotEmpty)
+                    TextButton.icon(
+                      onPressed: () {
+                        Navigator.pop(sheetContext);
+                        context.go(
+                          '/profile/stops/${Uri.encodeComponent(matches.first.id)}',
+                        );
+                      },
+                      icon: const Icon(Icons.info_outline),
+                      label: const Text('Stop details'),
+                    ),
+                  FilledButton.icon(
+                    onPressed: () {
+                      Navigator.pop(sheetContext);
+                      unawaited(_hearStory(overlay));
+                    },
+                    icon: const Icon(Icons.play_arrow),
+                    label: const Text('Hear story'),
+                  ),
+                  if (matches.isEmpty)
+                    OutlinedButton.icon(
+                      onPressed: _addingToWalk
+                          ? null
+                          : () {
+                              Navigator.pop(sheetContext);
+                              unawaited(_addToWalk(overlay));
+                            },
+                      icon: const Icon(Icons.add),
+                      label: const Text('Add to walk'),
+                    ),
+                ],
+              ),
+            ],
+          ),
         ),
       ),
     );
@@ -1355,103 +1572,96 @@ class _CameraFallback extends StatelessWidget {
 }
 
 class _OverlayLayer extends StatelessWidget {
-  const _OverlayLayer({required this.overlays, required this.onSelected});
-
+  const _OverlayLayer({
+    required this.overlays,
+    required this.onSelected,
+    this.topInset = 150,
+  });
   final List<CameraOverlayCandidate> overlays;
   final ValueChanged<CameraOverlayCandidate> onSelected;
+  final double topInset;
 
   @override
-  Widget build(BuildContext context) {
-    return LayoutBuilder(
-      builder: (context, constraints) {
-        return Stack(
-          children: [
-            Center(
-              child: Container(
-                width: 30,
-                height: 30,
-                decoration: BoxDecoration(
-                  border: Border.all(color: Colors.white70, width: 2),
-                  shape: BoxShape.circle,
-                ),
+  Widget build(BuildContext context) => LayoutBuilder(
+    builder: (context, constraints) {
+      final rowHeight = 28 + MediaQuery.textScalerOf(context).scale(16) * 1.4;
+      final available =
+          ((constraints.maxHeight - topInset - 24) / (rowHeight + 16))
+              .floor()
+              .clamp(0, 3);
+      final visible = overlays.take(available).toList();
+      final width = (constraints.maxWidth * .72).clamp(0.0, 270.0);
+      return Stack(
+        children: [
+          for (var i = 0; i < visible.length; i++)
+            Positioned(
+              left:
+                  (visible[i].horizontalPosition * constraints.maxWidth -
+                          width / 2)
+                      .clamp(
+                        8.0,
+                        (constraints.maxWidth - width - 8).clamp(
+                          8.0,
+                          double.infinity,
+                        ),
+                      ),
+              top: topInset + i * (rowHeight + 16),
+              width: width,
+              height: rowHeight,
+              child: _PoiBubble(
+                overlay: visible[i],
+                onTap: () => onSelected(visible[i]),
               ),
             ),
-            for (var i = 0; i < overlays.length; i++)
-              Positioned(
-                left:
-                    overlays[i].horizontalPosition * constraints.maxWidth - 92,
-                top: 150 + i * 58,
-                child: _PoiBubble(
-                  overlay: overlays[i],
-                  onTap: () => onSelected(overlays[i]),
-                ),
-              ),
-          ],
-        );
-      },
-    );
-  }
+        ],
+      );
+    },
+  );
 }
 
 class _PoiBubble extends StatelessWidget {
   const _PoiBubble({required this.overlay, required this.onTap});
-
   final CameraOverlayCandidate overlay;
   final VoidCallback onTap;
-
   @override
-  Widget build(BuildContext context) {
-    final place = overlay.place;
-    return Semantics(
-      button: true,
-      label:
-          '${place.name}, ${distanceLabel(overlay.distanceMeters)}, ${overlay.relativeDirection}',
-      child: Material(
-        color: Colors.black.withValues(alpha: 0.72),
-        borderRadius: BorderRadius.circular(8),
-        child: InkWell(
-          onTap: onTap,
-          borderRadius: BorderRadius.circular(8),
-          child: ConstrainedBox(
-            constraints: const BoxConstraints(maxWidth: 184, minWidth: 132),
-            child: Padding(
-              padding: const EdgeInsets.all(10),
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                mainAxisSize: MainAxisSize.min,
-                children: [
-                  Text(
-                    place.name,
-                    maxLines: 1,
-                    overflow: TextOverflow.ellipsis,
-                    style: const TextStyle(
-                      color: Colors.white,
-                      fontWeight: FontWeight.w700,
-                    ),
-                  ),
-                  const SizedBox(height: 3),
-                  Text(
-                    '${distanceLabel(overlay.distanceMeters)} - ${overlay.relativeDirection}',
-                    style: const TextStyle(color: Colors.white),
-                  ),
-                  if (place.isCurrentOrNextStop)
-                    const Text(
-                      'Walk stop',
-                      style: TextStyle(color: Colors.white),
-                    ),
-                  if (place.storyAvailable)
-                    const Text(
-                      'Story available',
-                      style: TextStyle(color: Colors.white),
-                    ),
-                ],
+  Widget build(BuildContext context) => Semantics(
+    button: true,
+    label:
+        '${overlay.place.name}, ${distanceLabel(overlay.distanceMeters)}, ${overlay.relativeDirection}',
+    child: Material(
+      color: Colors.white.withValues(alpha: .79),
+      borderRadius: BorderRadius.circular(16),
+      child: InkWell(
+        onTap: onTap,
+        borderRadius: BorderRadius.circular(16),
+        child: Padding(
+          padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
+          child: Row(
+            children: [
+              const Icon(
+                Icons.place_outlined,
+                size: 24,
+                color: WalkaboutColors.teal,
               ),
-            ),
+              const SizedBox(width: 8),
+              Expanded(
+                child: Text(
+                  overlay.place.name,
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                  style: const TextStyle(
+                    color: WalkaboutColors.navy,
+                    fontSize: 16,
+                    fontWeight: FontWeight.w600,
+                  ),
+                ),
+              ),
+            ],
           ),
         ),
       ),
-    );
-  }
+    ),
+  );
 }
 
 class _CameraTopBar extends StatelessWidget {

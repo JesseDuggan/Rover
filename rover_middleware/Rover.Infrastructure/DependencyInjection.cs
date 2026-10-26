@@ -242,7 +242,8 @@ public static class DependencyInjection
             SearchMaxOutputTokens = configuration.GetValue("Rover:Phase16:LocalResearch:SearchMaxOutputTokens", 8192),
             ClassificationMaxOutputTokens = configuration.GetValue("Rover:Phase16:LocalResearch:ClassificationMaxOutputTokens", 4096),
             MaximumCollectionStories = configuration.GetValue("Rover:Phase16:LocalResearch:MaximumCollectionStories", 8),
-            CaptureRejectedResponses = EnvironmentFlag("ROVER_LOCAL_RESEARCH_CAPTURE_REJECTIONS", false)
+            CaptureRejectedResponses = EnvironmentFlag("ROVER_LOCAL_RESEARCH_CAPTURE_REJECTIONS", false),
+            CoordinateDiagnostics = EnvironmentFlag("ROVER_LOCAL_RESEARCH_COORDINATE_DIAGNOSTICS", false)
         });
         var sharedStories = new SharedStoryLibraryOptions
         {

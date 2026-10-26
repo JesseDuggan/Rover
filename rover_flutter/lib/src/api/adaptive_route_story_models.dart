@@ -208,6 +208,14 @@ class AdaptiveRouteStory {
     required this.sources,
     required this.evidenceScore,
     this.expiresUtc,
+    this.audienceSuitability = 'unreviewed',
+    this.sensitivityNotice,
+    this.uncertainClaims = const [],
+    this.temporalClassification = 'evergreen',
+    this.geographicScope = 'local',
+    this.geographicArea,
+    this.contextLatitude,
+    this.contextLongitude,
   });
 
   final String storyId;
@@ -225,6 +233,32 @@ class AdaptiveRouteStory {
   final List<RouteStorySource> sources;
   final double evidenceScore;
   final DateTime? expiresUtc;
+  final String audienceSuitability;
+  final String? sensitivityNotice;
+  final List<String> uncertainClaims;
+  final String temporalClassification;
+  final String geographicScope;
+  final String? geographicArea;
+  final double? contextLatitude;
+  final double? contextLongitude;
+  bool get isBroaderContext =>
+      geographicScope != 'local' &&
+      contextLatitude != null &&
+      contextLongitude != null;
+  double get relevanceLatitude =>
+      isBroaderContext ? contextLatitude! : latitude;
+  double get relevanceLongitude =>
+      isBroaderContext ? contextLongitude! : longitude;
+  String get geographicLabel => isBroaderContext
+      ? '$geographicScope context: ${geographicArea ?? ""}'
+      : 'Local story';
+  bool get canAutoplay =>
+      audienceSuitability == 'family' &&
+      (sensitivityNotice?.trim().isEmpty ?? true);
+  String spokenNarration(RouteStoryNarrationVariant variant) =>
+      sensitivityNotice?.trim().isNotEmpty == true
+      ? '${sensitivityNotice!.trim()} ${variant.narration}'
+      : variant.narration;
 
   factory AdaptiveRouteStory.fromJson(Map<String, dynamic> json) {
     final anchor = _map(json['anchor']);
@@ -247,6 +281,18 @@ class AdaptiveRouteStory {
       sources: _maps(json['sources']).map(RouteStorySource.fromJson).toList(),
       evidenceScore: (json['evidenceScore'] as num?)?.toDouble() ?? 0,
       expiresUtc: DateTime.tryParse(json['expiresUtc'] as String? ?? ''),
+      audienceSuitability:
+          json['audienceSuitability'] as String? ?? 'unreviewed',
+      sensitivityNotice: json['sensitivityNotice'] as String?,
+      uncertainClaims: _strings(json['uncertainClaims']),
+      temporalClassification:
+          json['temporalClassification'] as String? ?? 'evergreen',
+      geographicScope: json['geographicScope'] as String? ?? 'local',
+      geographicArea: json['geographicArea'] as String?,
+      contextLatitude: (_map(json['contextOrigin'])['latitude'] as num?)
+          ?.toDouble(),
+      contextLongitude: (_map(json['contextOrigin'])['longitude'] as num?)
+          ?.toDouble(),
     );
   }
 
@@ -279,6 +325,17 @@ class AdaptiveRouteStory {
     'claims': claims.map((claim) => claim.toJson()).toList(),
     'sources': sources.map((source) => source.toJson()).toList(),
     'evidenceScore': evidenceScore,
+    'audienceSuitability': audienceSuitability,
+    'sensitivityNotice': sensitivityNotice,
+    'uncertainClaims': uncertainClaims,
+    'temporalClassification': temporalClassification,
+    'geographicScope': geographicScope,
+    'geographicArea': geographicArea,
+    if (isBroaderContext)
+      'contextOrigin': {
+        'latitude': contextLatitude,
+        'longitude': contextLongitude,
+      },
     'expiresUtc': expiresUtc?.toUtc().toIso8601String(),
   };
 }

@@ -31,6 +31,7 @@ android {
     }
 
     defaultConfig {
+        manifestPlaceholders["appAuthRedirectScheme"] = "ai.myrover.rover"
         // TODO: Specify your own unique Application ID (https://developer.android.com/studio/build/application-id.html).
         applicationId = "ai.myrover.rover"
         // You can update the following values to match your application needs.

@@ -9,9 +9,12 @@ import '../api/adaptation_models.dart';
 import '../api/location_update_models.dart';
 import '../api/problem_details.dart';
 import '../api/walk_models.dart';
+import '../api/walk_place_models.dart';
 import '../api/walk_repository.dart';
 import '../diagnostics/field_diagnostics.dart';
 import '../location/rover_location.dart';
+import '../maps/navigation_map_geometry.dart';
+import '../memories/walk_trail_store.dart';
 import 'active_roam_repository.dart';
 import 'active_roam_session.dart';
 import 'screen_awake_controller.dart';
@@ -25,7 +28,8 @@ class ActiveRoamController extends ChangeNotifier {
   }) : _repository = repository ?? FileActiveRoamRepository(),
        _walkRepository = walkRepository ?? HttpWalkRepository(),
        _locationProvider =
-           locationProvider ?? const GeolocatorLocationProvider(),
+           locationProvider ??
+           const GeolocatorLocationProvider(backgroundWalking: true),
        _screenAwakeController =
            screenAwakeController ?? const WakelockScreenAwakeController();
 
@@ -33,28 +37,60 @@ class ActiveRoamController extends ChangeNotifier {
   final WalkRepository _walkRepository;
   final RoverLocationProvider _locationProvider;
   final ScreenAwakeController _screenAwakeController;
+  final WalkTrailStore _walkTrail = WalkTrailStore();
+  WalkTrailStore get trailStore => _walkTrail;
+  bool recordGpsTrail = false;
+  void setRecordGpsTrail(bool enabled) {
+    recordGpsTrail = enabled;
+    if (!enabled) unawaited(_walkTrail.pause(session.apiWalkSessionId));
+    notifyListeners();
+  }
 
   static const int _httpConflictStatusCode = 409;
 
   RoamSession? _session;
   bool _isLoaded = false;
   bool _isBusy = false;
+  bool _disposed = false;
+  int _trackingGeneration = 0;
+  Future<void> _pendingSave = Future<void>.value();
   StreamSubscription<RoverLocationReading>? _locationSubscription;
   RoverLocationReading? _lastSubmittedReading;
+  RoverLocationReading? _latestMapReading;
+  bool _mapVisible = false;
+  Future<void> _samplingChange = Future<void>.value();
   RoverLocationReading? _pendingLocationReading;
   bool _processingLocationReading = false;
-  bool _autoRejoinInFlight = false;
-  DateTime? _lastAutoRejoinAttemptUtc;
+  bool _directionProposalInFlight = false;
+  DateTime? _lastDirectionProposalUtc;
+  RoverLatLng? _directionProposalOrigin;
+  double? _directionProposalHeading;
   LocationFailure? _locationFailure;
   final Set<String> _deviceArrivalAttempts = <String>{};
   final Set<String> _insideGeofenceStopIds = <String>{};
   String? _lastAdaptationInterest;
 
   RoamSession get session => _session ?? RoamSession.empty();
+  WalkRepository get walkRepository => _walkRepository;
   bool get isLoaded => _isLoaded;
   bool get isBusy => _isBusy;
   bool get isTrackingLocation => _locationSubscription != null;
-  RoverLocationReading? get latestLocationReading => _lastSubmittedReading;
+  RoverLocationReading? get latestLocationReading => _latestMapReading ?? _lastSubmittedReading;
+
+  void setMapVisible(bool visible) {
+    if (_disposed || _mapVisible == visible) return;
+    _mapVisible = visible;
+    _samplingChange = _samplingChange.then((_) async {
+      if (!_disposed && isTrackingLocation) {
+        if (_mapVisible) {
+          await _screenAwakeController.enable();
+        } else {
+          await _screenAwakeController.disable();
+        }
+        await startLocationTracking();
+      }
+    }).catchError((Object _) {});
+  }
   LocationFailure? get locationFailure => _locationFailure;
 
   Future<bool> checkApiHealth() async {
@@ -69,8 +105,12 @@ class ActiveRoamController extends ChangeNotifier {
   Future<void> createWalk({
     required AdventureRequest request,
     required RoverLatLng location,
+    WalkPlaceSelection? selectedPlace,
+    String? profileId,
   }) async {
     await _runApiAction(() async {
+      await stopLocationTracking();
+      recordGpsTrail = false;
       _deviceArrivalAttempts.clear();
       _insideGeofenceStopIds.clear();
       final walk = await _walkRepository.createWalk(
@@ -81,8 +121,30 @@ class ActiveRoamController extends ChangeNotifier {
           interests: request.interests,
           walkingPace: _apiPace(request.pace),
           accessibilityPreferences: _accessibilityPreferences(request),
+          naturalRequest: request.naturalRequest,
+          companions: request.companions,
+          routeShape: request.routeShape,
+          environment: request.environment,
+          includePaidAttractions: request.budget == 'Include paid attractions',
+          surpriseMe: request.surpriseMe,
+          selectedPlace: selectedPlace,
+          profileId: profileId,
         ),
       );
+      await _save(_sessionFromWalk(walk));
+    });
+  }
+
+  Future<void> previewSavedWalk(WalkSession walk) async {
+    if (isBusy ||
+        session.status == RoamSessionStatus.active ||
+        session.status == RoamSessionStatus.paused) {
+      throw StateError('Finish your current walk before opening a saved walk.');
+    }
+    await _runApiAction(() async {
+      await stopLocationTracking();
+      _deviceArrivalAttempts.clear();
+      _insideGeofenceStopIds.clear();
       await _save(_sessionFromWalk(walk));
     });
   }
@@ -104,6 +166,7 @@ class ActiveRoamController extends ChangeNotifier {
   }
 
   Future<void> startLocationTracking() async {
+    final generation = _trackingGeneration;
     final walkSessionId = session.apiWalkSessionId;
     if (walkSessionId == null || session.status != RoamSessionStatus.active) {
       return;
@@ -122,9 +185,20 @@ class ActiveRoamController extends ChangeNotifier {
       }
     }
 
+    if (_disposed ||
+        generation != _trackingGeneration ||
+        session.apiWalkSessionId != walkSessionId ||
+        session.status != RoamSessionStatus.active) {
+      return;
+    }
     _locationFailure = null;
     await _locationSubscription?.cancel();
-    _locationSubscription = _locationProvider.watchLocation().listen(
+    if (_disposed || generation != _trackingGeneration) return;
+    final provider = _locationProvider;
+    final readings = provider is GeolocatorLocationProvider
+        ? provider.watchNavigationLocation(mapVisible: _mapVisible)
+        : provider.watchLocation();
+    _locationSubscription = readings.listen(
       (reading) => _queueLocationReading(walkSessionId, reading),
       onError: (_) {
         _locationFailure = const LocationFailure(
@@ -138,10 +212,14 @@ class ActiveRoamController extends ChangeNotifier {
   }
 
   Future<void> stopLocationTracking() async {
-    await _locationSubscription?.cancel();
+    _trackingGeneration++;
+    final subscription = _locationSubscription;
     _locationSubscription = null;
     _lastSubmittedReading = null;
+    _latestMapReading = null;
     _pendingLocationReading = null;
+    await subscription?.cancel();
+    await _walkTrail.pause(session.apiWalkSessionId);
     notifyListeners();
   }
 
@@ -149,6 +227,34 @@ class ActiveRoamController extends ChangeNotifier {
     String walkSessionId,
     RoverLocationReading reading,
   ) {
+    if (_disposed ||
+        session.apiWalkSessionId != walkSessionId ||
+        session.status != RoamSessionStatus.active) {
+      return;
+    }
+    final previous = _latestMapReading;
+    if (!reading.location.latitude.isFinite || !reading.location.longitude.isFinite ||
+        (reading.accuracyMeters != null &&
+            (!reading.accuracyMeters!.isFinite || reading.accuracyMeters! > 50)) ||
+        (previous != null && !reading.recordedAtUtc.isAfter(previous.recordedAtUtc))) {
+      return;
+    }
+    if (previous != null) {
+      final seconds = reading.recordedAtUtc.difference(previous.recordedAtUtc).inMilliseconds / 1000;
+      if (seconds < 5 && previous.location.distanceTo(reading.location) > 100) return;
+    }
+    _latestMapReading = reading;
+    if (recordGpsTrail && _locationProvider.requestsSystemPermission) {
+      unawaited(_walkTrail.record(walkSessionId, reading));
+    }
+    // Paint fresh GPS immediately, independent of HTTP and persistence latency.
+    _session = session.copyWith(
+      simulatedLocation: reading.location,
+      routeProgressPercentage: liveRouteProgress(session.roam.routeGeometry, reading.location),
+      currentGpsAccuracyMeters: reading.accuracyMeters,
+      currentHeadingDegrees: reading.headingDegrees,
+    );
+    notifyListeners();
     _pendingLocationReading = reading;
     if (_processingLocationReading) {
       return;
@@ -157,9 +263,12 @@ class ActiveRoamController extends ChangeNotifier {
   }
 
   Future<void> _drainLocationReadings(String walkSessionId) async {
+    final generation = _trackingGeneration;
     _processingLocationReading = true;
     try {
-      while (_pendingLocationReading != null) {
+      while (_pendingLocationReading != null &&
+          generation == _trackingGeneration &&
+          !_disposed) {
         final reading = _pendingLocationReading!;
         _pendingLocationReading = null;
         await _submitLocationReading(walkSessionId, reading);
@@ -167,7 +276,7 @@ class ActiveRoamController extends ChangeNotifier {
     } finally {
       _processingLocationReading = false;
       if (_pendingLocationReading != null && _locationSubscription != null) {
-        unawaited(_drainLocationReadings(walkSessionId));
+        unawaited(_drainLocationReadings(session.apiWalkSessionId!));
       }
     }
   }
@@ -245,15 +354,27 @@ class ActiveRoamController extends ChangeNotifier {
 
   Future<void> cancelApiWalk() async {
     final walkSessionId = session.apiWalkSessionId;
-    if (walkSessionId == null || _isBusy) {
+    if (_isBusy) {
       return;
     }
 
     await _runApiAction(() async {
-      final walk = await _walkRepository.cancelWalk(walkSessionId);
-      await _save(_sessionFromWalk(walk).copyWith(screenAwake: false));
-      await _screenAwakeController.disable();
-      await stopLocationTracking();
+      final alreadyFinished =
+          session.status == RoamSessionStatus.completed ||
+          session.status == RoamSessionStatus.ended;
+      await end();
+      if (walkSessionId == null || alreadyFinished) return;
+      try {
+        await _walkRepository
+            .cancelWalk(walkSessionId)
+            .timeout(const Duration(seconds: 5));
+      } catch (_) {
+        // The local walk is ended even if its server session no longer exists.
+        FieldDiagnostics.instance.record(
+          'walk',
+          'Walk ended locally; server cancellation was not confirmed.',
+        );
+      }
     });
   }
 
@@ -263,6 +384,8 @@ class ActiveRoamController extends ChangeNotifier {
     String? userRequest,
     int? availableMinutes,
     String? proposedDiscoveryId,
+    WalkPlaceSelection? selectedPlace,
+    RoverLatLng? location,
   }) async {
     final walkSessionId = session.apiWalkSessionId;
     if (walkSessionId == null || _isBusy) {
@@ -273,13 +396,15 @@ class ActiveRoamController extends ChangeNotifier {
     await _runApiAction(() async {
       final request = WalkAdaptationEvaluateRequest(
         routeRevision: session.routeRevision,
-        location: session.simulatedLocation,
+        location: location ?? session.simulatedLocation,
         requestedType: requestedType,
         availableMinutes: availableMinutes,
         userRequest: userRequest,
         interest: interest,
         proposedDiscoveryId: proposedDiscoveryId,
         dismissedDiscoveryIds: session.dismissedDiscoveryIds.toList(),
+        selectedPlace: selectedPlace,
+        headingDegrees: latestLocationReading?.headingDegrees,
       );
       final proposal = await _evaluateAdaptationWithRevisionRefresh(
         walkSessionId,
@@ -338,17 +463,34 @@ class ActiveRoamController extends ChangeNotifier {
     }
 
     await _runApiAction(() async {
+      if (proposal.type == 'FollowDirection' &&
+          (_directionProposalOrigin == null ||
+              session.simulatedLocation.distanceTo(_directionProposalOrigin!) > 30 ||
+              (_directionProposalHeading != null &&
+                  latestLocationReading?.headingDegrees != null &&
+                  ((latestLocationReading!.headingDegrees! - _directionProposalHeading! + 540) % 360 - 180).abs() > 60) ||
+              proposal.routeRevision != session.routeRevision ||
+              proposal.expiresAtUtc.isBefore(DateTime.now().toUtc()))) {
+        await _save(session.copyWith(
+          clearPendingAdaptation: true,
+          errorMessage: 'Your position or route changed. Keep walking to get a fresh suggestion.',
+        ));
+        _lastDirectionProposalUtc = null;
+        return;
+      }
       final dismissed = session.dismissedDiscoveryIds;
       final walk = await _acceptAdaptationWithRevisionRefresh(
         walkSessionId,
         proposal.adaptationId,
-        session.routeRevision,
+        proposal.routeRevision,
       );
       await _save(
         _sessionFromWalk(walk).copyWith(
           clearPendingAdaptation: true,
           dismissedDiscoveryIds: dismissed,
           savedDiscoveryIds: session.savedDiscoveryIds,
+          narratedArrivalStopIds: session.narratedArrivalStopIds,
+          skippedStopIds: session.skippedStopIds,
         ),
       );
     });
@@ -474,6 +616,9 @@ class ActiveRoamController extends ChangeNotifier {
     if (proposal == null) {
       return;
     }
+    if (proposal.type == 'FollowDirection') {
+      _lastDirectionProposalUtc = DateTime.now().toUtc();
+    }
 
     final dismissed = dismissDiscovery
         ? {...session.dismissedDiscoveryIds, ...proposal.affectedStops}
@@ -565,6 +710,7 @@ class ActiveRoamController extends ChangeNotifier {
   }
 
   Future<void> end() async {
+    await stopLocationTracking();
     await _save(
       session.copyWith(
         status: RoamSessionStatus.ended,
@@ -573,7 +719,6 @@ class ActiveRoamController extends ChangeNotifier {
       ),
     );
     await _screenAwakeController.disable();
-    await stopLocationTracking();
   }
 
   Future<void> completeCurrentStop() async {
@@ -674,20 +819,36 @@ class ActiveRoamController extends ChangeNotifier {
 
   @override
   void dispose() {
+    _disposed = true;
+    _trackingGeneration++;
+    _pendingLocationReading = null;
     _locationSubscription?.cancel();
+    unawaited(_walkTrail.close());
+    unawaited(_screenAwakeController.disable());
     super.dispose();
   }
 
+  @override
+  void notifyListeners() {
+    if (!_disposed) super.notifyListeners();
+  }
+
   Future<void> _save(RoamSession nextSession) async {
+    if (_disposed) return;
     final mergedArrivalStopIds = {
-      ...session.narratedArrivalStopIds,
+      if (session.apiWalkSessionId == nextSession.apiWalkSessionId)
+        ...session.narratedArrivalStopIds,
       ...nextSession.narratedArrivalStopIds,
     };
     final mergedSession = nextSession.copyWith(
       narratedArrivalStopIds: mergedArrivalStopIds,
+      errorMessage: nextSession.errorMessage,
     );
     _session = mergedSession;
-    await _repository.save(mergedSession);
+    // Preserve write order when GPS and lifecycle updates arrive together.
+    final write = _pendingSave.then((_) => _repository.save(mergedSession));
+    _pendingSave = write.catchError((Object _) {});
+    await write;
     notifyListeners();
   }
 
@@ -695,16 +856,19 @@ class ActiveRoamController extends ChangeNotifier {
     String walkSessionId,
     RoverLocationReading reading,
   ) async {
+    final generation = _trackingGeneration;
+    bool current() =>
+        !_disposed &&
+        generation == _trackingGeneration &&
+        session.apiWalkSessionId == walkSessionId &&
+        session.status == RoamSessionStatus.active;
+    if (!current()) return;
     if (!_shouldSubmitLocation(reading)) {
       return;
     }
 
     _lastSubmittedReading = reading;
-    _session = session.copyWith(
-      simulatedLocation: reading.location,
-      currentGpsAccuracyMeters: reading.accuracyMeters,
-      currentHeadingDegrees: reading.headingDegrees,
-    );
+    _session = _withLatestLocation(session);
     notifyListeners();
     try {
       final result = await _walkRepository.updateLocation(
@@ -717,15 +881,18 @@ class ActiveRoamController extends ChangeNotifier {
           speedMetersPerSecond: reading.speedMetersPerSecond,
         ),
       );
+      if (!current()) return;
       final nextSession = result.confirmedArrival == null
           ? _sessionFromLocationUpdate(result, reading)
           : await _sessionFromConfirmedArrival(walkSessionId, result, reading);
+      if (!current()) return;
       if (result.confirmedArrival == null) {
         final deviceArrival = await _tryConfirmDeviceGeofenceArrival(
           walkSessionId,
           result,
           reading,
         );
+        if (!current()) return;
         if (deviceArrival != null) {
           await _save(_withLatestLocation(deviceArrival));
           if (deviceArrival.status == RoamSessionStatus.completed ||
@@ -739,39 +906,51 @@ class ActiveRoamController extends ChangeNotifier {
           ? _sessionWithEnteredGeofenceNarration(nextSession, reading)
           : nextSession;
       await _save(_withLatestLocation(resolvedSession));
-      if (result.isOffRoute) {
-        await _tryAutoRejoinRoute(walkSessionId, reading);
+      if (result.accepted && result.isOffRoute && result.distanceFromRouteMeters >= 50) {
+        await _tryProposeDirection(walkSessionId, _latestMapReading ?? reading);
       }
       if (result.status == WalkStatus.completed ||
           result.status == WalkStatus.cancelled) {
         await stopLocationTracking();
       }
     } on RoverApiException catch (exception) {
+      if (!current()) return;
       _session = session.copyWith(errorMessage: exception.message);
       notifyListeners();
     }
   }
 
-  Future<void> _tryAutoRejoinRoute(
+  Future<void> _tryProposeDirection(
     String walkSessionId,
     RoverLocationReading reading,
   ) async {
+    final generation = _trackingGeneration;
+    bool current() =>
+        !_disposed &&
+        generation == _trackingGeneration &&
+        session.apiWalkSessionId == walkSessionId &&
+        session.status == RoamSessionStatus.active;
     final now = DateTime.now().toUtc();
-    final lastAttempt = _lastAutoRejoinAttemptUtc;
-    if (_autoRejoinInFlight ||
+    final lastAttempt = _lastDirectionProposalUtc;
+    final heading = reading.headingDegrees;
+    if (_directionProposalInFlight ||
         _isBusy ||
+        session.pendingAdaptation != null ||
+        heading == null || !heading.isFinite || heading < 0 || heading >= 360 ||
+        reading.accuracyMeters == null || reading.accuracyMeters! > 25 ||
+        (reading.speedMetersPerSecond ?? 0) < 0.4 ||
         session.status != RoamSessionStatus.active ||
         session.arrivedAtCurrentStop ||
         (lastAttempt != null &&
-            now.difference(lastAttempt) < const Duration(seconds: 30))) {
+            now.difference(lastAttempt) < const Duration(minutes: 5))) {
       return;
     }
 
-    _autoRejoinInFlight = true;
-    _lastAutoRejoinAttemptUtc = now;
+    _directionProposalInFlight = true;
+    _lastDirectionProposalUtc = now;
     FieldDiagnostics.instance.record(
       'navigation',
-      'off route confirmed; rebuilding Google route from current location',
+      'off route confirmed; preparing direction proposal for approval',
     );
     try {
       final proposal = await _evaluateAdaptationWithRevisionRefresh(
@@ -779,46 +958,44 @@ class ActiveRoamController extends ChangeNotifier {
         WalkAdaptationEvaluateRequest(
           routeRevision: session.routeRevision,
           location: reading.location,
-          requestedType: 'RejoinRoute',
-          userRequest: 'Automatically rejoin from the current GPS location',
+          requestedType: 'FollowDirection',
+          headingDegrees: heading,
+          userRequest: 'Suggest stops ahead within my remaining time; the destination may change',
           dismissedDiscoveryIds: session.dismissedDiscoveryIds.toList(),
         ),
       );
-      final walk = await _acceptAdaptationWithRevisionRefresh(
-        walkSessionId,
-        proposal.adaptationId,
-        proposal.routeRevision,
-      );
-      final rerouted = _sessionFromWalk(walk).copyWith(
-        simulatedLocation: reading.location,
-        currentGpsAccuracyMeters: reading.accuracyMeters,
-        currentHeadingDegrees: reading.headingDegrees,
-        dismissedDiscoveryIds: session.dismissedDiscoveryIds,
-        savedDiscoveryIds: session.savedDiscoveryIds,
-        clearPendingAdaptation: true,
-      );
-      await _save(rerouted);
+      if (!current() || session.pendingAdaptation != null) return;
+      if ((_latestMapReading?.location.distanceTo(reading.location) ?? 0) > 30) {
+        _lastDirectionProposalUtc = null;
+        return;
+      }
+      if (proposal.routeRevision != session.routeRevision) return;
+      _directionProposalOrigin = reading.location;
+      _directionProposalHeading = heading;
+      await _save(session.copyWith(pendingAdaptation: proposal));
       FieldDiagnostics.instance.record(
         'navigation',
-        'Google route rebuilt at revision ${walk.routeRevision}',
+        'direction proposal ready; current route unchanged',
       );
     } on RoverApiException catch (exception) {
       FieldDiagnostics.instance.record(
         'navigation',
-        'automatic rejoin deferred: ${exception.message}',
+        'direction proposal deferred: ${exception.message}',
       );
+      if (current()) await _save(session.copyWith(errorMessage: exception.message));
     } finally {
-      _autoRejoinInFlight = false;
+      _directionProposalInFlight = false;
     }
   }
 
   RoamSession _withLatestLocation(RoamSession nextSession) {
-    final latest = _lastSubmittedReading;
+    final latest = _latestMapReading ?? _lastSubmittedReading;
     if (latest == null) {
       return nextSession;
     }
     return nextSession.copyWith(
       simulatedLocation: latest.location,
+      routeProgressPercentage: liveRouteProgress(nextSession.roam.routeGeometry, latest.location),
       currentGpsAccuracyMeters: latest.accuracyMeters,
       currentHeadingDegrees: latest.headingDegrees,
     );
@@ -1000,10 +1177,11 @@ class ActiveRoamController extends ChangeNotifier {
 
     final seconds = reading.recordedAtUtc
         .difference(last.recordedAtUtc)
-        .inSeconds
-        .abs();
+        .inSeconds;
     final meters = reading.location.distanceTo(last.location);
-    return seconds >= 1 || meters >= 2;
+    // UI uses every fix; only synchronization is throttled to save radio use.
+    return seconds >= (_mapVisible ? 2 : 10) ||
+        (seconds >= 1 && meters >= (_mapVisible ? 3 : 10));
   }
 
   bool _crossedNextStopEntryEdge(

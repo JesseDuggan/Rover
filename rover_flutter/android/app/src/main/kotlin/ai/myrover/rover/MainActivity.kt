@@ -27,18 +27,20 @@ import java.io.File
 import java.io.FileInputStream
 
 class MainActivity : FlutterActivity(), TextToSpeech.OnInitListener {
+    private var memoryThumbnails: MemoryThumbnails? = null
     private var roverAiForeground = false
     private var roverAiHostApi: RoverOnDeviceAiHostApiImpl? = null
     private var tts: TextToSpeech? = null
     private var ttsReady = false
     private var speechRate = 0.48f
     private var pendingTtsConfigure: MutableList<Pair<Float, MethodChannel.Result>> = mutableListOf()
-    private var pendingTtsSpeak: MethodChannel.Result? = null
+    private val pendingTtsSpeak = PendingUtterance<MethodChannel.Result>()
     private var speechRecognizer: SpeechRecognizer? = null
     private var pendingSpeechResult: MethodChannel.Result? = null
     private var pendingPermissionResult: MethodChannel.Result? = null
+    private var pendingNotificationResult: MethodChannel.Result? = null
     private var premiumPlayer: MediaPlayer? = null
-    private var pendingPremiumResult: MethodChannel.Result? = null
+    private val pendingPremiumResult = PendingUtterance<MethodChannel.Result>()
     private var premiumAudioFile: File? = null
     private val audioManager by lazy { getSystemService(AUDIO_SERVICE) as AudioManager }
     private val audioFocusListener = AudioManager.OnAudioFocusChangeListener { change ->
@@ -49,6 +51,53 @@ class MainActivity : FlutterActivity(), TextToSpeech.OnInitListener {
 
     override fun configureFlutterEngine(flutterEngine: FlutterEngine) {
         super.configureFlutterEngine(flutterEngine)
+        memoryThumbnails = MemoryThumbnails(applicationContext, flutterEngine.dartExecutor.binaryMessenger)
+        MethodChannel(flutterEngine.dartExecutor.binaryMessenger, "ai.myrover.rover/drive")
+            .setMethodCallHandler { call, result ->
+                when (call.method) {
+                    "active" -> result.success(DriveNarrationService.active)
+                    "stop" -> {
+                        stopService(Intent(this, DriveNarrationService::class.java))
+                        result.success(null)
+                    }
+                    "start" -> {
+                        if (!roverAiForeground ||
+                            checkSelfPermission(Manifest.permission.ACCESS_FINE_LOCATION) != PackageManager.PERMISSION_GRANTED ||
+                            (android.os.Build.VERSION.SDK_INT >= 33 &&
+                            checkSelfPermission(Manifest.permission.POST_NOTIFICATIONS) != PackageManager.PERMISSION_GRANTED)) {
+                            result.error("drive_permission", "While parked, allow precise location and notifications before starting stories.", null)
+                        } else {
+                            val handler = android.os.Handler(android.os.Looper.getMainLooper())
+                            var settled = false
+                            val timeout = Runnable {
+                                if (!settled) {
+                                    settled = true
+                                    stopService(Intent(this, DriveNarrationService::class.java))
+                                    result.error("drive_start", "Drive stories could not start. Try again while parked.", null)
+                                }
+                            }
+                            val receiver = object : android.os.ResultReceiver(handler) {
+                                override fun onReceiveResult(code: Int, data: Bundle?) {
+                                    if (settled) return
+                                    settled = true
+                                    handler.removeCallbacks(timeout)
+                                    if (code == 0) result.success(null)
+                                    else result.error("drive_start", "Drive stories need GPS and downloaded audio. Try again while parked.", null)
+                                }
+                            }
+                            try {
+                                startForegroundService(Intent(this, DriveNarrationService::class.java)
+                                    .putExtra("path", call.argument<String>("path")).putExtra("receiver", receiver))
+                                handler.postDelayed(timeout, 10000)
+                            } catch (_: Exception) {
+                                settled = true
+                                result.error("drive_start", "Drive stories could not start. Keep Walkabout open while preparing.", null)
+                            }
+                        }
+                    }
+                    else -> result.notImplemented()
+                }
+            }
         MethodChannel(
             flutterEngine.dartExecutor.binaryMessenger,
             "ai.myrover.rover/voice"
@@ -71,6 +120,8 @@ class MainActivity : FlutterActivity(), TextToSpeech.OnInitListener {
     }
 
     override fun cleanUpFlutterEngine(flutterEngine: FlutterEngine) {
+        memoryThumbnails?.dispose()
+        memoryThumbnails = null
         RoverOnDeviceAiHostApi.setUp(flutterEngine.dartExecutor.binaryMessenger, null)
         roverAiHostApi = null
         super.cleanUpFlutterEngine(flutterEngine)
@@ -78,6 +129,14 @@ class MainActivity : FlutterActivity(), TextToSpeech.OnInitListener {
 
     private fun handleVoiceCall(call: MethodCall, result: MethodChannel.Result) {
         when (call.method) {
+            "walkingNotificationPermission" -> {
+                if (android.os.Build.VERSION.SDK_INT >= 33 &&
+                    checkSelfPermission(Manifest.permission.POST_NOTIFICATIONS) != PackageManager.PERMISSION_GRANTED) {
+                    pendingNotificationResult?.success(null)
+                    pendingNotificationResult = result
+                    requestPermissions(arrayOf(Manifest.permission.POST_NOTIFICATIONS), 7402)
+                } else result.success(null)
+            }
             "audioConfigure" -> configureAudio(result)
             "ttsConfigure" -> configureTts(call, result)
             "ttsSpeak" -> speak(call, result)
@@ -147,16 +206,20 @@ class MainActivity : FlutterActivity(), TextToSpeech.OnInitListener {
                 override fun onStart(utteranceId: String?) = Unit
 
                 override fun onDone(utteranceId: String?) {
-                    completePendingSpeak(null)
+                    completePendingSpeak(utteranceId, null)
                 }
 
                 @Deprecated("Deprecated in Java")
                 override fun onError(utteranceId: String?) {
-                    completePendingSpeak("Text-to-speech failed.")
+                    completePendingSpeak(utteranceId, "Text-to-speech failed.")
                 }
 
                 override fun onError(utteranceId: String?, errorCode: Int) {
-                    completePendingSpeak("Text-to-speech failed.")
+                    completePendingSpeak(utteranceId, "Text-to-speech failed.")
+                }
+
+                override fun onStop(utteranceId: String?, interrupted: Boolean) {
+                    completePendingSpeak(utteranceId, "Text-to-speech was interrupted.")
                 }
             })
         }
@@ -186,30 +249,30 @@ class MainActivity : FlutterActivity(), TextToSpeech.OnInitListener {
             result.error("tts_unavailable", "Text-to-speech is not ready yet.", null)
             return
         }
-        pendingTtsSpeak?.success(null)
-        requestNarrationAudioFocus()
-        pendingTtsSpeak = result
         val utteranceId = UUID.randomUUID().toString()
-        tts?.speak(text, TextToSpeech.QUEUE_FLUSH, Bundle.EMPTY, utteranceId)
+        pendingTtsSpeak.replace(utteranceId, result)?.success(null)
+        requestNarrationAudioFocus()
+        if (tts?.speak(text, TextToSpeech.QUEUE_FLUSH, Bundle.EMPTY, utteranceId) != TextToSpeech.SUCCESS) {
+            completePendingSpeak(utteranceId, "Text-to-speech could not start.")
+        }
     }
 
-    private fun completePendingSpeak(message: String?) {
+    private fun completePendingSpeak(utteranceId: String?, message: String?) {
         runOnUiThread {
-            val result = pendingTtsSpeak
-            pendingTtsSpeak = null
+            val result = pendingTtsSpeak.take(utteranceId) ?: return@runOnUiThread
             abandonNarrationAudioFocus()
             if (message == null) {
-                result?.success(null)
+                result.success(null)
             } else {
-                result?.error("tts_error", message, null)
+                result.error("tts_error", message, null)
             }
         }
     }
 
     private fun stopTts(result: MethodChannel.Result) {
+        val pending = pendingTtsSpeak.clear()
         tts?.stop()
-        pendingTtsSpeak?.success(null)
-        pendingTtsSpeak = null
+        pending?.success(null)
         abandonNarrationAudioFocus()
         result.success(null)
     }
@@ -222,35 +285,35 @@ class MainActivity : FlutterActivity(), TextToSpeech.OnInitListener {
         }
 
         stopPremiumAudioInternal(completePending = true)
+        val playbackId = UUID.randomUUID().toString()
+        pendingPremiumResult.replace(playbackId, result)
         try {
             requestNarrationAudioFocus()
             val file = File.createTempFile("rover-premium-", ".mp3", cacheDir)
             file.writeBytes(bytes)
             premiumAudioFile = file
-            pendingPremiumResult = result
-            val input = FileInputStream(file)
-            premiumPlayer = MediaPlayer().apply {
+            val player = MediaPlayer()
+            premiumPlayer = player
+            player.apply {
                 setAudioAttributes(
                     AudioAttributes.Builder()
                         .setUsage(AudioAttributes.USAGE_ASSISTANCE_NAVIGATION_GUIDANCE)
                         .setContentType(AudioAttributes.CONTENT_TYPE_SPEECH)
                         .build()
                 )
-                setDataSource(input.fd)
+                FileInputStream(file).use { input -> setDataSource(input.fd) }
                 setOnCompletionListener {
-                    completePremiumAudio(null)
+                    completePremiumAudio(playbackId, null)
                 }
                 setOnErrorListener { _, what, extra ->
-                    completePremiumAudio("Premium audio playback failed on Android MediaPlayer. what=$what extra=$extra")
+                    completePremiumAudio(playbackId, "Premium audio playback failed on Android MediaPlayer. what=$what extra=$extra")
                     true
                 }
                 prepare()
-                input.close()
                 start()
             }
         } catch (error: Exception) {
-            stopPremiumAudioInternal(completePending = true)
-            result.error("premium_audio_error", "Premium audio playback failed: ${error.javaClass.simpleName}.", null)
+            completePremiumAudio(playbackId, "Premium audio playback failed: ${error.javaClass.simpleName}.")
         }
     }
 
@@ -269,25 +332,25 @@ class MainActivity : FlutterActivity(), TextToSpeech.OnInitListener {
         result.success(null)
     }
 
-    private fun completePremiumAudio(message: String?) {
+    private fun completePremiumAudio(playbackId: String, message: String?) {
         runOnUiThread {
-            val result = pendingPremiumResult
+            val result = pendingPremiumResult.take(playbackId) ?: return@runOnUiThread
             stopPremiumAudioInternal(completePending = false)
             if (message == null) {
-                result?.success(null)
+                result.success(null)
             } else {
-                result?.error("premium_audio_error", message, null)
+                result.error("premium_audio_error", message, null)
             }
         }
     }
 
     private fun stopPremiumAudioInternal(completePending: Boolean = true) {
+        val pending = pendingPremiumResult.clear()
         premiumPlayer?.release()
         premiumPlayer = null
         if (completePending) {
-            pendingPremiumResult?.success(null)
+            pending?.success(null)
         }
-        pendingPremiumResult = null
         premiumAudioFile?.delete()
         premiumAudioFile = null
         abandonNarrationAudioFocus()
@@ -312,6 +375,12 @@ class MainActivity : FlutterActivity(), TextToSpeech.OnInitListener {
         grantResults: IntArray
     ) {
         super.onRequestPermissionsResult(requestCode, permissions, grantResults)
+        if (requestCode == 7402) {
+            // Denying notifications does not prevent a user-started location service.
+            pendingNotificationResult?.success(null)
+            pendingNotificationResult = null
+            return
+        }
         if (requestCode != MICROPHONE_PERMISSION_REQUEST) {
             return
         }

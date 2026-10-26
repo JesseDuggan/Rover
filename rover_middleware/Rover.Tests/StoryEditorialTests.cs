@@ -10,6 +10,20 @@ internal static class StoryEditorialTests
 {
     public static async Task SafetyAndEvidence()
     {
+        Check(StoryDuplicates.SimilarTitle("Floriande as a VINEX-era neighbourhood", "Floriande VINEX-era neighbourhood"),
+            "Minor title variations should be duplicates.");
+        Check(!StoryDuplicates.SimilarTitle("Floriande housing history", "Floriande wartime history"),
+            "Distinct subjects at the same place must survive.");
+        Check(!StoryDuplicates.SimilarTitle("", ""), "Empty titles are not evidence of duplication.");
+        var original = new AdaptiveRouteStory("original", "segment", "place",
+            "Floriande as a VINEX-era neighbourhood", default, "history", new GeoLocation(52, 4),
+            0, 100, [], [], [], 1, null);
+        var duplicate = original with { StoryId = "duplicate", Title = "Floriande VINEX-era neighbourhood" };
+        var distinct = original with { StoryId = "distinct", Title = "Floriande wartime history" };
+        var distant = duplicate with { StoryId = "distant", Anchor = new GeoLocation(53, 4) };
+        var filtered = StoryDuplicates.Remove([original, duplicate, distinct, distant]);
+        Check(filtered.Count == 3 && filtered[0].StoryId == "original" && filtered.Contains(distinct) && filtered.Contains(distant),
+            "Keep retained story identities and distinct or distant subjects when merging.");
         await Verify(false);
         await Verify(false, recovery: true);
         await Verify(false, recovery: true, areaRecovery: true);
@@ -114,14 +128,34 @@ internal static class StoryEditorialTests
                     Content = new StringContent(output, Encoding.UTF8, "application/json")
                 };
             }));
+            var logger = new ResearchCaptureLogger();
             var researcher = new OpenAILocalRouteResearcher(client,
-                new() { Enabled = true, ApiKey = "test", Model = "test" }, TimeProvider.System);
+                new() { Enabled = true, ApiKey = "private-diagnostic-key", Model = "test",
+                    CoordinateDiagnostics = !question }, TimeProvider.System, logger);
             var result = await researcher.ResearchAsync(new([segment],
                 new ApproximateLiveLocation(null, null, null, null), [], ["history"], "en") {
                     AreaFirst = !recovery || areaRecovery,
                     Question = question ? new("How did the workshop change?", StoryQuestionScope.Neighbourhood,
                         StoryQuestionFormat.ThenAndNow, 1, 180) : null
                 }, default);
+            var diagnostics = logger.Entries.Where(e => e.Message.StartsWith("StoryCoordinates")).Select(e => e.Message).ToArray();
+            Check(question ? diagnostics.Length == 0 : diagnostics.Length > 0,
+                "Coordinate diagnostics must be opt-in.");
+            Check(diagnostics.All(text => !text.Contains("52.2946778") && !text.Contains("4.7108732")
+                && !text.Contains("private-diagnostic-key") && !text.Contains("Workshop")
+                && !text.Contains("archive.example")), "Diagnostics must omit precise GPS, secrets and source content.");
+            if (!question)
+            {
+                Check(diagnostics.Any(text => text.Contains("nearestRouteLat=52.29") && text.Contains("nearestRouteLon=4.71")),
+                    "Diagnostics identify the route side of the comparison at coarse precision.");
+                if (coordinateCase is not null)
+                {
+                    var raw = coordinateCase == "missing" ? "Undefined" : coordinateCase == "null" ? "Null" : "0.00";
+                    Check(diagnostics.Any(text => text.Contains("rawLat=" + raw)
+                        && text.Contains("parsedLat=" + (coordinateCase == "zero" ? "0.00" : "unknown"))),
+                        "Diagnostics must distinguish absent, null and explicit zero coordinates.");
+                }
+            }
             if ((question || scope is not null) && !relevant)
             {
                 Check(result.Stories.Count == 0, "Cited but irrelevant passages are not answers.");

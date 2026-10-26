@@ -1,5 +1,7 @@
 import 'dart:async';
 
+import 'ui/walk_about_theme.dart';
+
 import 'package:flutter/material.dart';
 import 'package:go_router/go_router.dart';
 
@@ -106,32 +108,16 @@ class _RoverAppState extends State<RoverApp> {
 
   @override
   Widget build(BuildContext context) {
-    const seed = Color(0xFF2D6CDF);
-
     return FutureBuilder<void>(
       future: _preferencesLoad,
       builder: (context, snapshot) {
         final app = MaterialApp.router(
-          title: 'ROVER',
+          title: 'Walkabout',
           debugShowCheckedModeBanner: false,
-          themeMode: ThemeMode.system,
+          themeMode: ThemeMode.light,
           routerConfig: _router,
-          theme: ThemeData(
-            colorScheme: ColorScheme.fromSeed(
-              seedColor: seed,
-              brightness: Brightness.light,
-            ),
-            splashFactory: NoSplash.splashFactory,
-            useMaterial3: true,
-          ),
-          darkTheme: ThemeData(
-            colorScheme: ColorScheme.fromSeed(
-              seedColor: seed,
-              brightness: Brightness.dark,
-            ),
-            splashFactory: NoSplash.splashFactory,
-            useMaterial3: true,
-          ),
+          theme: walkAboutTheme(Brightness.light),
+          darkTheme: walkAboutTheme(Brightness.dark),
         );
 
         return FutureBuilder<void>(
@@ -140,13 +126,9 @@ class _RoverAppState extends State<RoverApp> {
             if (snapshot.connectionState != ConnectionState.done ||
                 activeSnapshot.connectionState != ConnectionState.done) {
               return MaterialApp(
-                title: 'ROVER',
+                title: 'Walkabout',
                 debugShowCheckedModeBanner: false,
-                theme: ThemeData(
-                  colorScheme: ColorScheme.fromSeed(seedColor: seed),
-                  splashFactory: NoSplash.splashFactory,
-                  useMaterial3: true,
-                ),
+                theme: walkAboutTheme(Brightness.light),
                 home: const Scaffold(
                   body: Center(child: CircularProgressIndicator()),
                 ),
@@ -246,6 +228,7 @@ class _RoverTestAppState extends State<RoverTestApp> {
     _activeRoamController = ActiveRoamController(
       repository: widget.activeRoamRepository ?? MemoryActiveRoamRepository(),
       walkRepository: widget.walkRepository,
+      locationProvider: widget.locationProvider,
       screenAwakeController: MemoryScreenAwakeController(),
     );
     _roverAiCoordinator = RoverOnDeviceAiCoordinator(
@@ -282,8 +265,6 @@ class _RoverTestAppState extends State<RoverTestApp> {
 
   @override
   Widget build(BuildContext context) {
-    const seed = Color(0xFF2D6CDF);
-
     return FutureBuilder<void>(
       future: _preferencesLoad,
       builder: (context, snapshot) {
@@ -310,12 +291,9 @@ class _RoverTestAppState extends State<RoverTestApp> {
                     child: RoverOnDeviceAiScope(
                       coordinator: _roverAiCoordinator,
                       child: MaterialApp.router(
+                        debugShowCheckedModeBanner: false,
                         routerConfig: _router,
-                        theme: ThemeData(
-                          colorScheme: ColorScheme.fromSeed(seedColor: seed),
-                          splashFactory: NoSplash.splashFactory,
-                          useMaterial3: true,
-                        ),
+                        theme: walkAboutTheme(Brightness.light),
                       ),
                     ),
                   ),

@@ -8,11 +8,13 @@ import 'location_observation_models.dart';
 import 'local_discovery_options.dart';
 import 'profile_models.dart';
 import '../location/rover_location.dart';
+import '../profile/installation_id_repository.dart';
 import '../on_device_ai/rover_offline_intelligence.dart';
 import 'problem_details.dart';
 import 'rover_api_client.dart';
 import 'speech_models.dart';
 import 'walk_models.dart';
+import 'walk_place_models.dart';
 
 abstract class WalkRepository {
   Future<Map<String, dynamic>> getHealth();
@@ -111,16 +113,36 @@ abstract class AdaptiveRouteStoryRepository {
 }
 
 class HttpWalkRepository
-    implements WalkRepository, AdaptiveRouteStoryRepository {
+    implements
+        WalkRepository,
+        AdaptiveRouteStoryRepository,
+        WalkPlaceRepository {
   HttpWalkRepository({
     RoverApiClient? client,
     RoverOfflineIntelligence? offlineIntelligence,
+    Future<String?> Function()? profileIdResolver,
   }) : _client = client ?? RoverApiClient(),
+       _profileIdResolver = profileIdResolver,
        _offlineIntelligence =
            offlineIntelligence ?? RoverOfflineIntelligence.instance;
 
   final RoverApiClient _client;
+  final Future<String?> Function()? _profileIdResolver;
+  final InstallationIdRepository _installationIds = InstallationIdRepository();
   final RoverOfflineIntelligence _offlineIntelligence;
+
+  @override
+  Future<WalkPlaceSearchResult> searchWalkPlaces({
+    required String query,
+    required double latitude,
+    required double longitude,
+  }) async => WalkPlaceSearchResult.fromJson(
+    await _client.searchWalkPlaces(
+      query: query,
+      latitude: latitude,
+      longitude: longitude,
+    ),
+  );
 
   @override
   Future<Map<String, dynamic>> getHealth() async {
@@ -188,8 +210,22 @@ class HttpWalkRepository
   }
 
   @override
-  Future<WalkSession> createWalk(CreateWalkRequest request) {
-    return _client.createWalk(request);
+  Future<WalkSession> createWalk(CreateWalkRequest request) async {
+    String? profileId = request.profileId;
+    if (profileId == null) {
+      try {
+        profileId = await (_profileIdResolver?.call() ?? _resolveProfileId())
+            .timeout(const Duration(seconds: 3));
+      } catch (_) {
+        // Tester enrollment is optional and must not prevent an ordinary walk.
+      }
+    }
+    return _client.createWalk(request, profileId: profileId);
+  }
+
+  Future<String?> _resolveProfileId() async {
+    final installationId = await _installationIds.loadOrCreate();
+    return (await _client.createOrGetGuestProfile(installationId)).profileId;
   }
 
   @override
@@ -291,7 +327,9 @@ class HttpWalkRepository
     try {
       final response = await _client.createLocationStory(request);
       _offlineIntelligence.markOnline();
-      await _offlineIntelligence.store(request, response);
+      if (request.narrationStyle != 'just-walking') {
+        await _offlineIntelligence.store(request, response);
+      }
       return response;
     } on RoverApiConnectionException {
       _offlineIntelligence.markOffline();

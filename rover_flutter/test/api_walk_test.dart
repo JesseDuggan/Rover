@@ -19,6 +19,7 @@ import 'package:rover/src/api/problem_details.dart';
 import 'package:rover/src/api/profile_models.dart';
 import 'package:rover/src/api/speech_models.dart';
 import 'package:rover/src/api/rover_api_config.dart';
+import 'package:rover/src/api/rover_api_client.dart';
 import 'package:rover/src/api/walk_models.dart';
 import 'package:rover/src/api/walk_repository.dart';
 import 'package:rover/src/location/rover_location.dart';
@@ -26,65 +27,119 @@ import 'package:rover/src/maps/google_maps_config.dart';
 import 'package:rover/src/maps/mapbox_config.dart';
 
 void main() {
+  test('live map moves while a location request is still pending', () async {
+    final locations = StreamController<RoverLocationReading>();
+    final repository = _DelayedLocationRepository();
+    final controller = ActiveRoamController(
+      repository: MemoryActiveRoamRepository(),
+      walkRepository: repository,
+      locationProvider: _StreamingLocationProvider(locations.stream),
+      screenAwakeController: MemoryScreenAwakeController(),
+    );
+    await controller.load();
+    await controller.createWalk(
+      request: _adventureRequest(),
+      location: const RoverLatLng(latitude: 37.7879, longitude: -122.4075),
+    );
+    await controller.startApiWalk();
+    final now = DateTime.now().toUtc();
+    locations.add(
+      RoverLocationReading(
+        location: const RoverLatLng(latitude: 37.7900, longitude: -122.4100),
+        recordedAtUtc: now,
+        accuracyMeters: 5,
+      ),
+    );
+    await repository.started.future;
+    const newer = RoverLatLng(latitude: 37.79004, longitude: -122.4100);
+    locations.add(
+      RoverLocationReading(
+        location: newer,
+        recordedAtUtc: now.add(const Duration(seconds: 2)),
+        accuracyMeters: 5,
+      ),
+    );
+    await Future<void>.delayed(Duration.zero);
+    expect(controller.session.simulatedLocation, newer);
+    repository.release.complete();
+    await Future<void>.delayed(const Duration(milliseconds: 100));
+    expect(controller.session.simulatedLocation, newer);
+    await controller.stopLocationTracking();
+    controller.dispose();
+    await locations.close();
+  });
+  test('API duration includes visits exactly once', () {
+    final walk = WalkSession.fromJson(_walkJson());
+    final roam = walk.toRoam();
+    expect(roam.contentMinutes, greaterThan(0));
+    expect(roam.totalEstimatedMinutes, walk.estimatedDurationMinutes);
+    expect(
+      roam.walkingMinutes,
+      walk.estimatedDurationMinutes - roam.contentMinutes,
+    );
+  });
   tearDown(() => RoverApiConfig.setDevelopmentOverride(null));
 
-  test(
-    'unheard geofence entry recovers despite a stale server candidate',
-    () async {
-      final locations = StreamController<RoverLocationReading>();
-      final controller = ActiveRoamController(
-        repository: MemoryActiveRoamRepository(),
-        walkRepository: _PendingArrivalRepository(),
-        locationProvider: _StreamingLocationProvider(locations.stream),
-        screenAwakeController: MemoryScreenAwakeController(),
-      );
-      await controller.load();
-      await controller.createWalk(
-        request: _adventureRequest(),
-        location: const RoverLatLng(latitude: 37.7879, longitude: -122.4075),
-      );
-      await controller.startApiWalk();
-      await controller.markArrivalNarrated('union-square-plaza');
-
-      Future<void> reading(int second) async {
-        final recordedAt = DateTime.utc(2026, 9, 17, 12, 0, second);
-        locations.add(
-          RoverLocationReading(
-            location: const RoverLatLng(
-              latitude: 37.7879,
-              longitude: -122.4075,
-            ),
-            recordedAtUtc: recordedAt,
-            accuracyMeters: 5,
-          ),
+  for (final offRoute in [false, true]) {
+    test(
+      'unheard geofence entry survives stale candidate and rejoin: offRoute=$offRoute',
+      () async {
+        final locations = StreamController<RoverLocationReading>();
+        final controller = ActiveRoamController(
+          repository: MemoryActiveRoamRepository(),
+          walkRepository: _PendingArrivalRepository(offRoute: offRoute),
+          locationProvider: _StreamingLocationProvider(locations.stream),
+          screenAwakeController: MemoryScreenAwakeController(),
         );
-        for (var attempt = 0; attempt < 100; attempt++) {
-          await Future<void>.delayed(const Duration(milliseconds: 10));
-          if (controller.latestLocationReading?.recordedAtUtc == recordedAt &&
-              controller.session.geofenceEntryDebug != null) {
-            return;
+        await controller.load();
+        await controller.createWalk(
+          request: _adventureRequest(),
+          location: const RoverLatLng(latitude: 37.7879, longitude: -122.4075),
+        );
+        await controller.startApiWalk();
+        await controller.markArrivalNarrated('union-square-plaza');
+
+        Future<void> reading(int second) async {
+          final recordedAt = DateTime.utc(2026, 9, 17, 12, 0, second);
+          locations.add(
+            RoverLocationReading(
+              location: const RoverLatLng(
+                latitude: 37.7879,
+                longitude: -122.4075,
+              ),
+              recordedAtUtc: recordedAt,
+              accuracyMeters: 5,
+            ),
+          );
+          for (var attempt = 0; attempt < 100; attempt++) {
+            await Future<void>.delayed(const Duration(milliseconds: 10));
+            if (controller.latestLocationReading?.recordedAtUtc == recordedAt &&
+                controller.session.geofenceEntryDebug != null) {
+              return;
+            }
           }
+          fail('Location update did not finish');
         }
-        fail('Location update did not finish');
-      }
 
-      await reading(0);
-      expect(controller.session.recentNarrationStopId, 'sponsored-gear-stop');
-      await reading(10);
-      expect(controller.session.recentNarrationStopId, 'sponsored-gear-stop');
-      expect(
-        controller.session.geofenceEntryDebug,
-        contains('recovered entry'),
-      );
-      await controller.markArrivalNarrated('sponsored-gear-stop');
-      await reading(20);
-      expect(controller.session.recentNarrationStopId, isNull);
+        await reading(0);
+        await Future<void>.delayed(const Duration(milliseconds: 100));
+        expect(controller.session.recentNarrationStopId, 'sponsored-gear-stop');
+        await reading(10);
+        expect(controller.session.recentNarrationStopId, 'sponsored-gear-stop');
+        expect(
+          controller.session.geofenceEntryDebug,
+          contains('recovered entry'),
+        );
+        await controller.markArrivalNarrated('sponsored-gear-stop');
+        await reading(20);
+        expect(controller.session.recentNarrationStopId, isNull);
 
-      await controller.stopLocationTracking();
-      await locations.close();
-      controller.dispose();
-    },
-  );
+        await controller.stopLocationTracking();
+        await locations.close();
+        controller.dispose();
+      },
+    );
+  }
 
   test('Phase 16 route story requests serialize and packs parse', () {
     const request = NextRouteStoryRequest(
@@ -209,8 +264,64 @@ void main() {
       'interests': ['architecture'],
       'walkingPace': 'Standard',
       'accessibilityPreferences': ['AvoidStairs'],
+      'naturalRequest': '',
+      'companions': 'Solo',
+      'routeShape': 'Loop route',
+      'environment': 'Either',
+      'includePaidAttractions': false,
+      'surpriseMe': false,
     });
   });
+
+  test('tester profile is optional and carries no market settings', () {
+    const request = CreateWalkRequest(
+      latitude: 43.65,
+      longitude: -79.37,
+      availableMinutes: 60,
+      interests: ['history'],
+      walkingPace: 'Standard',
+      accessibilityPreferences: [],
+      profileId: 'f8cf7c6e-86d3-4a6f-8da2-1a0e13a1340c',
+    );
+    expect(request.toJson()['profileId'], request.profileId);
+    expect(request.toJson().containsKey('market'), isFalse);
+  });
+
+  for (final mode in ['resolved', 'unavailable', 'explicit']) {
+    test('walk profile lookup is optional: $mode', () async {
+      final client = _ProfileCapturingApiClient();
+      addTearDown(client.close);
+      var lookups = 0;
+      final repository = HttpWalkRepository(
+        client: client,
+        profileIdResolver: () async {
+          lookups++;
+          if (mode == 'unavailable') throw StateError('Profile offline');
+          return 'f8cf7c6e-86d3-4a6f-8da2-1a0e13a1340c';
+        },
+      );
+      final session = await repository.createWalk(
+        CreateWalkRequest(
+          latitude: 43.65,
+          longitude: -79.37,
+          availableMinutes: 60,
+          interests: const ['history'],
+          walkingPace: 'Standard',
+          accessibilityPreferences: const [],
+          profileId: mode == 'explicit'
+              ? '11111111-1111-1111-1111-111111111111'
+              : null,
+        ),
+      );
+      expect(session.stops, isNotEmpty);
+      expect(lookups, mode == 'explicit' ? 0 : 1);
+      expect(client.receivedProfileId, switch (mode) {
+        'explicit' => '11111111-1111-1111-1111-111111111111',
+        'resolved' => 'f8cf7c6e-86d3-4a6f-8da2-1a0e13a1340c',
+        _ => null,
+      });
+    });
+  }
 
   test('Phase 15.8 narration memory contracts round trip', () {
     final occurredAt = DateTime.utc(2026, 9, 4, 12);
@@ -374,7 +485,54 @@ void main() {
       expect(controller.session.status, RoamSessionStatus.completed);
 
       await controller.cancelApiWalk();
-      expect(controller.session.errorMessage, contains('cannot be changed'));
+      expect(controller.session.status, RoamSessionStatus.ended);
+      expect(controller.session.errorMessage, isNull);
+    },
+  );
+
+  test(
+    'failed remote cancellation releases saved walk and rejects late GPS',
+    () async {
+      final locations = StreamController<RoverLocationReading>.broadcast();
+      final repository = _FailedCancellationRepository();
+      final storage = MemoryActiveRoamRepository();
+      final controller = ActiveRoamController(
+        repository: storage,
+        walkRepository: repository,
+        locationProvider: _StreamingLocationProvider(locations.stream),
+        screenAwakeController: MemoryScreenAwakeController(),
+      );
+      await controller.load();
+      await controller.createWalk(
+        request: _adventureRequest(),
+        location: const RoverLatLng(latitude: 37.7879, longitude: -122.4075),
+      );
+      await controller.startApiWalk();
+      locations.add(
+        RoverLocationReading(
+          location: const RoverLatLng(latitude: 37.7879, longitude: -122.4075),
+          recordedAtUtc: DateTime.now().toUtc(),
+          accuracyMeters: 5,
+        ),
+      );
+      await repository.started.future;
+      await controller.cancelApiWalk();
+      expect(controller.isTrackingLocation, isFalse);
+      expect(controller.session.status, RoamSessionStatus.ended);
+      expect(controller.session.errorMessage, isNull);
+      repository.release.complete();
+      await Future<void>.delayed(const Duration(milliseconds: 20));
+      expect(controller.session.status, RoamSessionStatus.ended);
+      expect((await storage.load())!.status, RoamSessionStatus.ended);
+      await controller.createWalk(
+        request: _adventureRequest(),
+        location: const RoverLatLng(latitude: 37.7879, longitude: -122.4075),
+      );
+      await controller.startApiWalk();
+      expect(controller.session.status, RoamSessionStatus.active);
+      expect(controller.isTrackingLocation, isTrue);
+      controller.dispose();
+      await locations.close();
     },
   );
 
@@ -405,46 +563,99 @@ void main() {
     );
   });
 
-  test(
-    'controller automatically accepts a Google rejoin when off route',
-    () async {
-      final locations = StreamController<RoverLocationReading>();
-      final repository = FakeWalkRepository(offRoute: true);
-      final controller = ActiveRoamController(
-        repository: MemoryActiveRoamRepository(),
-        walkRepository: repository,
-        locationProvider: _StreamingLocationProvider(locations.stream),
-        screenAwakeController: MemoryScreenAwakeController(),
-      );
-      await controller.load();
-      await controller.createWalk(
-        request: _adventureRequest(),
-        location: const RoverLatLng(latitude: 37.7879, longitude: -122.4075),
-      );
-      await controller.startApiWalk();
+  for (final outcome in ['accept', 'decline', 'moved', 'no heading', 'poor GPS', 'stationary']) {
+    test(
+      'off-route direction change requires approval: $outcome',
+      () async {
+        final locations = StreamController<RoverLocationReading>();
+        final repository = FakeWalkRepository(offRoute: true);
+        final controller = ActiveRoamController(
+          repository: MemoryActiveRoamRepository(),
+          walkRepository: repository,
+          locationProvider: _StreamingLocationProvider(locations.stream),
+          screenAwakeController: MemoryScreenAwakeController(),
+        );
+        await controller.load();
+        await controller.createWalk(
+          request: _adventureRequest(),
+          location: const RoverLatLng(latitude: 37.7879, longitude: -122.4075),
+        );
+        await controller.startApiWalk();
 
-      locations.add(
-        RoverLocationReading(
-          location: const RoverLatLng(latitude: 37.7920, longitude: -122.4140),
-          recordedAtUtc: DateTime.utc(2026, 9, 3, 12),
-          accuracyMeters: 5,
-        ),
-      );
-      for (
-        var attempt = 0;
-        attempt < 50 && !repository.calls.contains('acceptAdaptation:adapt-1');
-        attempt++
-      ) {
-        await Future<void>.delayed(const Duration(milliseconds: 10));
-      }
+        locations.add(
+          RoverLocationReading(
+            location: const RoverLatLng(
+              latitude: 37.7920,
+              longitude: -122.4140,
+            ),
+            recordedAtUtc: DateTime.utc(2026, 9, 3, 12),
+            accuracyMeters: outcome == 'poor GPS' ? 80 : 5,
+            headingDegrees: outcome == 'no heading' ? null : 90,
+            speedMetersPerSecond: outcome == 'stationary' ? 0 : 1.2,
+          ),
+        );
+        for (
+          var attempt = 0;
+          attempt < 50 && controller.session.pendingAdaptation == null;
+          attempt++
+        ) {
+          await Future<void>.delayed(const Duration(milliseconds: 10));
+        }
 
-      expect(repository.calls, contains('evaluateAdaptation:RejoinRoute'));
-      expect(repository.calls, contains('acceptAdaptation:adapt-1'));
-      await controller.stopLocationTracking();
-      await locations.close();
-      controller.dispose();
-    },
-  );
+        if (['no heading', 'poor GPS', 'stationary'].contains(outcome)) {
+          expect(repository.calls, isNot(contains('evaluateAdaptation:FollowDirection')));
+          expect(repository.calls, isNot(contains('acceptAdaptation:adapt-1')));
+          await controller.stopLocationTracking();
+          await locations.close();
+          controller.dispose();
+          return;
+        }
+        expect(repository.calls, contains('evaluateAdaptation:FollowDirection'));
+        expect(repository.calls, isNot(contains('acceptAdaptation:adapt-1')));
+        expect(controller.session.pendingAdaptation?.type, 'FollowDirection');
+        if (outcome == 'moved') {
+          locations.add(RoverLocationReading(
+            location: const RoverLatLng(latitude: 37.7920, longitude: -122.4100),
+            recordedAtUtc: DateTime.utc(2026, 9, 3, 12, 1),
+            accuracyMeters: 5, headingDegrees: 90, speedMetersPerSecond: 1.2));
+          await Future<void>.delayed(const Duration(milliseconds: 100));
+          await controller.acceptPendingAdaptation();
+          expect(repository.calls, isNot(contains('acceptAdaptation:adapt-1')));
+          expect(controller.session.errorMessage, contains('position or route changed'));
+        } else if (outcome == 'accept') {
+          await controller.acceptPendingAdaptation();
+          expect(repository.calls, contains('acceptAdaptation:adapt-1'));
+        } else {
+          await controller.rejectPendingAdaptation();
+          expect(repository.calls, contains('rejectAdaptation:adapt-1'));
+          expect(repository.calls, isNot(contains('acceptAdaptation:adapt-1')));
+          locations.add(
+            RoverLocationReading(
+              location: const RoverLatLng(
+                latitude: 37.7920,
+                longitude: -122.4138,
+              ),
+              recordedAtUtc: DateTime.utc(2026, 9, 3, 12, 1),
+              accuracyMeters: 5,
+              headingDegrees: 90,
+              speedMetersPerSecond: 1.2,
+            ),
+          );
+          await Future<void>.delayed(const Duration(milliseconds: 100));
+          expect(
+            repository.calls.where(
+              (call) => call == 'evaluateAdaptation:FollowDirection',
+            ),
+            hasLength(1),
+          );
+        }
+        expect(controller.session.pendingAdaptation, isNull);
+        await controller.stopLocationTracking();
+        await locations.close();
+        controller.dispose();
+      },
+    );
+  }
 
   test('timeout and connection failures surface typed messages', () {
     const timeout = RoverApiTimeoutException('timed out');
@@ -485,6 +696,7 @@ void main() {
 }
 
 class _PendingArrivalRepository extends FakeWalkRepository {
+  _PendingArrivalRepository({super.offRoute});
   @override
   Future<WalkSession> arriveAtStop(
     String walkSessionId,
@@ -579,6 +791,19 @@ AdventureRequest _adventureRequest() {
     interests: const ['architecture'],
     pace: 'Steady',
   );
+}
+
+class _ProfileCapturingApiClient extends RoverApiClient {
+  String? receivedProfileId;
+
+  @override
+  Future<WalkSession> createWalk(
+    CreateWalkRequest request, {
+    String? profileId,
+  }) async {
+    receivedProfileId = request.profileId ?? profileId;
+    return WalkSession.fromJson(_walkJson());
+  }
 }
 
 Map<String, dynamic> _walkJson({String status = 'Ready', int visited = 0}) {
@@ -729,6 +954,41 @@ Map<String, dynamic> _stopJson(
     'arrivalState': visited ? 'Arrived' : 'Pending',
     'arrivedAtUtc': visited ? '2026-08-27T14:50:07.9945999+00:00' : null,
   };
+}
+
+class _FailedCancellationRepository extends FakeWalkRepository {
+  final started = Completer<void>();
+  final release = Completer<void>();
+  @override
+  Future<LocationUpdateResult> updateLocation(
+    String id,
+    LocationUpdateRequest request,
+  ) async {
+    final result = await super.updateLocation(id, request);
+    started.complete();
+    await release.future;
+    return result;
+  }
+
+  @override
+  Future<WalkSession> cancelWalk(String id) async =>
+      throw StateError('Offline');
+}
+
+class _DelayedLocationRepository extends FakeWalkRepository {
+  final started = Completer<void>();
+  final release = Completer<void>();
+  @override
+  Future<LocationUpdateResult> updateLocation(
+    String id,
+    LocationUpdateRequest request,
+  ) async {
+    if (!started.isCompleted) {
+      started.complete();
+      await release.future;
+    }
+    return super.updateLocation(id, request);
+  }
 }
 
 class FakeWalkRepository implements WalkRepository {
@@ -987,7 +1247,12 @@ class FakeWalkRepository implements WalkRepository {
       'routeRevision': request.routeRevision,
       'proposedRouteRevision': request.routeRevision + 1,
       'createdAtUtc': '2026-08-27T15:00:03Z',
-      'expiresAtUtc': '2026-08-27T15:10:03Z',
+      'expiresAtUtc': request.requestedType == 'FollowDirection'
+          ? DateTime.now()
+                .toUtc()
+                .add(const Duration(minutes: 10))
+                .toIso8601String()
+          : '2026-08-27T15:10:03Z',
       'status': 'Proposed',
     });
   }

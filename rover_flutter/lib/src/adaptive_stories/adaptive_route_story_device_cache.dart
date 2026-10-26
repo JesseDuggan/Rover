@@ -130,6 +130,7 @@ class AdaptiveRouteStoryDeviceCache extends ChangeNotifier {
     final candidates =
         (state?.pack?.stories ?? const <AdaptiveRouteStory>[])
             .where((story) => !excluded.contains(story.storyId))
+            .where((story) => story.canAutoplay)
             .where(
               (story) =>
                   story.expiresUtc == null ||
@@ -151,12 +152,13 @@ class AdaptiveRouteStoryDeviceCache extends ChangeNotifier {
           });
     for (final story in candidates) {
       final variant = _variantFor(story, request);
-      if (variant != null)
+      if (variant != null) {
         return AdaptiveRouteStorySelection(
           story: story,
           variant: variant,
           reason: 'Selected from the downloaded route-story pack.',
         );
+      }
     }
     return null;
   }
@@ -240,6 +242,7 @@ class AdaptiveRouteStoryDeviceCache extends ChangeNotifier {
         : request.secondsUntilNextManeuver! - 15;
     final variants =
         story.variants
+            .where((variant) => variant.length != 'Deep')
             .where(
               (variant) =>
                   availableSeconds == null ||

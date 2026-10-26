@@ -339,6 +339,7 @@ AdaptiveRouteStoryPackState _state({
     ],
     sources: [source],
     evidenceScore: 0.9,
+    audienceSuitability: 'family',
     expiresUtc: storyExpiry,
   );
   return AdaptiveRouteStoryPackState(

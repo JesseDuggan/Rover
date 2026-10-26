@@ -1,5 +1,6 @@
 import '../location/rover_location.dart';
 import 'walk_models.dart';
+import 'walk_place_models.dart';
 
 class WalkAdaptationEvaluateRequest {
   const WalkAdaptationEvaluateRequest({
@@ -11,6 +12,8 @@ class WalkAdaptationEvaluateRequest {
     this.interest,
     this.proposedDiscoveryId,
     this.dismissedDiscoveryIds = const [],
+    this.selectedPlace,
+    this.headingDegrees,
   });
 
   final int routeRevision;
@@ -21,6 +24,8 @@ class WalkAdaptationEvaluateRequest {
   final String? interest;
   final String? proposedDiscoveryId;
   final List<String> dismissedDiscoveryIds;
+  final WalkPlaceSelection? selectedPlace;
+  final double? headingDegrees;
 
   WalkAdaptationEvaluateRequest copyWith({
     int? routeRevision,
@@ -40,6 +45,8 @@ class WalkAdaptationEvaluateRequest {
       userRequest: userRequest ?? this.userRequest,
       interest: interest ?? this.interest,
       proposedDiscoveryId: proposedDiscoveryId ?? this.proposedDiscoveryId,
+      selectedPlace: selectedPlace,
+      headingDegrees: headingDegrees,
       dismissedDiscoveryIds:
           dismissedDiscoveryIds ?? this.dismissedDiscoveryIds,
     );
@@ -51,11 +58,13 @@ class WalkAdaptationEvaluateRequest {
       'longitude': location?.longitude,
       'routeRevision': routeRevision,
       'requestedType': requestedType,
+      if (headingDegrees != null) 'headingDegrees': headingDegrees,
       'availableMinutes': availableMinutes,
       'userRequest': userRequest,
       'interest': interest,
       'proposedDiscoveryId': proposedDiscoveryId,
       'dismissedDiscoveryIds': dismissedDiscoveryIds,
+      if (selectedPlace != null) 'selectedPlace': selectedPlace!.toJson(),
     };
   }
 }
