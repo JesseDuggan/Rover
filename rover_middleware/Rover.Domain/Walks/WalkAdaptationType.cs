@@ -9,5 +9,6 @@ public enum WalkAdaptationType
     RejoinRoute,
     ReturnToStart,
     ContinueUnchanged,
-    SetDestination
+    SetDestination,
+    FollowDirection
 }

@@ -118,11 +118,11 @@ public sealed class WalkSession
                 ? null
                 : DistanceMeters(LastKnownLocation, NextStop.Location),
             EstimatedMinutesRemaining = Math.Max(0, Route.DurationMinutes + remainingStops.Sum(stop => stop.EstimatedVisitMinutes)),
-            IsOffRoute = proposal.Type != WalkAdaptationType.RejoinRoute && TrackingState.IsOffRoute,
-            RouteProgressPercentage = proposal.Type == WalkAdaptationType.RejoinRoute
+            IsOffRoute = proposal.Type is not (WalkAdaptationType.RejoinRoute or WalkAdaptationType.FollowDirection) && TrackingState.IsOffRoute,
+            RouteProgressPercentage = proposal.Type is WalkAdaptationType.RejoinRoute or WalkAdaptationType.FollowDirection
                 ? 0
                 : TrackingState.RouteProgressPercentage,
-            DistanceFromRouteMeters = proposal.Type == WalkAdaptationType.RejoinRoute
+            DistanceFromRouteMeters = proposal.Type is WalkAdaptationType.RejoinRoute or WalkAdaptationType.FollowDirection
                 ? 0
                 : TrackingState.DistanceFromRouteMeters,
             ArrivalCandidateStopId = null,

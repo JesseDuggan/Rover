@@ -485,6 +485,9 @@ public static class DependencyInjection
         });
         services.AddScoped<MockWalkRouteProvider>();
         services.AddScoped<GoogleRoutesWalkRouteProvider>();
+        services.AddScoped<Rover.Application.Drives.IDrivingRouteProvider, GoogleDrivingRouteProvider>();
+        services.AddScoped<Rover.Application.Drives.ScenicDriveService>();
+        services.AddScoped<Rover.Application.Drives.DriveStopStoryService>();
         services.AddScoped<NoOpLocalDiscoveryProvider>();
         services.AddScoped<MapboxLocalDiscoveryProvider>();
         services.AddScoped<GooglePlacesLocalDiscoveryProvider>();

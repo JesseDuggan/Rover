@@ -116,7 +116,8 @@ public sealed class WalkSessionService : IWalkSessionService
         var routeDistance = RouteMath.DistanceFromRouteMeters(command.Location, session.Route.Coordinates);
         var noisePadding = Math.Max(command.AccuracyMeters ?? 0, 0);
         var routeProgress = Math.Max(session.ProgressPercentage, RouteMath.ProgressPercentage(command.Location, session.Route));
-        var isOffRouteReading = routeDistance - noisePadding > _trackingOptions.OffRouteDistanceMeters;
+        var isOffRouteReading = command.AccuracyMeters is >= 0 and <= 25
+            && routeDistance - noisePadding >= _trackingOptions.OffRouteDistanceMeters;
         var offRouteCount = session.RecordOffRouteReading(isOffRouteReading);
         var isOffRoute = offRouteCount >= _trackingOptions.RequiredOffRouteReadings;
         var arrivalCandidate = false;

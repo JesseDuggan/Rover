@@ -14,19 +14,28 @@ internal static class StoryEditorialTests
         await Verify(false, recovery: true);
         await Verify(false, foodOnly: true);
         await Verify(true, foodOnly: true);
+        await Verify(false, recovery: true, areaRecovery: true);
+        foreach (var coordinateCase in new[] { "missing", "null", "zero" })
+            await Verify(false, recovery: true, areaRecovery: true, coordinateCase: coordinateCase);
+        foreach (var scope in new[] { "neighbourhood", "city", "county", "region", "country" })
+        {
+            await Verify(false, scope: scope);
+            await Verify(false, relevant: false, scope: scope);
+        }
     }
     public static async Task QuestionEvidence()
     {
         await Verify(true);
         await Verify(true, false);
     }
-    private static async Task Verify(bool question, bool relevant = true, bool recovery = false, bool foodOnly = false)
+    private static async Task Verify(bool question, bool relevant = true, bool recovery = false, bool foodOnly = false, string? scope = null, bool areaRecovery = false, string? coordinateCase = null)
     {
         var anchor = new GeoLocation(52.2946778, 4.7108732);
         var segment = new RouteStorySegment("area", 0, anchor, anchor, anchor, 0, 0, 0, 0, false, []);
         const string passage = "This test archive describes a local workshop and the people who worked there. " +
             "Accounts disagree about its opening date. The collection preserves their tools and written records. " +
-            "Those records explain how the workshop changed over time. The archive also documents the surrounding community.";
+            "Those records explain how the workshop changed over time. The archive also documents the surrounding community. " +
+            "Location: test archive; latitude 52.295; longitude 4.711.";
         foreach (var audience in new string?[] { "family", "sensitive", "mature", null })
         {
             var calls = 0;
@@ -43,8 +52,18 @@ internal static class StoryEditorialTests
                         && instructions.Contains("political movements") && instructions.Contains("source disagreements"),
                         "Editorial instructions must reach route-free research.");
                     Check(!input.Contains("Frankfurt"), "Location research must not depend on an old city.");
+                    if (!question)
+                    {
+                        Check(!input.Contains("All subjects must relate to the area within maximumStoryDistanceMeters")
+                            && !input.Contains("Subjects must be within maximumStoryDistanceMeters"),
+                            "Local-only instructions must not contradict geographic fallback.");
+                        var reader = new Utf8JsonReader(Encoding.UTF8.GetBytes(input));
+                        using var context = JsonDocument.ParseValue(ref reader);
+                        Check(context.RootElement.GetProperty("routeAreas")[0].GetProperty("latitude").GetDouble()
+                            == Math.Round(anchor.Latitude, 3), "Automatic research preserves neighbourhood-scale precision.");
+                    }
                     if (calls == 3)
-                        Check(input.Contains("Broaden topics and sources, not the geographic boundary"),
+                        Check(input.Contains("Follow the geographic fallback policy in order"),
                             "Retry must research neighbourhood evidence without widening eligibility.");
                     if (question)
                         Check(input.Contains("workshop") && instructions.Contains("actual question")
@@ -58,16 +77,39 @@ internal static class StoryEditorialTests
                 }
                 else
                 {
+                    var input = body.RootElement.GetProperty("input").GetString()!;
+                    var reader = new Utf8JsonReader(Encoding.UTF8.GetBytes(input));
+                    using var payload = JsonDocument.ParseValue(ref reader);
+                    Check(payload.RootElement.GetProperty("route").ValueKind == JsonValueKind.Object,
+                        "Classification context must be an object, not double-encoded JSON.");
                     Check(body.RootElement.GetProperty("instructions").GetString()!.Contains("audienceSuitability"),
                         "Classifier must perform an audience review.");
+                    if (!question)
+                        Check(body.RootElement.GetProperty("instructions").GetString()!.Contains("geographicScope local, neighbourhood, city, county, region or country"),
+                            "Scope policy must reach classifier instructions, not just untrusted evidence.");
                     var cards = JsonSerializer.Serialize(new { stories = new[] { new {
                         evidenceIndex = 0, title = "Workshop records", kind = "history",
-                        latitude = recovery && calls == 2 ? anchor.Latitude + 1 : anchor.Latitude, longitude = anchor.Longitude,
+                        latitude = scope is not null ? anchor.Latitude + 0.03 : recovery && calls == 2 ? anchor.Latitude + 1 : anchor.Latitude, longitude = anchor.Longitude,
+                        geographicScope = scope ?? "local",
+                        geographicArea = scope is null ? null : "test archive",
+                        geographicConnection = scope is null ? null : relevant
+                            ? "The archive also documents the surrounding community." : "Unsupported connection to a different city.",
                         locationEvidence = "test archive", startsUtc = (string?)null, endsUtc = (string?)null,
                         audienceSuitability = audience, sensitivityNotice = (string?)null,
                         uncertainClaims = new[] { "Accounts disagree about its opening date.", "Invented dispute." },
                         answersQuestion = relevant
                     } } });
+                    if (coordinateCase is not null && calls == 2)
+                    {
+                        var parsed = System.Text.Json.Nodes.JsonNode.Parse(cards)!;
+                        var card = parsed["stories"]![0]!.AsObject();
+                        foreach (var key in new[] { "latitude", "longitude" })
+                        {
+                            if (coordinateCase == "missing") card.Remove(key);
+                            else card[key] = coordinateCase == "zero" ? System.Text.Json.Nodes.JsonValue.Create(0) : null;
+                        }
+                        cards = parsed.ToJsonString();
+                    }
                     output = JsonSerializer.Serialize(new { status = "completed", output = new[] { new { content = new[] { new { text = cards } } } } });
                 }
                 return new HttpResponseMessage(HttpStatusCode.OK) {
@@ -78,7 +120,7 @@ internal static class StoryEditorialTests
                 new() { Enabled = true, ApiKey = "test", Model = "test" }, TimeProvider.System);
             var result = await researcher.ResearchAsync(new([segment],
                 new ApproximateLiveLocation(null, null, null, null), [], foodOnly ? ["food"] : ["history"], "en") {
-                    AreaFirst = !recovery,
+                    AreaFirst = !recovery || areaRecovery,
                     Question = question ? new("How did the workshop change?", StoryQuestionScope.Neighbourhood,
                         StoryQuestionFormat.ThenAndNow, 1, 180) : null
                 }, default);
@@ -87,13 +129,24 @@ internal static class StoryEditorialTests
                 Check(result.Stories.Count == 0, "Automatic history must not override food-only preferences.");
                 continue;
             }
-            if (question && !relevant)
+            if ((question || scope is not null) && !relevant)
             {
                 Check(result.Stories.Count == 0, "Cited but irrelevant passages are not answers.");
                 continue;
             }
             Check(result.Stories.Count == 1 && calls == (recovery ? 4 : 2), "Research uses at most one recovery attempt.");
             var story = result.Stories.Single();
+            Check(story.Variants.All(v => !v.Narration.Contains("Location:") && !v.Narration.Contains("latitude")),
+                "Coordinate metadata must never become spoken narration.");
+            if (scope is not null)
+            {
+                Check(story.GeographicScope == scope && story.ContextOrigin == anchor,
+                    "Broader context must retain its relevant origin and scope.");
+                Check(story.Anchor.Latitude != anchor.Latitude,
+                    "Never move a distant subject onto the route.");
+                Check(story.Variants.All(v => v.Narration.StartsWith("For broader " + scope)),
+                    "Every narration length must identify broader context.");
+            }
             Check(story.CanAutoplay == (audience == "family"), "Only reviewed family material may autoplay.");
             Check(story.UncertainClaims.SequenceEqual(new[] { "Accounts disagree about its opening date." }),
                 "Uncertainty must be grounded in the passage.");

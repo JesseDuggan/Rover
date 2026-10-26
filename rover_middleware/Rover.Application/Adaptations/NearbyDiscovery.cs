@@ -24,7 +24,7 @@ public sealed record NearbyDiscovery(
     string? SourceUrl = null,
     IReadOnlyCollection<string>? RequiredAttribution = null)
 {
-    public WalkStop ToStop(int sequenceNumber)
+    public WalkStop ToStop(int sequenceNumber, bool isDestination = false)
     {
         return new WalkStop(
             DiscoveryId,
@@ -49,7 +49,7 @@ public sealed record NearbyDiscovery(
             DiscoveryProviderName,
             ProviderPlaceId,
             SourceUrl,
-            RequiredAttribution);
+            RequiredAttribution) { IsDestination = isDestination };
     }
 
     private ContentType ToContentType()

@@ -52,7 +52,9 @@ public sealed class AreaStoryService(ILocalRouteResearcher researcher, TimeProvi
             && s.ExpiresUtc > now && s.Claims.Count > 0 && s.Sources.Count > 0
             && s.Variants.Any(v => !string.IsNullOrWhiteSpace(v.Narration))
             && double.IsFinite(s.Anchor.Latitude) && double.IsFinite(s.Anchor.Longitude)
-            && RouteMath.DistanceMeters(center, s.Anchor) <= request.SearchRadiusMeters
+            && (s.ContextOrigin is { } origin && s.GeographicScope != "local"
+                ? RouteMath.DistanceMeters(center, origin) <= 1000
+                : RouteMath.DistanceMeters(center, s.Anchor) <= request.SearchRadiusMeters)
             && s.Claims.All(c => c.SourceIds.Count > 0 && c.SourceIds.All(id =>
                 s.Sources.Any(source => source.SourceId == id && Uri.TryCreate(source.Url, UriKind.Absolute, out var uri)
                     && uri.Scheme is "http" or "https"))))

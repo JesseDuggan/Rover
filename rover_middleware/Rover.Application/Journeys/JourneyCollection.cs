@@ -21,11 +21,11 @@ public static class JourneyCollectionBuilder
         return previous.Stories
             .Where(story => (story.ExpiresUtc ?? previous.ExpiresUtc) > now
                 && story.Claims.Count > 0 && story.Sources.Count > 0
-                && Rover.Application.Walks.RouteMath.DistanceFromRouteMeters(story.Anchor, route.Coordinates) <= 225)
+                && Rover.Application.Walks.RouteMath.DistanceFromRouteMeters(story.ContextOrigin ?? story.Anchor, route.Coordinates) <= 225)
             .Select(story =>
             {
                 var segment = plan.Segments.MinBy(segment =>
-                    Rover.Application.Walks.RouteMath.DistanceToSegmentMeters(story.Anchor, segment.Start, segment.End))!;
+                    Rover.Application.Walks.RouteMath.DistanceToSegmentMeters(story.ContextOrigin ?? story.Anchor, segment.Start, segment.End))!;
                 return story with { SegmentId = segment.SegmentId, OpensAtRouteMeters = segment.StartRouteMeters,
                     ClosesAtRouteMeters = segment.EndRouteMeters,
                     ExpiresUtc = story.ExpiresUtc is { } expiry && expiry < previous.ExpiresUtc ? expiry : previous.ExpiresUtc };

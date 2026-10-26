@@ -11,5 +11,6 @@ public sealed record WalkAdaptationEvaluateRequest(
     string? ProposedDiscoveryId,
     IReadOnlyCollection<string>? DismissedDiscoveryIds)
 {
+    public double? HeadingDegrees { get; init; }
     public Rover.Application.Walks.WalkPlaceSelection? SelectedPlace { get; init; }
 }

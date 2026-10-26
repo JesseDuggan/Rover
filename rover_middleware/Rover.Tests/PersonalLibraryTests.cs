@@ -2,6 +2,7 @@ using System.Security.Claims;
 using System.Text.Json;
 using System.Net;
 using System.Net.Http.Headers;
+using System.Net.Http.Json;
 using System.Security.Cryptography;
 using Microsoft.AspNetCore.Builder;
 using Microsoft.AspNetCore.Hosting;
@@ -110,6 +111,8 @@ internal static class PersonalLibraryTests
             ["Rover:Accounts:ClientId"] = "public-client", ["Rover:Accounts:DatabasePath"] = PathForTest()
         });
         builder.Services.AddPersonalLibrary(builder.Configuration);
+        var warmup = new RecordingWarmup();
+        builder.Services.AddSingleton<Rover.Application.Performance.IRoverWalkPrefetchService>(warmup);
         builder.Services.AddDataProtection().UseEphemeralDataProtectionProvider();
         builder.Services.AddSingleton<Rover.Application.Walks.IWalkSessionRepository, Rover.Infrastructure.Walks.InMemoryWalkSessionRepository>();
         builder.Services.PostConfigure<JwtBearerOptions>("WalkaboutAccount", options =>
@@ -123,15 +126,21 @@ internal static class PersonalLibraryTests
         app.UseAuthentication();
         app.UseAuthorization();
         app.MapPersonalLibrary();
+        app.MapFriends();
+        app.MapWalkSharing();
         await app.StartAsync();
         try
         {
             using var http = new HttpClient { BaseAddress = new Uri(app.Urls.Single()) };
             Check((await http.GetAsync("/api/account-library/profiles")).StatusCode == HttpStatusCode.Unauthorized, "Anonymous library access");
-            string Token(string client = "public-client", string use = "access", string tokenIssuer = issuer, bool expired = false) =>
+            Check((await http.GetAsync("/api/friends/state")).StatusCode == HttpStatusCode.Unauthorized, "Anonymous friends access");
+            Check((await http.GetAsync("/api/shared-walks")).StatusCode == HttpStatusCode.Unauthorized, "Anonymous shared walk access");
+            var landing = await http.GetStringAsync("/invite");
+            Check(landing.Contains("ai.myrover.rover.friends://friends/invite?code="), "Invitation deep-link mismatch");
+            string Token(string client = "public-client", string use = "access", string tokenIssuer = issuer, bool expired = false, string subject = "alice") =>
                 new JsonWebTokenHandler().CreateToken(new SecurityTokenDescriptor
                 {
-                    Issuer = tokenIssuer, Subject = new ClaimsIdentity([new("sub", "alice"), new("client_id", client), new("token_use", use), new("scope", "openid email")]),
+                    Issuer = tokenIssuer, Subject = new ClaimsIdentity([new("sub", subject), new("client_id", client), new("token_use", use), new("scope", "openid email")]),
                     IssuedAt = DateTime.UtcNow.AddHours(-2), NotBefore = DateTime.UtcNow.AddHours(-2),
                     Expires = expired ? DateTime.UtcNow.AddHours(-1) : DateTime.UtcNow.AddMinutes(10),
                     SigningCredentials = new SigningCredentials(key, SecurityAlgorithms.RsaSha256)
@@ -140,10 +149,74 @@ internal static class PersonalLibraryTests
             {
                 http.DefaultRequestHeaders.Authorization = new AuthenticationHeaderValue("Bearer", token);
                 Check((await http.GetAsync("/api/account-library/profiles")).StatusCode == HttpStatusCode.Unauthorized, "Invalid token accepted");
+                Check((await http.GetAsync("/api/friends/state")).StatusCode == HttpStatusCode.Unauthorized, "Friends accepted invalid token");
+                Check((await http.GetAsync("/api/shared-walks")).StatusCode == HttpStatusCode.Unauthorized, "Sharing accepted invalid token");
             }
             http.DefaultRequestHeaders.Authorization = new AuthenticationHeaderValue("Bearer", Token());
             Check((await http.GetAsync("/api/account-library/profiles")).StatusCode == HttpStatusCode.OK, "Valid access token rejected");
+            Check((await http.PutAsJsonAsync("/api/friends/profile", new { username = "alice", displayName = "Alice" })).IsSuccessStatusCode, "Friends profile endpoint failed");
+            Check((await http.GetAsync("/api/friends/state")).IsSuccessStatusCode, "Friends state endpoint failed");
+            Check((await http.PutAsync("/api/friends/profile", new StringContent(new string('x', 4097)))).StatusCode == HttpStatusCode.RequestEntityTooLarge, "Friends body limit bypass");
+            Check((await http.PostAsync("/api/friends/invites", null)).IsSuccessStatusCode, "Friends invite endpoint failed");
+            var friends = app.Services.GetRequiredService<FriendsStore>();
+            string OwnerFor(string sub) => PersonalLibraryEndpoints.Owner(new ClaimsPrincipal(new ClaimsIdentity([new("iss",issuer),new("sub",sub)],"test")));
+            var bob = friends.SaveProfile(OwnerFor("bob"), "bob", "Bob");
+            friends.Request(OwnerFor("alice"), bob.Id);
+            friends.Act(OwnerFor("bob"), friends.State(OwnerFor("bob")).Connections.Single().RequestId!, "accept");
+            var createShare = await http.PostAsJsonAsync("/api/shared-walks", new SharedWalkDraft("Shared route", false, [], [], [bob.Id]));
+            Check(createShare.IsSuccessStatusCode, "Share draft failed");
+            var shareId = (await createShare.Content.ReadFromJsonAsync<JsonElement>()).GetProperty("id").GetString();
+            http.DefaultRequestHeaders.Authorization = new AuthenticationHeaderValue("Bearer", Token(subject: "bob"));
+            Check((await http.GetAsync($"/api/shared-walks/{shareId}")).StatusCode == HttpStatusCode.NotFound, "Draft exposed before consent");
+            http.DefaultRequestHeaders.Authorization = new AuthenticationHeaderValue("Bearer", Token());
+            Check((await http.PostAsync($"/api/shared-walks/{shareId}/publish", null)).IsSuccessStatusCode, "Publishing failed");
+            http.DefaultRequestHeaders.Authorization = new AuthenticationHeaderValue("Bearer", Token(subject: "bob"));
+            Check((await http.GetAsync($"/api/shared-walks/{shareId}")).IsSuccessStatusCode, "Recipient access failed");
+            Check((await http.DeleteAsync($"/api/shared-walks/{shareId}")).StatusCode == HttpStatusCode.NotFound, "Recipient deleted sender's share");
+            http.DefaultRequestHeaders.Authorization = new AuthenticationHeaderValue("Bearer", Token());
+            Check((await http.DeleteAsync($"/api/shared-walks/{shareId}")).IsSuccessStatusCode, "Owner could not revoke share");
+            var a = new GeoLocation(52.08, 4.31);
+            var b = new GeoLocation(52.081, 4.312);
+            var original = new WalkSession("saved-session", a, DateTimeOffset.UtcNow, 30, 8, 150,
+                "Museum walk", ["History"], Enum.GetValues<WalkingPace>()[0], [],
+                [new WalkStop("saved-stop", 1, "Museum", b, "Description", "Narration", "History",
+                    Enum.GetValues<ContentType>()[0], Enum.GetValues<ContentSource>()[0], 5, 150, 30)],
+                new WalkRoute("saved-route", "provider", "v1", DateTimeOffset.UtcNow, [a, b], new(a, b), 150, 3));
+            var id = Guid.NewGuid();
+            var saved = await http.PutAsJsonAsync($"/api/account-library/walks/{id}",
+                new { name = "Museum", data = new { walk = original.ToResponse() } });
+            Check(saved.IsSuccessStatusCode, "Could not save route fixture");
+            var preview = await http.PostAsync($"/api/account-library/walks/{id}/preview", null);
+            Check(preview.IsSuccessStatusCode, "Saved preview failed");
+            var restored = await preview.Content.ReadFromJsonAsync<Rover.Api.Contracts.WalkSessionResponse>();
+            Check(warmup.Calls.Count == 1 && warmup.Calls[0].Reason == "created", "Saved preview did not queue story creation");
+            var queued = warmup.Calls[0].Walk;
+            Check(queued.WalkSessionId == restored!.WalkSessionId && queued.WalkSessionId != original.WalkSessionId,
+                "Warmup targeted the old session");
+            var repository = app.Services.GetRequiredService<Rover.Application.Walks.IWalkSessionRepository>();
+            Check(await repository.GetByIdAsync(queued.WalkSessionId, CancellationToken.None) is not null,
+                "Restored session was not persisted");
+            Check((await http.PostAsync($"/api/account-library/walks/{Guid.NewGuid()}/preview", null)).StatusCode == HttpStatusCode.NotFound,
+                "Missing saved walk accepted");
+            Check(warmup.Calls.Count == 1, "Missing walk queued work");
+            warmup.ThrowOnQueue = true;
+            Check((await http.PostAsync($"/api/account-library/walks/{id}/preview", null)).IsSuccessStatusCode,
+                "Background queue failure blocked saved preview");
         }
         finally { await app.StopAsync(); }
+    }
+
+    private sealed class RecordingWarmup : Rover.Application.Performance.IRoverWalkPrefetchService
+    {
+        public List<(WalkSession Walk, string Reason)> Calls { get; } = [];
+        public bool ThrowOnQueue { get; set; }
+        public bool TryQueueWalkWarmup(WalkSession session, string reason)
+        {
+            if (ThrowOnQueue) throw new InvalidOperationException("Test queue unavailable");
+            Calls.Add((session, reason));
+            return true;
+        }
+        public Rover.Application.Performance.RoverBackgroundWorkStats GetStats() =>
+            new(Calls.Count, Calls.Count, 0, 0, null, null, null);
     }
 }

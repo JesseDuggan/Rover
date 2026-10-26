@@ -1,4 +1,5 @@
 FROM mcr.microsoft.com/dotnet/aspnet:10.0 AS runtime
+RUN apt-get update && apt-get install -y --no-install-recommends ffmpeg && rm -rf /var/lib/apt/lists/*
 WORKDIR /app
 ENV ASPNETCORE_ENVIRONMENT=Production
 EXPOSE 8080

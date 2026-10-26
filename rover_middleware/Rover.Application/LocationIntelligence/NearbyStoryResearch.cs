@@ -8,7 +8,8 @@ public static class NearbyStoryResearch
 {
     public static async Task<LocationStoryResult> CreateAsync(
         ILocalRouteResearcher? researcher, LocationPlace? place,
-        LocationStoryRequest request, DateTimeOffset now, CancellationToken cancellationToken)
+        LocationStoryRequest request, DateTimeOffset now, CancellationToken cancellationToken,
+        bool selectedDriveStop = false)
     {
         LocationStoryResult Empty(string status) => new(
             place?.Name ?? "Nearby story", "", null, place?.CanonicalId,
@@ -28,10 +29,17 @@ public static class NearbyStoryResearch
             [segment], new ApproximateLiveLocation(place.City, place.Region, place.CountryCode, null),
             [place.Name], request.Interests.ToArray(), "en",
             [new LocalResearchPublicPlace(place.Name, place.Address, place.Coordinates)])
-        { MaximumStories = 1 };
+        {
+            MaximumStories = 1,
+            Question = selectedDriveStop ? new StoryResearchQuestion(
+                $"Give a short, family-friendly, sourced introduction specifically to {place.Name} at {place.Address}. " +
+                "Explain its history or significance for a visitor approaching this stop. Name the selected place explicitly. " +
+                "Do not substitute nearby attractions or invent access, parking, opening hours or safety advice.",
+                StoryQuestionScope.Street, StoryQuestionFormat.Single, 1, 90) : null
+        };
 
         using var timeout = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
-        timeout.CancelAfter(TimeSpan.FromSeconds(35));
+        timeout.CancelAfter(TimeSpan.FromSeconds(selectedDriveStop ? 90 : 35));
         LocalRouteResearchResult result;
         try
         {
@@ -48,6 +56,7 @@ public static class NearbyStoryResearch
         cancellationToken.ThrowIfCancellationRequested();
         foreach (var story in result.Stories)
         {
+            if (selectedDriveStop && !story.CanAutoplay) continue;
             var variant = story.Variants.FirstOrDefault(v => v.Length == AdaptiveStoryLength.Standard)
                 ?? story.Variants.OrderByDescending(v => v.EstimatedDurationSeconds).FirstOrDefault();
             if (variant is null || string.IsNullOrWhiteSpace(variant.Narration)

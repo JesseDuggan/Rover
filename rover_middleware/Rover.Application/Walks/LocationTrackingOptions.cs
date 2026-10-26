@@ -2,7 +2,7 @@ namespace Rover.Application.Walks;
 
 public sealed class LocationTrackingOptions
 {
-    public double OffRouteDistanceMeters { get; set; } = 65;
+    public double OffRouteDistanceMeters { get; set; } = 50;
     public double ArrivalAccuracyPaddingMeters { get; set; } = 10;
     public int RequiredArrivalReadings { get; set; } = 1;
     public int RequiredOffRouteReadings { get; set; } = 2;

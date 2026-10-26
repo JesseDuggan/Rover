@@ -291,6 +291,8 @@ public static class WalkRequestValidation
         }
 
         WalkAdaptationType? requestedType = null;
+        if (request.HeadingDegrees is double heading && (!double.IsFinite(heading) || heading < 0 || heading >= 360))
+            errors["headingDegrees"] = new[] { "Heading must be between 0 (inclusive) and 360 (exclusive)." };
         if (!WalkPlaceSearchService.IsValid(request.SelectedPlace))
             errors["selectedPlace"] = new[] { "Search for and select a valid place." };
         if (!string.IsNullOrWhiteSpace(request.RequestedType))
@@ -328,7 +330,7 @@ public static class WalkRequestValidation
             string.IsNullOrWhiteSpace(request.Interest) ? null : request.Interest.Trim(),
             string.IsNullOrWhiteSpace(request.ProposedDiscoveryId) ? null : request.ProposedDiscoveryId.Trim(),
             NormalizeInterests(request.DismissedDiscoveryIds))
-        { SelectedPlace = request.SelectedPlace };
+        { SelectedPlace = request.SelectedPlace, HeadingDegrees = request.HeadingDegrees };
         return true;
     }
 

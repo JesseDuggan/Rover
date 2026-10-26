@@ -4,6 +4,7 @@ obj/
 .vscode/
 TestResults/
 coverage/
+.test-temp/
 .appdata/
 .dotnet/
 .dotnet-home/

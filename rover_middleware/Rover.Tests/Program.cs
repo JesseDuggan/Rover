@@ -43,6 +43,18 @@ if (args.Contains("--ontario-source-audit"))
 
 var tests = new List<(string Name, Func<Task> Run)>
 {
+    ("Scenic Drive budgets include stops and return travel", ScenicDriveTests.BudgetAndReturn),
+    ("Drive stop stories verify identity and preserve sourced evidence", ScenicDriveTests.StopStories),
+    ("Scenic Drive searches all interests and respects driving preferences", ScenicDriveTests.ExpandedInterests),
+    ("Scenic Drive validates places and refuses unsafe fallbacks", ScenicDriveTests.ValidationAndFailures),
+    ("Scenic Drive sends driving-only Google route requests", ScenicDriveTests.DrivingWireContract),
+    ("Walk sharing enforces consent, privacy and permanent revocation", WalkSharingTests.ConsentAndPrivacy),
+    ("Walk sharing validates drafts and storage quotas", WalkSharingTests.ValidationAndQuotas),
+    ("Walk sharing processes real media and rejects invalid uploads", WalkSharingTests.MediaProcessing),
+    ("Friends profiles are opt-in, unique and persistent", FriendsTests.Profiles),
+    ("Friends requests enforce mutual consent and ownership", FriendsTests.RequestsAndOwnership),
+    ("Friends blocks revoke access and invitations grant no access", FriendsTests.BlocksAndInvites),
+    ("Friends budgets are atomic and reports are validated", FriendsTests.BudgetsAndReports),
     ("Personal library persists and isolates account ownership", PersonalLibraryTests.PersistenceAndOwnership),
     ("Personal library enforces atomic configurable limits", PersonalLibraryTests.AtomicLimits),
     ("Personal library validates profiles and identity", PersonalLibraryTests.ValidationAndIdentity),
@@ -59,6 +71,7 @@ var tests = new List<(string Name, Func<Task> Run)>
     ("Selected places require verified explicit identities", SelectedPlaceTests.Selection),
     ("Destination planning preserves interests and corridor stops", SelectedPlaceTests.Planning),
     ("Place adaptations preserve endpoints and require confirmation", SelectedPlaceTests.Adaptation),
+    ("Direction adaptations require consent and respect heading and time", SelectedPlaceTests.Direction),
     ("Historical discovery respects interests, coordinates, caching and failures", HistoricalDiscoveryTests.Discovery),
     ("Area research works in a new city without routes or POIs", AreaStoryTests.RouteFreeResearch),
     ("Editorial stories retain evidence, uncertainty and audience safety", StoryEditorialTests.SafetyAndEvidence),
@@ -113,6 +126,7 @@ var tests = new List<(string Name, Func<Task> Run)>
     ("local waypoint route uses requested start", LocalFieldTestRouteUsesRequestedStart),
     ("live local discovery replaces seeded fallback", LiveLocalDiscoveryReplacesSeededFallback),
     ("long live walks use more discovered stops", LongLiveWalksUseMoreDiscoveredStops),
+    ("walk time budget includes visits and never hides an overrun", WalkTimeBudgetIncludesVisits),
     ("live discovery route is distance ordered", LiveDiscoveryRouteIsDistanceOrdered),
     ("route-provider abstraction", RouteProviderAbstraction),
     ("deterministic mock geometry", DeterministicMockGeometry),
@@ -152,6 +166,7 @@ var tests = new List<(string Name, Func<Task> Run)>
     ("geofence crossing between GPS readings confirms arrival", GeofenceCrossingBetweenGpsReadingsConfirmsArrival),
     ("duplicate arrival idempotency", DuplicateArrivalIdempotency),
     ("off-route detection and recovery", OffRouteDetectionAndRecovery),
+    ("off-route 50 meter threshold filters uncertain and isolated fixes", OffRouteFiftyMeters),
     ("location-update validation", LocationUpdateValidation),
     ("Ask endpoint validation", AskEndpointValidation),
     ("Ask Rover mock answers and bounded memory", AskRoverMockAnswersAndBoundedMemory),
@@ -571,6 +586,30 @@ static async Task LongLiveWalksUseMoreDiscoveredStops()
     AssertTrue(session.Stops.Count >= 10, "A 90-minute live walk should not be capped at the short-walk stop count.");
     AssertTrue(session.EstimatedDurationMinutes >= 60, "A 90-minute live walk should use substantially more of the requested time.");
     AssertTrue(session.EstimatedDurationMinutes <= 90, "Walk estimate should respect the requested time budget.");
+    AssertEqual(session.Route.DurationMinutes + session.Stops.Sum(stop => stop.EstimatedVisitMinutes), session.EstimatedDurationMinutes);
+}
+
+static async Task WalkTimeBudgetIncludesVisits()
+{
+    foreach (var fixedMinutes in new[] { 50, 100 })
+    {
+        var planner = new MockWalkPlanner(new BudgetTestRouteProvider(fixedMinutes), new ManyLocalDiscoveryProvider());
+        var session = await planner.PlanWalkAsync(DefaultCommand() with
+        {
+            StartingLocation = new GeoLocation(44.9000, -76.2500), AvailableMinutes = 90
+        }, CancellationToken.None);
+        AssertEqual(session.Route.DurationMinutes + session.Stops.Sum(stop => stop.EstimatedVisitMinutes), session.EstimatedDurationMinutes);
+        if (fixedMinutes == 50)
+        {
+            AssertTrue(session.EstimatedDurationMinutes <= 90, "Trim optional stops to fit walking plus visits.");
+            AssertTrue(session.Stops.Count < 10, "Over-budget stops must actually be removed.");
+        }
+        else
+        {
+            AssertTrue(session.EstimatedDurationMinutes > 90, "Never clamp an unavoidable overrun.");
+            AssertTrue(session.RouteSummary.Contains("exceeds your requested time"), "Disclose an unavoidable overrun.");
+        }
+    }
 }
 
 static async Task LiveDiscoveryRouteIsDistanceOrdered()
@@ -1007,8 +1046,8 @@ static async Task LocalRouteResearchValidation()
                 using var researchContext = JsonDocument.ParseValue(ref reader);
                 AssertEqual(1000, researchContext.RootElement.GetProperty("maximumStoryDistanceMeters").GetInt32());
                 if (calls == 3)
-                    AssertTrue(input.Contains("Broaden topics and sources, not the geographic boundary"),
-                        "Recovery must target neighbourhood evidence without moving geographic boundaries.");
+                    AssertTrue(input.Contains("Follow the geographic fallback policy in order"),
+                        "Recovery must follow the ordered fallback with cited local relevance.");
                 var publicPlace = researchContext.RootElement.GetProperty("publicPlaces")[0];
                 AssertEqual("Museum street, Paris", publicPlace.GetProperty("address").GetString());
                 AssertEqual(Math.Round(anchor.Latitude, 4), publicPlace.GetProperty("latitude").GetDouble());
@@ -1166,11 +1205,16 @@ static async Task LocalRouteResearchValidation()
         var captured = await captureResearcher.ResearchAsync(query, CancellationToken.None);
         AssertEqual(1, calls);
         AssertEqual(0, captured.Stories.Count);
-        AssertEqual(capture ? 1 : 0, logger.Entries.Count);
+        AssertEqual(capture ? 2 : 1, logger.Entries.Count);
+        var diagnosticEntry = logger.Entries.Single(entry => entry.EventId.Name != "RoverResearchCapture");
+        AssertTrue(diagnosticEntry.Message.Contains("citation failure")
+            && !diagnosticEntry.Message.Contains(secret)
+            && !diagnosticEntry.Message.Contains("I could not establish"),
+            "Default diagnostics expose counts, not provider text or credentials.");
         AssertTrue(!captured.Warning!.Contains("I could not establish"), "Raw research must not appear in app status.");
         if (capture)
         {
-            var entry = logger.Entries.Single();
+            var entry = logger.Entries.Single(entry => entry.EventId.Name == "RoverResearchCapture");
             AssertEqual("RoverResearchCapture", entry.EventId.Name);
             AssertTrue(entry.Message.Contains("I could not establish a locality.") && entry.Message.Contains("Paris"), "Capture must expose the rejected text and coarse context.");
             AssertTrue(entry.Message.Contains("[truncated]") && entry.Message.Contains("[REDACTED]"), "Capture must bound text and redact credentials.");
@@ -2110,6 +2154,30 @@ static async Task OffRouteDetectionAndRecovery()
     AssertTrue(!recovered.IsOffRoute, "Returning to route should clear warning.");
 }
 
+static async Task OffRouteFiftyMeters()
+{
+    var service = CreateServiceWithOptions(new LocationTrackingOptions { RequiredArrivalReadings = 100 });
+    var session = await service.CreateAsync(DefaultCommand(), CancellationToken.None);
+    var start = new GeoLocation(37.78, -122.40);
+    var end = new GeoLocation(37.79, -122.40);
+    session.SetRoute(new WalkRoute("straight", "Mock", "1", DateTimeOffset.UtcNow,
+        new[] { start, end }, new RouteBounds(start, end), 1100, 15));
+    await service.StartAsync(session.WalkSessionId, CancellationToken.None);
+    var now = DateTimeOffset.UtcNow;
+    async Task<bool> Reading(double meters, double accuracy, int seconds)
+    {
+        var location = new GeoLocation(37.785, -122.40 + meters / (111320 * Math.Cos(37.785 * Math.PI / 180)));
+        return (await service.UpdateLocationAsync(session.WalkSessionId,
+            new LocationUpdateCommand(location, accuracy, 0, 1, now.AddSeconds(seconds)), default)).IsOffRoute;
+    }
+    AssertTrue(!await Reading(49, 0, 0), "Below 50 metres is on route.");
+    AssertTrue(!await Reading(56, 5, 1), "One accurate off-route sample is insufficient.");
+    AssertTrue(!await Reading(100, 40, 2), "Poor accuracy must reset the confirmation.");
+    AssertTrue(!await Reading(56, 5, 3), "First accurate sample after noise is insufficient.");
+    AssertTrue(await Reading(56, 5, 4), "Two accurate samples beyond 50 metres plus uncertainty confirm deviation.");
+    AssertTrue(!await Reading(10, 5, 5), "Returning to the route clears the warning.");
+}
+
 static Task LocationUpdateValidation()
 {
     var stale = new Rover.Api.Contracts.LocationUpdateRequest(37.7880, -122.4075, 8, 90, 1.1, DateTimeOffset.UtcNow.AddMinutes(-10));
@@ -2252,6 +2320,10 @@ static async Task RejoinAdaptationResetsRouteTracking()
     AssertTrue(!updated.TrackingState.IsOffRoute, "Rejoin should clear the off-route state.");
     AssertEqual(0d, updated.TrackingState.RouteProgressPercentage);
     AssertEqual(0d, updated.TrackingState.DistanceFromRouteMeters);
+    AssertTrue(RouteMath.DistanceMeters(updated.Route.Coordinates[^1], updated.OriginalRoute.Coordinates[^1]) < 25,
+        "Rejoin must preserve the original endpoint.");
+    AssertEqual(proposal.ProposedRoute.DurationMinutes + proposal.ProposedStops.Sum(stop => stop.EstimatedVisitMinutes),
+        proposal.EstimatedNewTotalMinutes);
 }
 
 static async Task AdaptationStaleAndInactiveGuards()
@@ -5536,6 +5608,17 @@ internal sealed class EmptyLocalDiscoveryProvider : ILocalDiscoveryProvider
     public Task<IReadOnlyList<WalkStop>> FindCandidateStopsAsync(CreateWalkCommand command, CancellationToken cancellationToken, int maximumStops = 30)
     {
         return Task.FromResult<IReadOnlyList<WalkStop>>(Array.Empty<WalkStop>());
+    }
+}
+
+internal sealed class BudgetTestRouteProvider(int minutes) : IWalkRouteProvider
+{
+    public string ProviderName => "BudgetTest";
+    public async Task<WalkRoute> CreateRouteAsync(CreateWalkCommand command, IReadOnlyList<WalkStop> stops, CancellationToken ct)
+    {
+        var route = await new MockWalkRouteProvider().CreateRouteAsync(command, stops, ct);
+        return new WalkRoute(route.RouteId, ProviderName, route.Version, route.GeneratedAtUtc,
+            route.Coordinates, route.Bounds, route.DistanceMeters, minutes, route.Maneuvers);
     }
 }
 

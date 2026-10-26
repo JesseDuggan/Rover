@@ -42,6 +42,12 @@ builder.Services.AddProblemDetails();
 builder.Services.AddRateLimiter(options =>
 {
     options.RejectionStatusCode = StatusCodes.Status429TooManyRequests;
+    options.AddFixedWindowLimiter("scenic-drive", limiter =>
+    {
+        limiter.PermitLimit = 60;
+        limiter.Window = TimeSpan.FromHours(1);
+        limiter.QueueLimit = 0;
+    });
     options.AddFixedWindowLimiter("photo-identification", limiter =>
     {
         limiter.PermitLimit = 60;
@@ -72,7 +78,7 @@ builder.Services.AddRateLimiter(options =>
 
 builder.Services.AddSingleton(new LocationTrackingOptions
 {
-    OffRouteDistanceMeters = builder.Configuration.GetValue("Rover:Location:OffRouteDistanceMeters", 65d),
+    OffRouteDistanceMeters = builder.Configuration.GetValue("Rover:Location:OffRouteDistanceMeters", 50d),
     ArrivalAccuracyPaddingMeters = builder.Configuration.GetValue("Rover:Location:ArrivalAccuracyPaddingMeters", 10d),
     RequiredArrivalReadings = builder.Configuration.GetValue("Rover:Location:RequiredArrivalReadings", 1),
     RequiredOffRouteReadings = builder.Configuration.GetValue("Rover:Location:RequiredOffRouteReadings", 2),
@@ -183,6 +189,8 @@ app.UseCors("LocalFlutter");
 app.UseAuthentication();
 app.UseAuthorization();
 Rover.Api.Accounts.PersonalLibraryEndpoints.MapPersonalLibrary(app);
+Rover.Api.Accounts.FriendsEndpoints.MapFriends(app);
+Rover.Api.Accounts.WalkSharingEndpoints.MapWalkSharing(app);
 
 app.Use(async (context, next) =>
 {
@@ -1128,6 +1136,7 @@ app.MapGet("/api/walk-places", async (string query, double lat, double lng,
     return Results.Ok(await places.SearchAsync(query, new GeoLocation(lat, lng), ct));
 });
 
+app.MapScenicDrives();
 var walks = app.MapGroup("/api/walks");
 
 walks.MapPost("/", async (

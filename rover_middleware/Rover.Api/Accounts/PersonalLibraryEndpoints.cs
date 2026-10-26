@@ -66,6 +66,13 @@ public static class PersonalLibraryEndpoints
         });
         services.AddAuthorization();
         if (options.Enabled) services.AddSingleton(new PersonalLibraryStore(options.DatabasePath, options.ProfileLimit, options.WalkLimit));
+        if (options.Enabled) services.AddSingleton(new FriendsStore(options.DatabasePath));
+        if (options.Enabled) {
+            var sharing = new WalkSharingStore(options.DatabasePath);
+            sharing.Cleanup();
+            services.AddSingleton(sharing);
+            services.AddSingleton(new SharedMediaProcessor());
+        }
     }
 
     public static void MapPersonalLibrary(this WebApplication app)
@@ -117,6 +124,16 @@ public static class PersonalLibraryEndpoints
             if (item is null) return Results.NotFound();
             var walk = SavedWalkSnapshot.Restore(item.Data);
             await walks.AddAsync(walk, ct);
+            try
+            {
+                // Restoring a template creates a new session, so prepare stories just as for a new walk.
+                app.Services.GetService<Rover.Application.Performance.IRoverWalkPrefetchService>()
+                    ?.TryQueueWalkWarmup(walk, "created");
+            }
+            catch (Exception exception)
+            {
+                app.Logger.LogWarning(exception, "Saved walk story warmup could not be queued.");
+            }
             return Results.Ok(Rover.Api.Mapping.WalkResponseMapper.ToResponse(walk));
         });
     }

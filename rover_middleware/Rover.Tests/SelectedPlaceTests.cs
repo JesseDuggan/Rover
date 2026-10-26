@@ -30,6 +30,77 @@ internal static class SelectedPlaceTests
             "One failed provider cannot hide valid matches from another.");
     }
 
+    public static async Task Direction()
+    {
+        var routes = new MockWalkRouteProvider();
+        var planner = new MockWalkPlanner(routes, new Discovery(),
+            placeSearch: new WalkPlaceSearchService(new[] { new Search() }));
+        var walk = await planner.PlanWalkAsync(Command(), default);
+        var clock = new DirectionClock(DateTimeOffset.UtcNow);
+        walk.Start(clock.Now.AddMinutes(-50));
+        var sessions = new InMemoryWalkSessionRepository();
+        await sessions.AddAsync(walk, default);
+        var ahead = new NearbyDiscovery("ahead", "Historic house ahead", "History", new(52.001, 4),
+            "Sourced history", 2, 110, 2, ContentSource.LocalRecommendation, null, null, new[] { "history" });
+        var options = new[] {
+            ahead,
+            ahead with { DiscoveryId = "behind", Location = new(51.999, 4) },
+            ahead with { DiscoveryId = "sideways", Location = new(52, 4.003) },
+            ahead with { DiscoveryId = "food", Name = "Cafe", Category = "Cafe" },
+            ahead with { DiscoveryId = "paid", SponsoredDisclosure = "Paid" },
+            ahead with { DiscoveryId = "too-far", Location = new(52.03, 4) },
+            ahead with { DiscoveryId = "stairs", AccessibilityLimitations = "Stairs" },
+        };
+        var service = new WalkAdaptationService(sessions, new InMemoryWalkAdaptationRepository(),
+            new Nearby(options), routes, clock);
+        var command = new WalkAdaptationCommand(Start, walk.RouteRevision, WalkAdaptationType.FollowDirection,
+            60, null, null, null, Array.Empty<string>()) { HeadingDegrees = 0 };
+        var originalIds = walk.Stops.Select(stop => stop.StopId).ToArray();
+        var originalRoute = walk.Route;
+        var proposal = await service.EvaluateAsync(walk.WalkSessionId, command, default);
+        Check(proposal.ProposedStops.Select(stop => stop.StopId).SequenceEqual(new[] { "ahead" }),
+            "Only matching accessible places ahead within the remaining budget are proposed.");
+        Check(proposal.EstimatedNewTotalMinutes <= 10, "Use remaining time, not the original sixty minutes.");
+        Check(walk.Route == originalRoute && walk.Stops.Select(stop => stop.StopId).SequenceEqual(originalIds),
+            "Evaluating a direction must not change the active walk.");
+        await service.RejectAsync(walk.WalkSessionId, proposal.AdaptationId, default);
+        Check(walk.Route == originalRoute, "Declining keeps the old route.");
+        foreach (var heading in new double?[] { null, double.NaN, -1, 360 })
+        {
+            try {
+                await service.EvaluateAsync(walk.WalkSessionId, command with { HeadingDegrees = heading }, default);
+                throw new Exception("Invalid heading accepted.");
+            } catch (InvalidOperationException) { }
+        }
+        try {
+            await service.EvaluateAsync(walk.WalkSessionId, command with { AvailableMinutes = 1 }, default);
+            throw new Exception("No-time route accepted.");
+        } catch (InvalidOperationException) { }
+        var fresh = await service.EvaluateAsync(walk.WalkSessionId, command, default);
+        clock.Now = clock.Now.AddMinutes(9);
+        try {
+            await service.AcceptAsync(walk.WalkSessionId, fresh.AdaptationId, walk.RouteRevision, default);
+            throw new Exception("An over-budget old proposal was accepted.");
+        } catch (InvalidOperationException) { }
+        Check(walk.Route == originalRoute, "A proposal that no longer fits time cannot mutate the walk.");
+        clock.Now = clock.Now.AddMinutes(-9);
+        var updated = await service.AcceptAsync(walk.WalkSessionId, fresh.AdaptationId, walk.RouteRevision, default);
+        Check(updated.Route.Coordinates[^1] == ahead.Location && updated.Stops.All(stop => stop.ProviderPlaceId != "target"),
+            "Accepting changes the endpoint instead of pulling the walker back.");
+        Check(updated.Stops[^1].IsDestination, "The new endpoint replaces the old destination.");
+        var rejoin = await service.EvaluateAsync(walk.WalkSessionId, command with {
+            RequestedType = WalkAdaptationType.RejoinRoute, RouteRevision = updated.RouteRevision }, default);
+        Check(rejoin.ProposedStops[^1].Location == ahead.Location, "Later rejoining keeps the new destination.");
+        Check(!updated.TrackingState.IsOffRoute && updated.TrackingState.RouteProgressPercentage == 0,
+            "Reset tracking for the accepted route.");
+        var unavailable = new WalkAdaptationService(sessions, new InMemoryWalkAdaptationRepository(),
+            new Nearby(Array.Empty<NearbyDiscovery>()), routes, TimeProvider.System);
+        try {
+            await unavailable.EvaluateAsync(walk.WalkSessionId, command with { RouteRevision = updated.RouteRevision }, default);
+            throw new Exception("Empty options accepted.");
+        } catch (InvalidOperationException) { }
+    }
+
     public static async Task Planning()
     {
         var discovery = new Discovery();
@@ -163,6 +234,11 @@ internal static class SelectedPlaceTests
         }
         private static WalkStop Stop(string id, GeoLocation location) => new(id, 1, id, location, "Sourced history.", "Sourced history.",
             "History", ContentType.History, ContentSource.LocalRecommendation, 3, 0, 30);
+    }
+    private sealed class DirectionClock(DateTimeOffset now) : TimeProvider
+    {
+        public DateTimeOffset Now { get; set; } = now;
+        public override DateTimeOffset GetUtcNow() => Now;
     }
     private sealed class Nearby(IReadOnlyList<NearbyDiscovery>? options = null) : INearbyDiscoveryProvider
     {

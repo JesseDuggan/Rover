@@ -197,11 +197,47 @@ public sealed class WalkAdaptationService : IWalkAdaptationService
                 explanation = destinationPlan.RouteSummary;
                 break;
 
+            case WalkAdaptationType.FollowDirection:
+                var directionPlan = await PlanAheadAsync(session, currentLocation, command, cancellationToken);
+                proposed = directionPlan.Stops;
+                proposedRoute = directionPlan.Route;
+                affected.AddRange(remaining.Select(stop => stop.StopId));
+                title = "Follow your new direction?";
+                explanation = $"Visit {string.Join(", ", proposed.Select(stop => stop.Name))} ahead. "
+                    + "This replaces the remaining stops and may change your destination. "
+                    + "Your interests and remaining time are preserved.";
+                break;
+
             case WalkAdaptationType.RejoinRoute:
                 title = "Rejoin the route";
-                explanation = "Rover can route from your current location back to the next sensible unvisited stop without sending you backward unnecessarily.";
-                addedMinutes = 4;
-                addedDistance = 180;
+                explanation = "Returning to your remaining route and keeping your endpoint.";
+                var endpoint = remaining.LastOrDefault(stop => stop.IsDestination)?.Location
+                    ?? session.OriginalRoute.Coordinates[^1];
+                if (proposed.Count == 0 || RouteMath.DistanceMeters(proposed[^1].Location, endpoint) > 25)
+                {
+                    proposed.Add(new WalkStop("original-route-endpoint", proposed.Count + 1,
+                        "Original endpoint", endpoint, "Finish at your planned endpoint.",
+                        "You have reached your planned endpoint.", "Destination", ContentType.History,
+                        ContentSource.RoverEditorial, 0, 0, WalkGeofenceDefaults.StandardArrivalRadiusMeters)
+                        { IsDestination = true });
+                }
+                var rejoinBudget = Math.Max(0, session.AvailableMinutes - (int)Math.Ceiling(
+                    (_timeProvider.GetUtcNow() - (session.StartedAtUtc ?? _timeProvider.GetUtcNow())).TotalMinutes));
+                do
+                {
+                    proposedRoute = await _routes.CreateRouteAsync(
+                        RouteCommand(currentLocation, rejoinBudget, session), proposed, cancellationToken);
+                    if (_routes.ProviderName != "Mock" && proposedRoute.Provider == "Mock")
+                        throw new InvalidOperationException("Walking directions are temporarily unavailable. Your walk is unchanged.");
+                    if (proposedRoute.DurationMinutes + proposed.Sum(stop => stop.EstimatedVisitMinutes) <= rejoinBudget
+                        || proposed.Count <= 1) break;
+                    // Keep the endpoint and original order; omit optional stops only to fit time.
+                    affected.Add(proposed[^2].StopId);
+                    proposed.RemoveAt(proposed.Count - 2);
+                } while (true);
+                if (affected.Count > 0) explanation += " Some optional stops were omitted to fit your remaining time.";
+                if (proposedRoute.DurationMinutes + proposed.Sum(stop => stop.EstimatedVisitMinutes) > rejoinBudget)
+                    explanation += " Reaching the endpoint exceeds your remaining time.";
                 break;
 
             case WalkAdaptationType.ReturnToStart:
@@ -249,7 +285,7 @@ public sealed class WalkAdaptationService : IWalkAdaptationService
         if (command.SelectedPlace is not null && _routes.ProviderName != "Mock" && route.Provider == "Mock")
             throw new InvalidOperationException("Walking directions to that place are temporarily unavailable. Your walk is unchanged.");
         var plannedMinutes = route.DurationMinutes + proposed.Sum(stop => stop.EstimatedVisitMinutes);
-        if (command.SelectedPlace is not null || type == WalkAdaptationType.SkipStop)
+        if (command.SelectedPlace is not null || type is WalkAdaptationType.SkipStop or WalkAdaptationType.RejoinRoute or WalkAdaptationType.FollowDirection)
         {
             addedMinutes = plannedMinutes - (session.Route.DurationMinutes + remaining.Sum(stop => stop.EstimatedVisitMinutes));
             addedDistance = route.DistanceMeters - session.Route.DistanceMeters;
@@ -262,7 +298,7 @@ public sealed class WalkAdaptationService : IWalkAdaptationService
             explanation,
             addedMinutes,
             addedDistance,
-            command.SelectedPlace is not null || type == WalkAdaptationType.SkipStop ? plannedMinutes : Math.Max(0, session.Route.DurationMinutes + addedMinutes),
+            command.SelectedPlace is not null || type is WalkAdaptationType.SkipStop or WalkAdaptationType.RejoinRoute or WalkAdaptationType.FollowDirection ? plannedMinutes : Math.Max(0, session.Route.DurationMinutes + addedMinutes),
             affected,
             addedStops,
             removedStops,
@@ -295,6 +331,14 @@ public sealed class WalkAdaptationService : IWalkAdaptationService
 
         EnsureActive(session);
         EnsureCurrentRevision(session, routeRevision);
+
+        if (proposal.Type == WalkAdaptationType.FollowDirection)
+        {
+            var elapsedMinutes = Math.Max(0, (int)Math.Ceiling(
+                (_timeProvider.GetUtcNow() - (session.StartedAtUtc ?? _timeProvider.GetUtcNow())).TotalMinutes));
+            if (proposal.EstimatedNewTotalMinutes > Math.Max(0, session.AvailableMinutes - elapsedMinutes))
+                throw new InvalidOperationException("This suggestion no longer fits your remaining time. Keep the current route and request a fresh suggestion.");
+        }
 
         try
         {
@@ -374,6 +418,68 @@ public sealed class WalkAdaptationService : IWalkAdaptationService
         if (text.Contains("rejoin") || session.TrackingState.IsOffRoute) return WalkAdaptationType.RejoinRoute;
         if (text.Contains("coffee") || text.Contains("nearby") || text.Contains("find")) return WalkAdaptationType.AddDiscovery;
         return WalkAdaptationType.ContinueUnchanged;
+    }
+
+    private async Task<(List<WalkStop> Stops, WalkRoute Route)> PlanAheadAsync(
+        WalkSession session, GeoLocation origin, WalkAdaptationCommand command, CancellationToken ct)
+    {
+        if (command.HeadingDegrees is not double heading || !double.IsFinite(heading) || heading < 0 || heading >= 360)
+            throw new InvalidOperationException("Keep walking briefly so we can determine your direction. Your walk is unchanged.");
+        var elapsed = Math.Max(0, (int)Math.Ceiling(
+            (_timeProvider.GetUtcNow() - (session.StartedAtUtc ?? _timeProvider.GetUtcNow())).TotalMinutes));
+        var budget = Math.Max(0, session.AvailableMinutes - elapsed);
+        if (command.AvailableMinutes is int requested) budget = Math.Min(budget, requested);
+        if (budget < 3)
+            throw new InvalidOperationException("There is not enough time left to suggest new stops. Your walk is unchanged.");
+
+        var options = await _discoveries.FindAsync(session, origin, null, command.DismissedDiscoveryIds, ct);
+        var visited = session.Stops.Where(stop => stop.Visited).ToArray();
+        var candidates = options
+            .Where(option => option.SponsoredDisclosure is null && option.ContentSource != ContentSource.Sponsored)
+            .Where(option => string.IsNullOrWhiteSpace(option.AccessibilityLimitations))
+            .Where(option => !command.DismissedDiscoveryIds.Contains(option.DiscoveryId, StringComparer.OrdinalIgnoreCase))
+            .Select(option => (Option: option, Stop: option.ToStop(1)))
+            .Where(item => WalkInterestPolicy.Allows(item.Stop, session.Interests)
+                && (MatchesInterest(session, item.Stop) || item.Option.InterestTags.Intersect(session.Interests, StringComparer.OrdinalIgnoreCase).Any()))
+            .Where(item => !visited.Any(stop => SamePlace(stop, item.Stop)))
+            .Select(item => item.Stop)
+            .Where(stop => RouteMath.DistanceMeters(origin, stop.Location) >= 40 && IsAhead(origin, stop.Location, heading))
+            .OrderBy(stop => RouteMath.DistanceMeters(origin, stop.Location))
+            .Take(8);
+        var selected = new List<WalkStop>();
+        WalkRoute? route = null;
+        foreach (var stop in candidates)
+        {
+            if (selected.Any(existing => SamePlace(existing, stop))) continue;
+            if (selected.Count > 0 && !IsAhead(selected[^1].Location, stop.Location, heading)) continue;
+            var trialStops = selected.Append(stop).ToList();
+            var trial = await _routes.CreateRouteAsync(RouteCommand(origin, budget, session), trialStops, ct);
+            if (_routes.ProviderName != "Mock" && trial.Provider == "Mock")
+                throw new InvalidOperationException("Walking directions are temporarily unavailable. Your walk is unchanged.");
+            if (trial.DurationMinutes + trialStops.Sum(item => item.EstimatedVisitMinutes) > budget) continue;
+            // Reject an initial walking detour backwards even if the place itself is ahead.
+            var firstLeg = trial.Coordinates.FirstOrDefault(point => RouteMath.DistanceMeters(origin, point) >= 40);
+            if (firstLeg is null || !IsAhead(origin, firstLeg, heading)) continue;
+            selected = trialStops;
+            route = trial;
+            if (selected.Count == 4) break;
+        }
+        if (route is null)
+            throw new InvalidOperationException("No matching places ahead fit your remaining time. Your walk is unchanged.");
+        selected[^1] = options.First(option => option.DiscoveryId == selected[^1].StopId)
+            .ToStop(selected.Count, isDestination: true);
+        return (selected, route);
+    }
+
+    private static bool IsAhead(GeoLocation from, GeoLocation to, double heading)
+    {
+        var lat1 = from.Latitude * Math.PI / 180;
+        var lat2 = to.Latitude * Math.PI / 180;
+        var longitude = (to.Longitude - from.Longitude) * Math.PI / 180;
+        var bearing = Math.Atan2(Math.Sin(longitude) * Math.Cos(lat2),
+            Math.Cos(lat1) * Math.Sin(lat2) - Math.Sin(lat1) * Math.Cos(lat2) * Math.Cos(longitude)) * 180 / Math.PI;
+        var difference = Math.Abs((bearing - heading + 540) % 360 - 180);
+        return difference <= 75;
     }
 
     private async Task<NearbyDiscovery?> SelectDiscovery(WalkSession session, GeoLocation currentLocation, WalkAdaptationCommand command, CancellationToken cancellationToken)
