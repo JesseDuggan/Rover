@@ -28,6 +28,33 @@ class RoverApiClient {
   final RoverApiConfig config;
   final HttpClient _httpClient;
 
+  Future<Map<String, dynamic>> searchJourneyPlaces(String query) =>
+      _sendJson('GET', '/api/journey-lab/search?query=${Uri.encodeQueryComponent(query)}');
+
+  Future<Map<String, dynamic>> nearbyJourneyStops({
+    required Map<String, double> location,
+    required List<String> interests,
+  }) => _sendJson('POST', '/api/journey-lab/nearby', body: {
+    'location': location,
+    'interests': interests,
+  });
+
+  Future<Map<String, dynamic>> planJourney({
+    required Map<String, double> start,
+    required Map<String, double>? end,
+    required List<Map<String, dynamic>> stops,
+    required bool suggest,
+    required int minutes,
+    required List<String> interests,
+  }) => _sendJson('POST', '/api/journey-lab/plan', body: {
+    'start': start,
+    'end': end,
+    'stops': stops,
+    'suggest': suggest,
+    'minutes': minutes,
+    'interests': interests,
+  }, responseTimeout: const Duration(seconds: 105));
+
   Future<Map<String, dynamic>> searchDrivePlaces(String query, double lat, double lng) =>
     _sendJson('GET', '/api/drive-places?query=${Uri.encodeQueryComponent(query)}&lat=$lat&lng=$lng');
 

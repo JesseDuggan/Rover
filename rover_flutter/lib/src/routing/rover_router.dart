@@ -1,3 +1,4 @@
+import '../ui/journey_lab_screen.dart';
 import 'package:flutter/material.dart';
 import 'package:go_router/go_router.dart';
 
@@ -238,6 +239,11 @@ GoRouter createRoverRouter(
                     name: 'settings',
                     builder: (context, state) => const SettingsScreen(),
                     routes: [
+                      GoRoute(
+                        path: 'journey-lab',
+                        name: 'journey-lab',
+                        builder: (context, state) => const JourneyLabScreen(),
+                      ),
                       GoRoute(
                         path: 'beta-diagnostics',
                         name: 'beta-diagnostics',

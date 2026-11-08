@@ -3372,6 +3372,11 @@ class SettingsScreen extends StatelessWidget {
           child: const Text('Edit preferences'),
         ),
         OutlinedButton.icon(
+          onPressed: () => context.go('/profile/settings/journey-lab'),
+          icon: const Icon(Icons.route_outlined),
+          label: const Text('Journey Lab'),
+        ),
+        OutlinedButton.icon(
           onPressed: () => context.go('/profile/settings/beta-diagnostics'),
           icon: const Icon(Icons.health_and_safety_outlined),
           label: const Text('Beta diagnostics'),
