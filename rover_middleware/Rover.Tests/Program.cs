@@ -69,6 +69,7 @@ var tests = new List<(string Name, Func<Task> Run)>
     ("Ontario feedback is structured and removes raw tester identifiers", OntarioFieldTestTests.Feedback),
     ("Ontario heritage enriches existing POIs and automatic research inherits enrollment", OntarioFieldTestTests.EnrichmentAndAutomaticStoryIdentity),
     ("Selected places require verified explicit identities", SelectedPlaceTests.Selection),
+    ("Dense neighbourhood walks target the selected total time", SelectedPlaceTests.DenseNeighbourhood),
     ("Destination planning preserves interests and corridor stops", SelectedPlaceTests.Planning),
     ("Place adaptations preserve endpoints and require confirmation", SelectedPlaceTests.Adaptation),
     ("Direction adaptations require consent and respect heading and time", SelectedPlaceTests.Direction),
@@ -3340,7 +3341,7 @@ static async Task LivePlanningRefusesSyntheticFallback()
             AssertTrue(exception.Message.Contains(expected) && exception.Message.Contains("No fallback waypoints"), "Planning must expose the failure instead of inventing stops: " + scenario);
             AssertTrue(!exception.Message.Contains("private-provider-response"), "Raw provider failures must not leak into app errors.");
         }
-        AssertEqual(scenario is "disabled" or "missing-key" ? 0 : 1, calls);
+        AssertEqual(scenario switch { "disabled" or "missing-key" => 0, "success" => 3, _ => 1 }, calls);
     }
 }
 

@@ -118,7 +118,7 @@ public sealed class GooglePlacesLocalDiscoveryProvider : ILocalDiscoveryProvider
             category,
             ContentTypeFor(category),
             ContentSource.LocalRecommendation,
-            5,
+            ContentTypeFor(category) == ContentType.FoodAndDrink ? 5 : 2,
             distanceFromPreviousStopMeters,
             WalkGeofenceDefaults.StandardArrivalRadiusMeters,
             address: place.Address,

@@ -124,6 +124,38 @@ internal static class SelectedPlaceTests
             "Selected waypoint appears once without becoming a pinned endpoint.");
     }
 
+    public static async Task DenseNeighbourhood()
+    {
+        var planner = new MockWalkPlanner(new MockWalkRouteProvider(), new DenseDiscovery(),
+            placeSearch: new WalkPlaceSearchService(new[] { new Search() }));
+        foreach (var minutes in new[] { 30, 60, 90 })
+        {
+            var walk = await planner.PlanWalkAsync(Command(minutes: minutes) with
+                { SelectedPlace = new("Hotel", "other", true) }, default);
+            Check(RouteMath.DistanceMeters(Start, walk.Stops[0].Location) < 200, "Start with a nearby discovery.");
+            Check(walk.Stops[^1].ProviderPlaceId == "other", "Finish at the chosen hotel.");
+            Check(walk.EstimatedDurationMinutes == walk.Route.DurationMinutes + walk.Stops.Sum(stop => stop.EstimatedVisitMinutes),
+                "Count travel and brief visits once.");
+            Check(walk.EstimatedDurationMinutes >= minutes * 0.9 && walk.EstimatedDurationMinutes <= minutes,
+                $"Expected a walk near {minutes} minutes, got {walk.EstimatedDurationMinutes}.");
+        }
+    }
+
+    private sealed class DenseDiscovery : ILocalDiscoveryProvider
+    {
+        public Task<IReadOnlyList<WalkStop>> FindCandidateStopsAsync(CreateWalkCommand command, CancellationToken ct, int maximumStops) => FindStopsAsync(command, ct);
+        public Task<IReadOnlyList<WalkStop>> FindStopsAsync(CreateWalkCommand command, CancellationToken ct)
+        {
+            var stops = from row in Enumerable.Range(0, 9)
+                        from col in Enumerable.Range(-3, 7)
+                        let id = $"art-{row}-{col}"
+                        select new WalkStop(id, 1, id, new(Start.Latitude + 0.0006 + row * 0.002, Start.Longitude + col * 0.004),
+                            "Outdoor artwork", "An audio story", "History", ContentType.History, ContentSource.LocalRecommendation, 2, 0, 30);
+            return Task.FromResult<IReadOnlyList<WalkStop>>(stops.OrderBy(stop =>
+                RouteMath.DistanceMeters(command.StartingLocation, stop.Location)).Take(20).ToArray());
+        }
+    }
+
     public static async Task Adaptation()
     {
         var places = new WalkPlaceSearchService(new[] { new Search() });
