@@ -1,4 +1,7 @@
 import 'package:flutter/material.dart';
+import 'package:rover/src/api/story_question_models.dart';
+import 'package:rover/src/api/location_story_models.dart';
+import 'package:rover/src/voice/rover_audio_services.dart';
 import 'package:flutter_map/flutter_map.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:rover/src/api/rover_api_client.dart';
@@ -21,6 +24,39 @@ class FakeJourneyApi extends RoverApiClient {
     'address': '1 Main Street',
     'sourceUrl': 'https://example.org/museum',
   };
+  bool receivedJourney = false;
+  @override
+  Future<StoryQuestionResponse> researchStoryQuestion(
+    StoryQuestionRequest request,
+  ) async => const StoryQuestionResponse(
+    status: 'empty',
+    scope: 'City',
+    format: 'Single',
+    answers: [],
+  );
+  @override
+  Future<LocationStoryResponse> createDriveStopStory({
+    required String id,
+    required String name,
+    required double latitude,
+    required double longitude,
+    List<String>? interests,
+    Map<String, double>? journeyStart,
+    Map<String, double>? journeyEnd,
+  }) async {
+    receivedJourney =
+        journeyStart != null && journeyEnd != null && interests != null;
+    return LocationStoryResponse.fromJson({
+      'placeId': id,
+      'storyTitle': name,
+      'shortSpokenNarration': 'Museum story.',
+      'factIdsUsed': ['fact1'],
+      'sourceReferences': [
+        {'providerName': 'museum', 'attribution': 'Museum archive'},
+      ],
+    });
+  }
+
   @override
   Future<Json> nearbyJourneyStops({
     required Map<String, double> location,
@@ -112,6 +148,21 @@ void main() {
             .points,
         hasLength(2),
       );
+      final spoken = <String>[];
+      final messenger = tester.binding.defaultBinaryMessenger;
+      messenger.setMockMethodCallHandler(voiceChannel, (call) async {
+        if (call.method == 'ttsSpeak')
+          spoken.add(call.arguments['text'] as String);
+        return null;
+      });
+      addTearDown(() => messenger.setMockMethodCallHandler(voiceChannel, null));
+      await press('Play journey from home');
+      for (var i = 0; i < 6; i++) {
+        await tester.pump(const Duration(milliseconds: 300));
+      }
+      expect(api.receivedJourney, isTrue);
+      expect(spoken, ['Museum story.']);
+      expect(find.text('Test journey complete.'), findsOneWidget);
     },
   );
 }

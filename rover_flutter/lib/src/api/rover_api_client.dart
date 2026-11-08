@@ -379,9 +379,12 @@ class RoverApiClient {
   }
 
   Future<LocationStoryResponse> createDriveStopStory({
-    required String id, required String name, required double latitude, required double longitude,
+    required String id, required String name, required double latitude, required double longitude, List<String>? interests, Map<String, double>? journeyStart, Map<String, double>? journeyEnd,
   }) async {
     final json = await _sendJson('POST', '/api/drive-stop-story', body: {
+      if (interests != null) 'interests': interests,
+      if (journeyStart != null) 'journeyStart': journeyStart,
+      if (journeyEnd != null) 'journeyEnd': journeyEnd,
       'placeId': id, 'query': name,
       'location': {'latitude': latitude, 'longitude': longitude},
     }, responseTimeout: const Duration(seconds: 105));

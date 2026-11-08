@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'dart:convert';
 import 'dart:io';
 import 'dart:math' as math;
@@ -7,6 +8,7 @@ import 'package:flutter/gestures.dart';
 import 'package:google_maps_flutter/google_maps_flutter.dart' as google;
 
 import '../maps/google_maps_config.dart';
+import '../voice/rover_audio_services.dart';
 import '../api/story_question_models.dart';
 
 import 'package:flutter/material.dart';
@@ -70,6 +72,11 @@ class _JourneyLabState extends State<JourneyLabScreen> {
   String? working;
   String status = '';
   int minutes = 60, next = 0;
+  final speech = DeviceTextToSpeech();
+  int playbackId = 0;
+  String? playingTitle;
+  String playingText = '';
+  LatLng? simulatedPosition;
   int? replacing;
   bool get busy => working != null;
   List<String> get interests =>
@@ -77,6 +84,8 @@ class _JourneyLabState extends State<JourneyLabScreen> {
 
   @override
   void dispose() {
+    playbackId++;
+    if (playingTitle != null) unawaited(speech.stop());
     if (widget.client == null) api.close(force: true);
     map.dispose();
     query.dispose();
@@ -285,6 +294,8 @@ class _JourneyLabState extends State<JourneyLabScreen> {
       },
       onTap: (p) => tap(LatLng(p.latitude, p.longitude)),
       markers: {
+        if (simulatedPosition case final p?)
+          pin('simulation', 'Simulated walker', p, 210),
         if (start case final p?) pin('start', 'Start', p, 120),
         if (end case final p?) pin('end', 'End', p, 0),
         for (final (i, s) in stops.indexed)
@@ -337,6 +348,105 @@ class _JourneyLabState extends State<JourneyLabScreen> {
     );
   }
 
+  String journeyQuestion(List<String> selectedInterests) {
+    String pin(LatLng p) =>
+        '${p.latitude.toStringAsFixed(4)}, ${p.longitude.toStringAsFixed(4)}';
+    final finish = end ?? (stops.isEmpty ? start! : _point(stops.last));
+    final prompt =
+        'Introduce this ${scope.toLowerCase()} walk from ${pin(start!)} to ${pin(finish)}. '
+        'Use sourced local history. Interests: ${selectedInterests.join(', ')}. '
+        'Stops in walking order: ${stops.map((s) => s['name']).join(', ')}.';
+    return prompt.length <= 500 ? prompt : prompt.substring(0, 500);
+  }
+
+  Future<void> previewJourney() async {
+    if (busy || stops.isEmpty || plan == null) return;
+    if (stops.any((s) => verified(s) == null)) await generate();
+    if (!mounted || busy || plan == null) return;
+    final id = ++playbackId;
+    bool active() => mounted && id == playbackId;
+    await run('Playing test journey', () async {
+      try {
+        setState(() {
+          playingTitle = 'Starting your journey';
+          playingText = '';
+          simulatedPosition = start;
+        });
+        await speech.configure(rate: 0.5);
+        if (!active()) return;
+        Future<void> narrate(String title, String words) async {
+          setState(() {
+            playingTitle = title;
+            playingText = words;
+          });
+          await speech.speak(words);
+        }
+
+        final intro = area == null ? null : introduction(area!);
+        if (intro != null) {
+          await narrate(
+            intro.title,
+            intro.variants
+                .firstWhere((v) => v.narration.trim().isNotEmpty)
+                .narration,
+          );
+        }
+        var cursor = 0;
+        Future<void> travel(int target) async {
+          final stride = math.max(1, ((target - cursor) / 10).ceil());
+          while (cursor < target && active()) {
+            cursor = math.min(target, cursor + stride);
+            final point = geometry[cursor];
+            setState(() {
+              simulatedPosition = point;
+            });
+            move(point, 16);
+            await Future<void>.delayed(const Duration(milliseconds: 160));
+          }
+        }
+
+        for (var i = 0; i < stops.length && active(); i++) {
+          final stop = stops[i];
+          final point = _point(stop);
+          var nearest = cursor;
+          for (var j = cursor; j < geometry.length; j++) {
+            if (const Distance()(geometry[j], point) <
+                const Distance()(geometry[nearest], point))
+              nearest = j;
+          }
+          setState(() {
+            playingTitle = 'Walking to ${stop['name']}';
+            playingText = '';
+          });
+          await travel(nearest);
+          if (!active()) return;
+          setState(() => next = i + 1);
+          final story = verified(stop);
+          await narrate(
+            '${i + 1}. ${stop['name']}',
+            story?.shortSpokenNarration ??
+                'No verified story is available for ${stop['name']}.',
+          );
+        }
+        if (active()) await travel(geometry.length - 1);
+        if (active()) setState(() => status = 'Test journey complete.');
+      } catch (_) {
+        if (active()) rethrow;
+      } finally {
+        if (mounted)
+          setState(() {
+            playingTitle = null;
+            simulatedPosition = null;
+          });
+      }
+    });
+  }
+
+  Future<void> stopPreview() async {
+    playbackId++;
+    await speech.stop();
+  }
+
   Future<void> generate() => run('Generating stories', () async {
     final issues = <String>[];
     final selectedInterests = interests;
@@ -354,9 +464,7 @@ class _JourneyLabState extends State<JourneyLabScreen> {
         } else {
           final response = await api.researchStoryQuestion(
             StoryQuestionRequest(
-              question:
-                  'Introduce this ${scope.toLowerCase()} for someone starting a walk here. '
-                  'Use sourced local history and context. Interests: ${selectedInterests.join(', ')}.',
+              question: journeyQuestion(selectedInterests),
               location: RoverLatLng(
                 latitude: start!.latitude,
                 longitude: start!.longitude,
@@ -395,6 +503,9 @@ class _JourneyLabState extends State<JourneyLabScreen> {
       try {
         final result = await api.createDriveStopStory(
           id: place.id,
+          interests: selectedInterests,
+          journeyStart: _coordinates(start!),
+          journeyEnd: _coordinates(end ?? _point(stops.last)),
           name: place.name,
           latitude: place.location.latitude,
           longitude: place.location.longitude,
@@ -553,6 +664,22 @@ class _JourneyLabState extends State<JourneyLabScreen> {
     final intro = area == null ? null : introduction(area!);
     return Scaffold(
       appBar: AppBar(title: const Text('Journey Lab')),
+      bottomNavigationBar: playingTitle == null
+          ? null
+          : SafeArea(
+              child: ListTile(
+                title: Text(playingTitle!),
+                subtitle: ConstrainedBox(
+                  constraints: const BoxConstraints(maxHeight: 135),
+                  child: SingleChildScrollView(child: Text(playingText)),
+                ),
+                trailing: IconButton(
+                  tooltip: 'Stop preview',
+                  icon: const Icon(Icons.stop_circle),
+                  onPressed: stopPreview,
+                ),
+              ),
+            ),
       body: SafeArea(
         child: ListView(
           padding: const EdgeInsets.all(16),
@@ -769,6 +896,12 @@ class _JourneyLabState extends State<JourneyLabScreen> {
                 onPressed: busy ? null : generate,
                 child: const Text('Generate journey stories'),
               ),
+              if (stops.isNotEmpty)
+                FilledButton.icon(
+                  onPressed: busy ? null : previewJourney,
+                  icon: const Icon(Icons.play_arrow),
+                  label: const Text('Play journey from home'),
+                ),
               if (intro != null)
                 ListTile(
                   title: const Text('Area introduction'),
