@@ -1137,6 +1137,7 @@ app.MapGet("/api/walk-places", async (string query, double lat, double lng,
 });
 
 app.MapScenicDrives();
+app.MapJourneyLab();
 var walks = app.MapGroup("/api/walks");
 
 walks.MapPost("/", async (

@@ -82,13 +82,13 @@ public sealed class MapboxLocalDiscoveryProvider : ILocalDiscoveryProvider
             })
             .ToArray();
 
-        var selected = withinDistance
+        var ranked = withinDistance
             .GroupBy(candidate => candidate.Name, StringComparer.OrdinalIgnoreCase)
             .Select(group => group.OrderBy(candidate => candidate.DistanceMeters).First())
             .OrderBy(candidate => Score(candidate, command.Interests))
-            .ThenBy(candidate => candidate.DistanceMeters)
-            .Take(Math.Max(1, maximumStops))
-            .ToArray();
+            .ThenBy(candidate => candidate.DistanceMeters);
+        var selected = WalkInterestPolicy.TakeBalanced(ranked, Math.Max(1, maximumStops), command.Interests,
+            candidate => candidate.IsFood ? "food" : WalkInterestPolicy.Group(candidate.Category));
 
         LastDebugInfo = debugInfo with
         {
@@ -211,7 +211,7 @@ public sealed class MapboxLocalDiscoveryProvider : ILocalDiscoveryProvider
             .Concat(DefaultCategories)
             .Distinct(StringComparer.OrdinalIgnoreCase);
 
-        return mapped.Take(8);
+        return WalkInterestPolicy.TakeBalanced(mapped, 8, interests, WalkInterestPolicy.Group);
     }
 
     private static double Score(CandidateStop candidate, IReadOnlyCollection<string> interests)
@@ -244,6 +244,8 @@ public sealed class MapboxLocalDiscoveryProvider : ILocalDiscoveryProvider
         string? PhoneNumber,
         string? MenuUrl)
     {
+        public bool IsFood => WalkInterestPolicy.IsFood(Category) || WalkInterestPolicy.IsFood(SourceCategory);
+
         public WalkStop ToStop(int sequenceNumber, int distanceFromPreviousStopMeters)
         {
             var description = Address is null
@@ -275,10 +277,7 @@ public sealed class MapboxLocalDiscoveryProvider : ILocalDiscoveryProvider
                 description,
                 narration,
                 Category,
-                Category.Contains("Coffee", StringComparison.OrdinalIgnoreCase)
-                    || Category.Contains("Cafe", StringComparison.OrdinalIgnoreCase)
-                    || Category.Contains("Bakery", StringComparison.OrdinalIgnoreCase)
-                    || Category.Contains("Restaurant", StringComparison.OrdinalIgnoreCase)
+                IsFood
                     ? ContentType.FoodAndDrink
                     : ContentType.History,
                 ContentSource.LocalRecommendation,

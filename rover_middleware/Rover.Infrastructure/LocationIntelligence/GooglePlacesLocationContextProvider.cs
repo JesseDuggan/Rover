@@ -106,6 +106,17 @@ public sealed class GooglePlacesLocationContextProvider : LocationContextProvide
         return new CandidateObservationSearchResult(Name, nearby, result.Warnings);
     }
 
+    public async Task<CandidateObservationSearchResult> SearchMapAsync(string query, CancellationToken ct)
+    {
+        if (!Options.Enabled || string.IsNullOrWhiteSpace(Options.AccessToken))
+            return new(Name, [], ["Place search is unavailable."]);
+        var result = await SearchPlacesAsync("places:searchText", new
+        {
+            textQuery = query, maxResultCount = 8, languageCode = "en"
+        }, ct);
+        return new(Name, result.Places, result.Warnings);
+    }
+
     private async Task<(IReadOnlyList<LocationPlace> Places, IReadOnlyList<string> Warnings)> SearchPlacesAsync(
         string operation,
         object body,
@@ -362,13 +373,15 @@ public sealed class GooglePlacesLocationContextProvider : LocationContextProvide
             if (value.Contains("museum")) mapped.Add("museum");
             if (value.Contains("culture") || value.Contains("art")) mapped.Add("art_gallery");
             if (value.Contains("nature") || value.Contains("outdoor")) mapped.Add("park");
-            if (value.Contains("food") || value.Contains("restaurant") || value.Contains("burger")) mapped.Add("restaurant");
-            if (value.Contains("coffee") || value.Contains("tea") || value.Contains("cake")) mapped.Add("cafe");
+            if (WalkInterestPolicy.IsFood(value))
+                mapped.Add(value.Contains("coffee") || value.Contains("tea") || value.Contains("cake")
+                    || value.Contains("cafe") ? "cafe" : value.Contains("bakery") ? "bakery" : "restaurant");
             if (value.Contains("hotel") || value.Contains("lodging")) mapped.Add("hotel");
         }
 
         IEnumerable<string> selectedTypes = mapped.Count == 0
-            ? new[] { "tourist_attraction", "museum", "park", "cafe", "restaurant", "hotel" }
+            ? interests.Count == 0 ? new[] { "tourist_attraction", "museum", "park", "cafe", "restaurant", "hotel" }
+                : new[] { "tourist_attraction", "museum", "park", "hotel" }
             : mapped;
         return selectedTypes
             .Distinct(StringComparer.OrdinalIgnoreCase)

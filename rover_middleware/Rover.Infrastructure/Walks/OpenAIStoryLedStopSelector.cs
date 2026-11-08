@@ -29,7 +29,7 @@ public sealed class OpenAIStoryLedStopSelector(HttpClient client, StoryLedPlanni
         if (!Enabled) return new([], "disabled");
         if (string.IsNullOrWhiteSpace(options.ApiKey) || string.IsNullOrWhiteSpace(options.Model))
             return new([], "configuration missing");
-        var pool = candidates.Where(stop =>
+        var verified = candidates.Where(stop =>
                 stop.DiscoveryProviderName == "GooglePlaces" &&
                 !string.IsNullOrWhiteSpace(stop.ProviderPlaceId) &&
                 !string.IsNullOrWhiteSpace(stop.StopId) &&
@@ -38,7 +38,8 @@ public sealed class OpenAIStoryLedStopSelector(HttpClient client, StoryLedPlanni
                 Math.Abs(stop.Location.Latitude) <= 90 && Math.Abs(stop.Location.Longitude) <= 180 &&
                 RouteMath.DistanceMeters(command.StartingLocation, stop.Location) <= 5000)
             .DistinctBy(stop => stop.ProviderPlaceId)
-            .DistinctBy(stop => stop.StopId).Take(30).ToArray();
+            .DistinctBy(stop => stop.StopId);
+        var pool = WalkInterestPolicy.TakeBalanced(verified, 30, command.Interests, WalkInterestPolicy.Group);
         if (pool.Length < 2) return new([], "insufficient verified candidates");
         maximumStops = Math.Clamp(maximumStops, 2, Math.Min(pool.Length, 12));
         using var budget = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);

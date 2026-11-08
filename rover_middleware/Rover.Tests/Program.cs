@@ -69,6 +69,7 @@ var tests = new List<(string Name, Func<Task> Run)>
     ("Ontario feedback is structured and removes raw tester identifiers", OntarioFieldTestTests.Feedback),
     ("Ontario heritage enriches existing POIs and automatic research inherits enrollment", OntarioFieldTestTests.EnrichmentAndAutomaticStoryIdentity),
     ("Selected places require verified explicit identities", SelectedPlaceTests.Selection),
+    ("Journey Lab retains tapped order and destination", JourneyLabRoutes),
     ("Dense neighbourhood walks target the selected total time", SelectedPlaceTests.DenseNeighbourhood),
     ("Destination planning preserves interests and corridor stops", SelectedPlaceTests.Planning),
     ("Place adaptations preserve endpoints and require confirmation", SelectedPlaceTests.Adaptation),
@@ -4892,6 +4893,49 @@ static async Task ApiIntegrationStoryQuestions()
     using var areaJson = JsonDocument.Parse(await area.Content.ReadAsStringAsync());
     AssertEqual("failed", areaJson.RootElement.GetProperty("status").GetString()!);
     AssertEqual(0, areaJson.RootElement.GetProperty("answers").GetArrayLength());
+}
+
+static async Task JourneyLabRoutes()
+{
+    var clock = new ManualTimeProvider(DateTimeOffset.UtcNow);
+    using var mapClient = new HttpClient(new RoutingHttpMessageHandler(request =>
+    {
+        AssertTrue(request.RequestUri!.AbsolutePath.EndsWith("places:searchText"), "Search the map by town or named place.");
+        var payload = request.Content!.ReadAsStringAsync().GetAwaiter().GetResult();
+        AssertTrue(!payload.Contains("locationRestriction") && !payload.Contains("locationBias"), "Map search must work across countries.");
+        return JsonResponse(HttpStatusCode.OK, """{"places":[{"id":"montmartre","displayName":{"text":"Montmartre"},"location":{"latitude":48.887,"longitude":2.342},"primaryType":"neighborhood"}]}""");
+    }));
+    var mapPlaces = new GooglePlacesLocationContextProvider(new SingleHttpClientFactory(mapClient),
+        new InMemoryLocationContextCache(clock), clock, new LocationProviderOptions { Enabled = true, AccessToken = "test" });
+    var remote = await mapPlaces.SearchMapAsync("Montmartre, Paris", default);
+    AssertEqual("Montmartre", remote.Places.Single().Name);
+    using var api = await RoverApiProcess.StartAsync();
+    using var client = new HttpClient { BaseAddress = api.BaseAddress };
+    client.DefaultRequestHeaders.Add("X-Rover-Dev-User", "lab-test");
+    var points = Enumerable.Range(1, 10).Select(i => new
+    {
+        id = $"art-{i}", name = $"Gallery {i}", latitude = 44.6 + i * 0.0005,
+        longitude = -76.4, category = "art_gallery"
+    }).ToArray();
+    var start = new { latitude = 44.6, longitude = -76.4 };
+    var end = new { latitude = 44.61, longitude = -76.41 };
+    var manual = new { start, end, stops = points, suggest = false, minutes = 60, interests = new[] { "art" } };
+    using var response = await client.PostAsJsonAsync("/api/journey-lab/plan", manual);
+    AssertEqual(HttpStatusCode.OK, response.StatusCode);
+    using var doc = JsonDocument.Parse(await response.Content.ReadAsStringAsync());
+    var plan = doc.RootElement;
+    AssertTrue(plan.GetProperty("stops").EnumerateArray().Select(v => v.GetProperty("id").GetString())
+        .SequenceEqual(points.Select(p => p.id)), "Manual route must retain all ten POIs in order.");
+    AssertEqual(20, plan.GetProperty("visitMinutes").GetInt32());
+    var geometry = plan.GetProperty("coordinates").EnumerateArray().ToArray();
+    AssertEqual(end.latitude, geometry[^1].GetProperty("latitude").GetDouble());
+    using var suggested = await client.PostAsJsonAsync("/api/journey-lab/plan",
+        new { start, end, stops = Array.Empty<object>(), suggest = true, minutes = 60, interests = new[] { "art" } });
+    AssertEqual(HttpStatusCode.OK, suggested.StatusCode);
+    using var suggestions = JsonDocument.Parse(await suggested.Content.ReadAsStringAsync());
+    AssertEqual(end.longitude, suggestions.RootElement.GetProperty("coordinates").EnumerateArray().Last().GetProperty("longitude").GetDouble());
+    using var invalid = await client.PostAsJsonAsync("/api/journey-lab/plan", manual with { suggest = true });
+    AssertEqual(HttpStatusCode.BadRequest, invalid.StatusCode);
 }
 
 static async Task ApiIntegrationWalkLifecycle()

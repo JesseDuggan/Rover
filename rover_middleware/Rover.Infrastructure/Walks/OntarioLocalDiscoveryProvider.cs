@@ -53,7 +53,7 @@ public sealed class OntarioLocalDiscoveryProvider(ILocalDiscoveryProvider existi
             if (i < additions.Count) mixed.Add(additions[i]);
             if (i < stops.Count) mixed.Add(stops[i]);
         }
-        return new(mixed.Take(Math.Clamp(maximumStops, 2, 50)).ToArray(), ordinary.Diagnostic);
+        return new(WalkInterestPolicy.TakeBalanced(mixed, Math.Clamp(maximumStops, 2, 50), command.Interests, WalkInterestPolicy.Group), ordinary.Diagnostic);
     }
     private static bool Matches(WalkStop stop, LocationPlace place) =>
         RouteMath.DistanceMeters(stop.Location, place.Coordinates) < 25

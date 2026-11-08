@@ -47,17 +47,24 @@ public sealed class GooglePlacesLocalDiscoveryProvider : ILocalDiscoveryProvider
             return new(Array.Empty<WalkStop>(), "Google Places local discovery is disabled.");
         }
 
+        var query = new LocationContextQuery(command.StartingLocation,
+            Math.Clamp(_options.MaximumDistanceMeters, 100, 50000), null, null, [], command.Interests);
+        var food = command.Interests.Where(WalkInterestPolicy.IsFood).ToArray();
+        var other = command.Interests.Where(interest => !WalkInterestPolicy.IsFood(interest)).ToArray();
+        // Nearby search caps each distance-ranked response. Query the two groups
+        // independently so a dense restaurant district cannot hide other places.
         var result = await _placesProvider.GetContextAsync(
-            new LocationContextQuery(
-                command.StartingLocation,
-                Math.Clamp(_options.MaximumDistanceMeters, 100, 50000),
-                null,
-                null,
-                Array.Empty<GeoLocation>(),
-                command.Interests),
-            cancellationToken);
-
-        var selected = result.Places
+            query with { Interests = food.Length > 0 ? food : other.Length > 0 ? other : ["museum", "nature", "history"] }, cancellationToken);
+        var places = result.Places.AsEnumerable();
+        var warnings = result.Warnings.AsEnumerable();
+        if (food.Length > 0 && other.Length > 0 && result.Enabled && result.Warnings.Count == 0)
+        {
+            var nonFood = await _placesProvider.GetContextAsync(query with { Interests = other }, cancellationToken);
+            places = places.Concat(nonFood.Places);
+            warnings = warnings.Concat(nonFood.Warnings);
+        }
+        var uniquePlaces = places.DistinctBy(place => place.CanonicalId).ToArray();
+        var ranked = uniquePlaces
             .Where(place => WalkInterestPolicy.WantsFood(command.Interests)
                 || !place.Categories.Any(WalkInterestPolicy.IsFood)
                 || HasHeritageEvidence(place, command.Interests))
@@ -67,9 +74,9 @@ public sealed class GooglePlacesLocalDiscoveryProvider : ILocalDiscoveryProvider
                 Distance = RouteMath.DistanceMeters(command.StartingLocation, place.Coordinates)
             })
             .Where(candidate => candidate.Distance > 40 && candidate.Distance < _options.MaximumDistanceMeters)
-            .OrderBy(candidate => Score(candidate.Place, candidate.Distance, command.Interests))
-            .Take(Math.Max(1, maximumStops))
-            .ToArray();
+            .OrderBy(candidate => Score(candidate.Place, candidate.Distance, command.Interests));
+        var selected = WalkInterestPolicy.TakeBalanced(ranked, Math.Max(1, maximumStops), command.Interests,
+            candidate => WalkInterestPolicy.Group(DisplayCategory(candidate.Place)));
 
         var stops = selected
             .Select((candidate, index) => ToStop(
@@ -82,9 +89,9 @@ public sealed class GooglePlacesLocalDiscoveryProvider : ILocalDiscoveryProvider
                         candidate.Place.Coordinates))))
             .ToArray();
         var diagnostic = !result.Enabled ? "Google Places location provider is disabled."
-            : result.Warnings.Count > 0 ? string.Join(" ", result.Warnings)
+            : warnings.Any() ? string.Join(" ", warnings)
             : "Google Places search completed.";
-        return new(stops, $"{diagnostic} Returned {result.Places.Count} places; retained {stops.Length} within the configured distance limits.");
+        return new(stops, $"{diagnostic} Returned {uniquePlaces.Length} places; retained {stops.Length} within the configured distance limits.");
     }
 
     private static WalkStop ToStop(LocationPlace place, int sequenceNumber, int distanceFromPreviousStopMeters)
@@ -155,7 +162,7 @@ public sealed class GooglePlacesLocalDiscoveryProvider : ILocalDiscoveryProvider
     private static ContentType ContentTypeFor(string category)
     {
         var value = category.ToLowerInvariant();
-        if (value.Contains("coffee") || value.Contains("cafe") || value.Contains("bakery") || value.Contains("restaurant"))
+        if (WalkInterestPolicy.IsFood(category))
         {
             return ContentType.FoodAndDrink;
         }

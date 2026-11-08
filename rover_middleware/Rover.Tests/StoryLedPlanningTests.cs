@@ -5,6 +5,7 @@ using Rover.Application.LocationIntelligence;
 using Rover.Application.Walks;
 using Rover.Domain.Walks;
 using Rover.Infrastructure.Walks;
+using Rover.Infrastructure.LocationIntelligence;
 
 internal static class StoryLedPlanningTests
 {
@@ -115,6 +116,77 @@ internal static class StoryLedPlanningTests
         var disabledHandler = new Handler();
         await new MockWalkPlanner(new Router(), new Discovery(), Selector(disabledHandler, false)).PlanWalkAsync(Command, default);
         Check(disabledHandler.Request is null, "Flag-off must not call OpenAI.");
+        await InterestBalance();
+        await DiscoveryBalance();
+    }
+
+    private static async Task DiscoveryBalance()
+    {
+        var searches = new List<string[]>();
+        using var client = new HttpClient(new RoutingHttpMessageHandler(request =>
+        {
+            using var body = JsonDocument.Parse(request.Content!.ReadAsStringAsync().GetAwaiter().GetResult());
+            var types = body.RootElement.GetProperty("includedTypes").EnumerateArray().Select(type => type.GetString()!).ToArray();
+            searches.Add(types);
+            // A combined distance-ranked search would return only the nearby cafes.
+            var categories = types.Contains("cafe") ? Enumerable.Repeat("cafe", 20)
+                : Enumerable.Repeat("park", 6).Concat(Enumerable.Repeat("art_gallery", 6));
+            var places = categories.Select((category, i) => new { id = $"{category}{i}", displayName = new { text = $"{category} {i}" },
+                location = new { latitude = 43.65 + (category == "cafe" ? .001 : .005) + i * .00001, longitude = -79.4 },
+                primaryType = category });
+            return new HttpResponseMessage(HttpStatusCode.OK) { Content = new StringContent(JsonSerializer.Serialize(new { places })) };
+        }));
+        var provider = new GooglePlacesLocationContextProvider(new SingleHttpClientFactory(client),
+            new InMemoryLocationContextCache(TimeProvider.System), TimeProvider.System,
+            new LocationProviderOptions { Enabled = true, AccessToken = "test" });
+        var discovery = new GooglePlacesLocalDiscoveryProvider(provider,
+            Microsoft.Extensions.Options.Options.Create(new LocalDiscoveryOptions { Enabled = true, MaximumDistanceMeters = 2500 }));
+        var command = Command with { Interests = ["coffee", "nature", "art"] };
+        var stops = await discovery.FindCandidateStopsAsync(command, default, 6);
+        Check(searches.Count == 2 && searches.Any(types => !types.Contains("cafe") && types.Contains("park")),
+            "Mixed requests must reach beyond the provider's food-heavy nearest results.");
+        Check(stops.Count == 6 && stops.GroupBy(WalkInterestPolicy.Group).Count(group => group.Count() == 2) == 3,
+            "The local discovery limit must retain each requested group.");
+    }
+
+    private static async Task InterestBalance()
+    {
+        var categories = new[] { "Cafe", "Historic monument", "Art gallery", "Park", "Architectural building" };
+        var requested = new[] { "food", "history", "art", "nature", "architecture" };
+        var variety = categories.SelectMany((category, group) => Enumerable.Range(1, 12).Select(i =>
+            new WalkStop($"{group}-{i}", i, $"{category} {i}", new(43.65 + group * .0001, -79.4 + i * .0001),
+                category, category, category, ContentType.History, ContentSource.LocalRecommendation, 5, 100, 40))).ToArray();
+        var variedPlanner = new MockWalkPlanner(new Router(), new Discovery(variety));
+        foreach (var interests in new[] { requested, requested[1..] })
+        {
+            var walk = await variedPlanner.PlanWalkAsync(Command with { AvailableMinutes = 80, Interests = interests }, default);
+            Check(walk.Stops.Count == 10 && interests.All(group => walk.Stops.Count(stop => WalkInterestPolicy.Group(stop) == group) is 2 or 3),
+                "Ten stops must rotate across available requested groups.");
+        }
+        var cafes = Enumerable.Range(1, 35).Select(i => new WalkStop($"cafe-{i}", i, $"Cafe {i}",
+            new(43.65, -79.4 + i * .0001), "Coffee", "Coffee", "Cafe", ContentType.FoodAndDrink,
+            ContentSource.LocalRecommendation, 5, 100, 40, discoveryProviderName: "GooglePlaces",
+            providerPlaceId: $"cafe-{i}", sourceUrl: $"https://maps.google.com/?cid=cafe-{i}")).ToArray();
+        var pool = cafes.Concat(Pool).ToArray();
+        var mixed = Command with { Interests = ["coffee", "history"] };
+        var handler = new Handler { Ids = ["cafe-1", "cafe-2", "cafe-3"] };
+        var planner = new MockWalkPlanner(new Router(), new Discovery(pool), Selector(handler));
+        var shortWalk = await planner.PlanWalkAsync(mixed with { AvailableMinutes = 20 }, default);
+        Check(handler.Request!.Contains("Museum 3"), "Capped model input must retain non-food places.");
+        Check(shortWalk.Stops.Count == 2 && shortWalk.Stops.Count(WalkInterestPolicy.IsFood) == 1,
+            "Model selection and duration trimming must retain both interests.");
+
+        planner = new MockWalkPlanner(new Router(), new Discovery(pool));
+        var foodOnly = await planner.PlanWalkAsync(Command with { Interests = ["coffee"], AvailableMinutes = 50 }, default);
+        Check(foodOnly.Stops.All(WalkInterestPolicy.IsFood), "Food-only plans should prefer available food stops.");
+        var noFood = await planner.PlanWalkAsync(Command, default);
+        Check(noFood.Stops.Count == 3 && !noFood.Stops.Any(WalkInterestPolicy.IsFood), "Unrequested food must be excluded.");
+
+        var refillPlanner = new MockWalkPlanner(new Router(), new Discovery(pool),
+            Selector(new Handler { Ids = ["a", "b"] }));
+        var filled = await refillPlanner.PlanWalkAsync(mixed, default);
+        Check(filled.Stops.Count == 5 && filled.Stops.Count(WalkInterestPolicy.IsFood) is 2 or 3,
+            "Filling spare time must retain the non-food stops and avoid surplus cafes.");
     }
 
     private sealed class Handler : HttpMessageHandler
@@ -138,9 +210,9 @@ internal static class StoryLedPlanningTests
             return new(Code) { Content = new StringContent(json, Encoding.UTF8, "application/json") };
         }
     }
-    private sealed class Discovery : ILocalDiscoveryProvider
+    private sealed class Discovery(IReadOnlyList<WalkStop>? candidates = null) : ILocalDiscoveryProvider
     {
-        public Task<IReadOnlyList<WalkStop>> FindStopsAsync(CreateWalkCommand command, CancellationToken cancellationToken) => Task.FromResult<IReadOnlyList<WalkStop>>(Pool);
+        public Task<IReadOnlyList<WalkStop>> FindStopsAsync(CreateWalkCommand command, CancellationToken cancellationToken) => Task.FromResult(candidates ?? Pool);
         public Task<IReadOnlyList<WalkStop>> FindCandidateStopsAsync(CreateWalkCommand command, CancellationToken cancellationToken, int maximumStops = 30) => FindStopsAsync(command, cancellationToken);
     }
     private sealed class EvidenceProvider(LocationPlace? article) : ILocationContextProvider
