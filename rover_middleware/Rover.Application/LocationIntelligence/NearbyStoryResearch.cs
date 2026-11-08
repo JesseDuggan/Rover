@@ -32,9 +32,9 @@ public static class NearbyStoryResearch
         {
             MaximumStories = 1,
             Question = selectedDriveStop ? new StoryResearchQuestion(
-                $"Give a short, family-friendly, sourced introduction specifically to {place.Name} at {place.Address}. " +
+                $"What documented event or human story took place at {place.Name} at {place.Address}, and why is it remembered? " +
                 (request.RouteGeometry.Count == 2 ? FormattableString.Invariant($"This walking journey starts at {request.RouteGeometry[0].Latitude:F4},{request.RouteGeometry[0].Longitude:F4} and ends at {request.RouteGeometry[1].Latitude:F4},{request.RouteGeometry[1].Longitude:F4}. ") : "") +
-                "Explain its history or significance for a visitor approaching this stop. Name the selected place explicitly. " +
+                "For a cinema or festival venue, which named film actually screened in THIS building? For a theatre or concert hall, which named production played on THIS stage? For another kind of place, find a documented local happening, person or turning point. Search local-language venue programmes and archives using former venue names as needed. In the first sentence name the place and the specific work or episode together. Cite the evidence tying them together; describe its date and significance in a single short family-friendly paragraph. Only call a screening a premiere if the source specifies that distinction. If the evidence cannot establish a specific connection, return no story. " +
                 "Do not substitute nearby attractions or invent access, parking, opening hours or safety advice.",
                 StoryQuestionScope.Street, StoryQuestionFormat.Single, 1, 90) : null
         };
