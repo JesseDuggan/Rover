@@ -64,7 +64,8 @@ public sealed class GooglePlacesLocalDiscoveryProvider : ILocalDiscoveryProvider
             warnings = warnings.Concat(nonFood.Warnings);
         }
         if (result.Enabled && !warnings.Any() && other.Any(interest => WalkInterestPolicy.Group(interest) == "culture")
-            && !places.Any(place => place.Categories.Any(WalkInterestPolicy.IsPerformanceVenue)))
+            && places.Count(place => place.Categories.Any(WalkInterestPolicy.IsPerformanceVenue)
+                && RouteMath.DistanceMeters(place.Coordinates, command.StartingLocation) <= 350) < 2)
         {
             var venues = await _placesProvider.GetContextAsync(query with { Interests = ["performing arts"] }, cancellationToken);
             places = venues.Places.Concat(places);
