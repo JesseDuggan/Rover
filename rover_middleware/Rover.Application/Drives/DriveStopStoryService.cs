@@ -5,7 +5,7 @@ using Rover.Domain.Walks;
 
 namespace Rover.Application.Drives;
 
-public sealed record DriveStopStoryRequest(GeoLocation Location, string Query, string PlaceId);
+public sealed record DriveStopStoryRequest(GeoLocation Location, string Query, string PlaceId, string[]? Interests = null, GeoLocation? JourneyStart = null, GeoLocation? JourneyEnd = null);
 public sealed record DriveStopStoryResult(string StoryTitle, string ShortSpokenNarration, string? PlaceId,
     IReadOnlyList<string> FactIdsUsed, IReadOnlyList<LocationSource> SourceReferences,
     double Confidence, IReadOnlyList<string> RequiredAttribution, IReadOnlyList<string> Warnings,
@@ -17,7 +17,10 @@ public sealed class DriveStopStoryService(ScenicDriveService places, ILocalRoute
     {
         if (request is null || !ScenicDriveService.ValidLocation(request.Location) ||
             string.IsNullOrWhiteSpace(request.Query) || request.Query.Length > 256 ||
-            string.IsNullOrWhiteSpace(request.PlaceId) || request.PlaceId.Length > 256)
+            string.IsNullOrWhiteSpace(request.PlaceId) || request.PlaceId.Length > 256 ||
+            request.Interests is { Length: > 20 } || request.Interests?.Any(i => string.IsNullOrWhiteSpace(i) || i.Length > 80) == true ||
+            request.JourneyStart is not null && !ScenicDriveService.ValidLocation(request.JourneyStart) ||
+            request.JourneyEnd is not null && !ScenicDriveService.ValidLocation(request.JourneyEnd))
             throw new ArgumentException("Select a valid driving stop.");
         var found = await places.SearchAsync(request.Query, request.Location, ct);
         var stop = found.Places.FirstOrDefault(p => p.PlaceId == request.PlaceId &&
@@ -28,7 +31,7 @@ public sealed class DriveStopStoryService(ScenicDriveService places, ILocalRoute
             [], null, [], [], new Dictionary<string, string>(), 0, null, null, null,
             1, 1, [], [], null, null, now);
         var result = await NearbyStoryResearch.CreateAsync(researcher, place,
-            new LocationStoryRequest(stop.Location, 300, null, null, [], [], [stop.PlaceId], "just-walking"),
+            new LocationStoryRequest(stop.Location, 300, null, null, new[] { request.JourneyStart, request.JourneyEnd }.OfType<GeoLocation>().ToArray(), request.Interests ?? [], [stop.PlaceId], "just-walking"),
             now, ct, selectedDriveStop: true);
         var expiry = result.SourceReferences.Where(s => s.ExpiresUtc.HasValue)
             .Select(s => s.ExpiresUtc!.Value).DefaultIfEmpty(now.AddHours(12)).Min();

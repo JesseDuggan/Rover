@@ -53,6 +53,7 @@ public sealed class WalkSession
     public int EstimatedDurationMinutes { get; private set; }
     public int EstimatedDistanceMeters { get; private set; }
     public string RouteSummary { get; }
+    public string? StopSelectionStatus { get; init; }
     public IReadOnlyCollection<string> Interests { get; }
     public WalkingPace WalkingPace { get; }
     public IReadOnlyCollection<AccessibilityPreference> AccessibilityPreferences { get; }

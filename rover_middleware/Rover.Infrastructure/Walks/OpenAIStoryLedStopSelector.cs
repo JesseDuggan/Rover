@@ -72,6 +72,7 @@ public sealed class OpenAIStoryLedStopSelector(HttpClient client, StoryLedPlanni
                 return new
                 {
                     id = stop.StopId, name = Clip(stop.Name, 120),
+                    approximatePlace = command.StoryDestination is null ? null : Approximate(stop.Location),
                     category = Clip(stop.Category, 80),
                     description = Clip(stop.ShortDescription, 500),
                     evidence,
@@ -98,7 +99,9 @@ public sealed class OpenAIStoryLedStopSelector(HttpClient client, StoryLedPlanni
                 input = JsonSerializer.Serialize(new
                 {
                     availableMinutes = command.AvailableMinutes,
-                    interests = command.Interests.Take(8).Select(value => Clip(value, 80)),
+                    approximateStart = command.StoryDestination is null ? null : Approximate(command.StartingLocation),
+                    approximateEnd = command.StoryDestination is null ? null : Approximate(command.StoryDestination),
+                    interests = command.Interests.Take(20).Select(value => Clip(value, 80)),
                     walkingPace = command.WalkingPace.ToString(),
                     walkPreferences = new {
                         naturalRequest = Clip(command.NaturalRequest, 500),
@@ -137,6 +140,9 @@ public sealed class OpenAIStoryLedStopSelector(HttpClient client, StoryLedPlanni
             return new([], "provider unavailable or invalid response");
         }
     }
+
+    private static string Approximate(GeoLocation point) =>
+        FormattableString.Invariant($"{point.Latitude:F3}, {point.Longitude:F3}");
 
     public static string[] MatchedEvidence(WalkStop stop, IReadOnlyList<LocationPlace> articles, DateTimeOffset now)
         => articles.Where(article => Normalize(article.Name).Length > 0 &&

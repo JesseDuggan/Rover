@@ -71,5 +71,11 @@ public static class WalkInterestPolicy
     }
 
     public static bool Allows(WalkStop stop, IEnumerable<string> interests) =>
-        WantsFood(interests) || !IsFood(stop);
+        !IsFood(stop) || (interests.Any(value => IsFood(value) && !IsCoffee(value))
+            || (interests.Any(IsCoffee) && IsCoffee(stop.Category)));
+
+    public static bool IsCoffee(string value) =>
+        value.Contains("coffee", StringComparison.OrdinalIgnoreCase) ||
+        value.Contains("cafe", StringComparison.OrdinalIgnoreCase) ||
+        value.Contains("café", StringComparison.OrdinalIgnoreCase);
 }

@@ -156,6 +156,9 @@ internal static class StoryLedPlanningTests
         var variety = categories.SelectMany((category, group) => Enumerable.Range(1, 12).Select(i =>
             new WalkStop($"{group}-{i}", i, $"{category} {i}", new(43.65 + group * .0001, -79.4 + i * .0001),
                 category, category, category, ContentType.History, ContentSource.LocalRecommendation, 5, 100, 40))).ToArray();
+        Check(!WalkInterestPolicy.Allows(new WalkStop("dinner", 1, "Trattoria", variety[0].Location, "", "", "Italian Restaurant", ContentType.FoodAndDrink, ContentSource.LocalRecommendation, 5, 100, 40), ["history", "coffee"]),
+            "Selecting Coffee must not enable restaurant stops.");
+        Check(WalkInterestPolicy.Allows(variety[0], ["history", "coffee"]), "Coffee should allow a cafe.");
         var variedPlanner = new MockWalkPlanner(new Router(), new Discovery(variety));
         foreach (var interests in new[] { requested, requested[1..] })
         {

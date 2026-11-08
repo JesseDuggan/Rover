@@ -262,7 +262,7 @@ public sealed class MockWalkPlanner : IWalkPlanner
             var geometry = direct.Coordinates;
             var spareMinutes = command.AvailableMinutes - direct.DurationMinutes - requested.EstimatedVisitMinutes;
             var detourRadius = Math.Clamp(spareMinutes * 20, 600, 1600);
-            var centers = CorridorCenters(geometry).ToList();
+            var centers = CorridorCenters(geometry, 450, 12).ToList();
             if (spareMinutes >= 20 && centers.Count <= 6)
                 centers.AddRange(ExploreEitherSide(centers[centers.Count / 2], command.StartingLocation, requested.Location, detourRadius * 0.75));
             foreach (var center in centers.Distinct())
@@ -270,31 +270,46 @@ public sealed class MockWalkPlanner : IWalkPlanner
                 var found = await _localDiscoveryProvider.DiscoverForPlanningAsync(
                     command with { StartingLocation = center, SelectedPlace = null }, ct, 30);
                 candidates.AddRange(found.Stops.Where(stop => WalkInterestPolicy.Allows(stop, command.Interests) && !SamePlace(stop, requested) &&
-                    (!requested.IsDestination || RouteMath.DistanceFromRouteMeters(stop.Location, geometry) <= detourRadius)));
+                    (!requested.IsDestination || (RouteMath.DistanceFromRouteMeters(stop.Location, geometry) <= detourRadius &&
+                        RouteMath.ProgressPercentage(stop.Location, direct) > 0 &&
+                        RouteMath.DistanceMeters(stop.Location, requested.Location) > 25))));
             }
         }
         var unique = new List<WalkStop>();
         foreach (var candidate in candidates)
             if (!unique.Any(stop => SamePlace(stop, candidate))) unique.Add(candidate);
         var selection = _storySelector?.Enabled == true && unique.Count > 0
-            ? await _storySelector.SelectAsync(command, unique, DesiredStopCount(command.AvailableMinutes) - 1, ct)
+            ? await _storySelector.SelectAsync(command with { StoryDestination = requested.Location }, unique, DesiredStopCount(command.AvailableMinutes) - 1, ct)
             : null;
-        var pool = (selection?.Stops.Count > 0 ? selection.Stops.Concat(unique) : unique).ToArray();
+        var pool = (selection?.Stops.Count > 0 ? selection.Stops.Concat(unique) : unique).DistinctBy(stop => stop.StopId).ToArray();
+        var recommended = selection?.Stops.Select(stop => stop.StopId).ToHashSet() ?? [];
         var chosen = new List<WalkStop>();
         // Pick near evenly spaced positions before considering additional candidates.
         // This prevents the first search centre from consuming the entire stop budget.
         foreach (var center in CorridorCenters(direct.Coordinates, 400, 12))
         {
-            var next = pool.Where(stop => chosen.All(existing => !SamePlace(existing, stop) && RouteMath.DistanceMeters(existing.Location, stop.Location) >= 100))
-                .OrderBy(stop => RouteMath.DistanceMeters(center, stop.Location)).FirstOrDefault();
+            var nearby = pool.Where(stop => CanAddCoffee(command, chosen, stop) && chosen.All(existing => !SamePlace(existing, stop) && RouteMath.DistanceMeters(existing.Location, stop.Location) >= 100))
+                .Where(stop => RouteMath.DistanceMeters(center, stop.Location) <= 500)
+                .OrderBy(stop => (int)(RouteMath.DistanceMeters(center, stop.Location) / 150))
+                .ThenByDescending(stop => recommended.Contains(stop.StopId))
+                .ThenBy(stop => RouteMath.DistanceMeters(center, stop.Location));
+            var next = WalkInterestPolicy.TakeBalanced(nearby, 1, command.Interests, WalkInterestPolicy.Group,
+                chosen.Select(WalkInterestPolicy.Group)).FirstOrDefault();
             if (next is not null && RouteMath.DistanceMeters(center, next.Location) <= 500)
                 chosen.Add(next);
         }
         var timeForStops = Math.Max(0, command.AvailableMinutes - direct.DurationMinutes - requested.EstimatedVisitMinutes);
         var retained = new List<WalkStop>();
-        foreach (var stop in chosen)
+        // Spend the budget across the entire route even when early visits are expensive.
+        var coverageOrder = chosen.OrderByDescending(stop => Math.Min(
+            RouteMath.DistanceMeters(command.StartingLocation, stop.Location),
+            RouteMath.DistanceMeters(requested.Location, stop.Location))).ToList();
+        while (coverageOrder.Count > 0)
         {
             // Reserve a small walking detour allowance as well as the visit.
+            var stop = retained.Count == 0 ? coverageOrder.MinBy(candidate => RouteMath.DistanceMeters(command.StartingLocation, candidate.Location))! : coverageOrder.MaxBy(candidate =>
+                retained.Min(other => RouteMath.DistanceMeters(candidate.Location, other.Location)))!;
+            coverageOrder.Remove(stop);
             var cost = Math.Max(1, stop.EstimatedVisitMinutes) + 3;
             if (cost > timeForStops) continue;
             retained.Add(stop);
@@ -312,14 +327,14 @@ public sealed class MockWalkPlanner : IWalkPlanner
         {
             // Reduce evenly across the corridor; an explicit choice can never be trimmed.
             var optional = stops.Where(stop => !SamePlace(stop, requested)).ToArray();
-            var keep = optional.Where((_, index) => index % 2 == 1).ToArray();
+            var keep = optional.Length <= 1 ? [] : optional.Where((_, index) => index % 2 == 0).ToArray();
             stops = requested.IsDestination
                 ? Resequence(command.StartingLocation, keep.Append(requested).ToArray())
                 : CreateEfficientStopPlan(command, keep.Append(requested).ToArray(), keep.Count() + 1);
             if (!stops.Any(stop => SamePlace(stop, requested))) stops = new[] { requested };
             route = stops.Count == 1 ? direct : await _routeProvider.CreateRouteAsync(command, stops, ct);
         }
-        (stops, route) = await FillAvailableTimeAsync(command, stops, route, pool, ct);
+        (stops, route) = await FillAvailableTimeAsync(command, stops, route, pool, ct, balanceInterests: true);
         var duration = route.DurationMinutes + stops.Sum(stop => stop.EstimatedVisitMinutes);
         EnsureSelectedPlaceRoute(route);
         var summary = requested.IsDestination ? $"Walk to {requested.Name}." : $"Walk via {requested.Name}.";
@@ -329,8 +344,15 @@ public sealed class MockWalkPlanner : IWalkPlanner
         summary += TimingSummary(command, route, stops);
         return new WalkSession(Guid.NewGuid().ToString("n"), command.StartingLocation, DateTimeOffset.UtcNow,
             command.AvailableMinutes, duration, route.DistanceMeters, summary, command.Interests,
-            command.WalkingPace, command.AccessibilityPreferences, stops, route) { ProfileId = command.ProfileId };
+            command.WalkingPace, command.AccessibilityPreferences, stops, route) { ProfileId = command.ProfileId, StopSelectionStatus = selection?.Status };
     }
+
+    private static bool CanAddCoffee(CreateWalkCommand command, IEnumerable<WalkStop> chosen, WalkStop candidate) =>
+        !WalkInterestPolicy.IsFood(candidate) || command.Interests.All(WalkInterestPolicy.IsFood) ||
+        command.Interests.Any(i => WalkInterestPolicy.IsFood(i) &&
+            !WalkInterestPolicy.IsCoffee(i)) || chosen.Count(WalkInterestPolicy.IsFood) <
+            Math.Ceiling(DesiredStopCount(command.AvailableMinutes) / (double)Math.Max(1,
+                command.Interests.Select(WalkInterestPolicy.Group).Distinct().Count()));
 
     private static IEnumerable<GeoLocation> ExploreEitherSide(GeoLocation center, GeoLocation start, GeoLocation end, double metres)
     {
@@ -367,7 +389,9 @@ public sealed class MockWalkPlanner : IWalkPlanner
             if (total >= command.AvailableMinutes * 0.9) break;
             var minutesPerMetre = route.DurationMinutes / Math.Max(1d, PlannedDistance(command.StartingLocation, stops));
             minutesPerMetre = Math.Clamp(minutesPerMetre, 0.01, 0.035);
-            var options = remaining.Select(candidate =>
+            var eligible = remaining.Where(candidate => CanAddCoffee(command, stops, candidate)).ToArray();
+            if (eligible.Length == 0) break;
+            var options = eligible.Select(candidate =>
             {
                 var bestIndex = 1;
                 var bestDistance = double.MaxValue;
@@ -578,7 +602,7 @@ public sealed class MockWalkPlanner : IWalkPlanner
                 new GeoLocation(37.7875, -122.4062),
                 "A nearby independent coffee stop suited to a short walking break.",
                 "This is a local recommendation, not Rover editorial history: use it as a practical pause before the last leg.",
-                "Food and Drink",
+                "Cafe",
                 ContentType.FoodAndDrink,
                 ContentSource.LocalRecommendation,
                 8,

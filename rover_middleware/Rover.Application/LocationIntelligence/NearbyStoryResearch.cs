@@ -33,6 +33,7 @@ public static class NearbyStoryResearch
             MaximumStories = 1,
             Question = selectedDriveStop ? new StoryResearchQuestion(
                 $"Give a short, family-friendly, sourced introduction specifically to {place.Name} at {place.Address}. " +
+                (request.RouteGeometry.Count == 2 ? FormattableString.Invariant($"This walking journey starts at {request.RouteGeometry[0].Latitude:F4},{request.RouteGeometry[0].Longitude:F4} and ends at {request.RouteGeometry[1].Latitude:F4},{request.RouteGeometry[1].Longitude:F4}. ") : "") +
                 "Explain its history or significance for a visitor approaching this stop. Name the selected place explicitly. " +
                 "Do not substitute nearby attractions or invent access, parking, opening hours or safety advice.",
                 StoryQuestionScope.Street, StoryQuestionFormat.Single, 1, 90) : null

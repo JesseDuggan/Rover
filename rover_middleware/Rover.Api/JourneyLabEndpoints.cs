@@ -12,7 +12,7 @@ public sealed record LabPlace(string Id, string Name, double Latitude, double Lo
 public sealed record LabPlanRequest(GeoLocation Start, GeoLocation? End, LabPlace[] Stops, bool Suggest,
     int Minutes, string[] Interests);
 public sealed record LabPlan(IReadOnlyList<LabPlace> Stops, IReadOnlyList<GeoLocation> Coordinates,
-    int WalkingMinutes, int VisitMinutes, int DistanceMeters);
+    int WalkingMinutes, int VisitMinutes, int DistanceMeters, string? StopSelectionStatus = null);
 
 public static class JourneyLabEndpoints
 {
@@ -77,7 +77,8 @@ public static class JourneyLabEndpoints
             var session = await planner.PlanToPlaceAsync(command, end, ct);
             var suggestions = session.Stops.Where(s => !s.IsDestination).Select(s => new LabPlace(s.StopId, s.Name,
                 s.Location.Latitude, s.Location.Longitude, s.Category, string.Join(", ", s.RequiredAttribution), s.SourceUrl)).ToArray();
-            return Describe(suggestions, session.Route, session.Stops.Sum(s => s.EstimatedVisitMinutes), routes);
+            return Describe(suggestions, session.Route, session.Stops.Sum(s => s.EstimatedVisitMinutes), routes)
+                with { StopSelectionStatus = session.StopSelectionStatus };
         }
 
         var visits = request.Stops.Select((p, i) => new WalkStop(p.Id, i + 1, p.Name, new(p.Latitude, p.Longitude),
