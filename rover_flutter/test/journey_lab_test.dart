@@ -1,3 +1,7 @@
+import 'dart:convert';
+import 'dart:io';
+
+import 'package:flutter/services.dart';
 import 'package:flutter/material.dart';
 import 'package:rover/src/api/story_question_models.dart';
 import 'package:rover/src/api/location_story_models.dart';
@@ -113,6 +117,10 @@ class FakeJourneyApi extends RoverApiClient {
     suggested.add(suggest);
     return {
       'stops': [stop],
+      if (suggest)
+        'skipped': [
+          {'name': 'Old quay', 'reason': 'Outside walking corridor'},
+        ],
       'coordinates': [start, end!],
       'walkingMinutes': 10,
       'visitMinutes': 5,
@@ -122,6 +130,101 @@ class FakeJourneyApi extends RoverApiClient {
 }
 
 void main() {
+  testWidgets(
+    'A second tester can open the same replay and hear a passing cue before arrival',
+    (tester) async {
+      final api = FakeJourneyApi();
+      addTearDown(() => api.close(force: true));
+      final stop = FakeJourneyApi.stop;
+      final pass = {
+        ...stop,
+        'name': 'Harbour plaque',
+        'id': 'plaque',
+        'longitude': -79.381,
+        'metres': 80.0,
+      };
+      final data = {
+        'minutes': 60,
+        'scope': 'City',
+        'next': 0,
+        'area': null,
+        'start': {...stop, 'longitude': -79.382},
+        'end': stop,
+        'stops': [stop],
+        'plan': {
+          'coordinates': [
+            {...stop, 'longitude': -79.382},
+            stop,
+          ],
+          'distanceMeters': 160,
+          'walkingMinutes': 3,
+          'visitMinutes': 2,
+          'coverage': {
+            'passing': [pass],
+            'notes': [],
+          },
+        },
+        'stories': {
+          for (final p in [pass, stop])
+            p['id']: (await api.createDriveStopStory(
+              id: p['id'] as String,
+              name: p['name'] as String,
+              latitude: 43.65,
+              longitude: -79.38,
+            )).toJson()..['shortSpokenNarration'] = 'Story at ${p['name']}.',
+        },
+      };
+      String packet =
+          'WalkaboutLab1.${base64Url.encode(gzip.encode(utf8.encode(jsonEncode(data))))}';
+      final messenger = tester.binding.defaultBinaryMessenger;
+      messenger.setMockMethodCallHandler(SystemChannels.platform, (call) async {
+        if (call.method == 'Clipboard.getData') return {'text': packet};
+        if (call.method == 'Clipboard.setData') packet = call.arguments['text'];
+        return null;
+      });
+      final spoken = <String>[];
+      messenger.setMockMethodCallHandler(voiceChannel, (call) async {
+        if (call.method == 'ttsSpeak') spoken.add(call.arguments['text']);
+        return null;
+      });
+      addTearDown(() {
+        messenger.setMockMethodCallHandler(SystemChannels.platform, null);
+        messenger.setMockMethodCallHandler(voiceChannel, null);
+      });
+      tester.view.physicalSize = const Size(900, 1500);
+      tester.view.devicePixelRatio = 1;
+      addTearDown(tester.view.resetPhysicalSize);
+      addTearDown(tester.view.resetDevicePixelRatio);
+      await tester.pumpWidget(
+        PreferencesScope(
+          controller: PreferencesController(MemoryPreferencesRepository()),
+          child: MaterialApp(home: JourneyLabScreen(client: api)),
+        ),
+      );
+      Future<void> press(String name) async {
+        final button = find.text(name);
+        await tester.ensureVisible(button);
+        await tester.tap(button);
+        for (var i = 0; i < 8; i++) {
+          await tester.pump(const Duration(milliseconds: 100));
+        }
+      }
+
+      await press('Open copied replay');
+      await press('Copy replay for a tester');
+      expect(
+        jsonDecode(
+          utf8.decode(gzip.decode(base64Url.decode(packet.split('.').last))),
+        )['plan']['coverage']['passing'].first['id'],
+        'plaque',
+      );
+      await press('Play journey from home');
+      for (var i = 0; i < 25; i++) {
+        await tester.pump(const Duration(milliseconds: 160));
+      }
+      expect(spoken, ['Story at Harbour plaque.', 'Story at Town Museum.']);
+    },
+  );
   testWidgets(
     'confirmed replacement uses empty suggestions and preserves POI metadata on build',
     (tester) async {
@@ -225,6 +328,11 @@ void main() {
       await press('Play story');
       expect(spoken, ['Museum story.']);
       expect(find.text('Story finished.'), findsOneWidget);
+      await press('Check story gaps');
+      await press('Why places were skipped');
+      expect(find.text('Old quay'), findsOneWidget);
+      expect(find.text('Outside walking corridor'), findsOneWidget);
+      expect(find.text('Story gaps along the route'), findsOneWidget);
     },
   );
 }

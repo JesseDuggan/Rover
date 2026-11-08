@@ -3,10 +3,12 @@ import '../voice/spoken_location.dart';
 import 'dart:async';
 
 import 'prepared_walk_screen.dart';
+import 'journey_coverage.dart';
 
 import 'dart:convert';
 import 'dart:io';
 import 'dart:math' as math;
+import 'dart:typed_data' show BytesBuilder;
 
 import 'package:flutter/foundation.dart';
 import 'package:flutter/services.dart';
@@ -76,6 +78,7 @@ class _JourneyLabState extends State<JourneyLabScreen> {
   List<LatLng> geometry = [];
   _Json? plan, area;
   Map<String, dynamic> stories = {};
+  List<dynamic> plannerSkips = [];
   String? working;
   String status = '';
   int minutes = 60, next = 0;
@@ -117,6 +120,7 @@ class _JourneyLabState extends State<JourneyLabScreen> {
 
   void edit(VoidCallback change) => setState(() {
     change();
+    plannerSkips = [];
     plan = null;
     geometry = [];
     area = null;
@@ -253,15 +257,18 @@ class _JourneyLabState extends State<JourneyLabScreen> {
         }
         if (suggest) {
           edit(() => stops = ordered);
+          plannerSkips = result['skipped'] as List? ?? [];
           status = 'Review the stops, then build the walking route.';
         } else {
           final points = _rows(result, 'coordinates').map(_point).toList();
           if (points.length < 2) {
             throw StateError('No walking geometry available');
           }
+          final skipSnapshot = plannerSkips;
           edit(() => stops = ordered);
           setState(() {
-            plan = result;
+            plannerSkips = skipSnapshot;
+            plan = {...result, 'skipped': skipSnapshot};
             geometry = points;
           });
           fit();
@@ -383,7 +390,7 @@ class _JourneyLabState extends State<JourneyLabScreen> {
 
   Future<void> previewJourney({_Json? onlyStop}) async {
     if (busy ||
-        stops.isEmpty ||
+        (stops.isEmpty && plan?['coverage'] == null) ||
         start == null ||
         (onlyStop == null && plan == null))
       return;
@@ -419,6 +426,68 @@ class _JourneyLabState extends State<JourneyLabScreen> {
                 .firstWhere((v) => v.narration.trim().isNotEmpty)
                 .narration,
           );
+        }
+        if (onlyStop == null && plan?['coverage'] != null) {
+          final path = JourneyCoverage(geometry);
+          final events = <({double at, _Json place, bool passing})>[
+            for (final stop in stops)
+              (
+                at: path.project(_point(stop)).along,
+                place: stop,
+                passing: false,
+              ),
+            for (final place in _rows(plan!['coverage'], 'passing'))
+              if (verified(place) != null)
+                (
+                  at: (place['metres'] as num).toDouble(),
+                  place: place,
+                  passing: true,
+                ),
+          ]..sort((a, b) => a.at.compareTo(b.at));
+          var cursor = 0.0;
+          Future<void> advance(double target) async {
+            final steps = ((target - cursor) / 35).ceil().clamp(1, 40);
+            final origin = cursor;
+            for (var step = 1; step <= steps && active(); step++) {
+              cursor = origin + (target - origin) * step / steps;
+              final point = path.at(cursor);
+              setState(() => simulatedPosition = point);
+              move(point, 16);
+              await Future<void>.delayed(const Duration(milliseconds: 140));
+            }
+          }
+
+          for (final (index, event) in events.indexed) {
+            if (!active()) return;
+            setState(() {
+              playingTitle = 'Walking';
+              playingText = '';
+            });
+            await advance(event.at);
+            if (!active()) return;
+            final words = verified(event.place)?.shortSpokenNarration;
+            if (words == null) continue;
+            final voice = narrate(
+              event.passing
+                  ? 'Passing · ${event.place['name']}'
+                  : event.place['name'],
+              event.passing ? shortPassage(words) : words,
+            );
+            if (event.passing) {
+              final nextAt = index + 1 < events.length
+                  ? events[index + 1].at
+                  : path.total;
+              await Future.wait([
+                voice,
+                advance(math.min(cursor + 35, nextAt)),
+              ]);
+            } else {
+              await voice;
+            }
+          }
+          if (active()) await advance(path.total);
+          if (active()) setState(() => status = 'Test journey complete.');
+          return;
         }
         final nearby = <AdaptiveRouteStory>[];
         final covered = <String>{
@@ -659,6 +728,179 @@ class _JourneyLabState extends State<JourneyLabScreen> {
     }
   });
 
+  Future<void> checkCoverage() => run('Checking story gaps', () async {
+    final path = JourneyCoverage(geometry);
+    final selectedInterests = List<String>.of(interests);
+    final passing = <_Json>[], notes = <String>[];
+    final occupied = <double>[];
+    for (final stop in stops) {
+      if (!mounted) return;
+      if (verified(stop) == null) {
+        setState(() => working = 'Checking story for ${stop['name']}');
+        try {
+          await researchStop(stop, selectedInterests);
+        } catch (_) {
+          notes.add("${stop['name']} — stop research unavailable.");
+        }
+      }
+      if (!mounted) return;
+      if (verified(stop) != null) {
+        occupied.add(path.project(_point(stop)).along);
+      } else {
+        notes.add("${stop['name']} — no verified stop narration ready.");
+      }
+    }
+    final seen = <String>{};
+    final probes = path.searchPoints(occupied);
+    var attempts = 0;
+    for (final at in probes) {
+      if (!mounted) return;
+      setState(() => working = 'Checking the route at ${at.round()} m');
+      try {
+        final result = await api.nearbyJourneyStops(
+          location: _coordinates(path.at(at)),
+          interests: coverageInterests(selectedInterests),
+        );
+        if (!mounted) return;
+        final candidates =
+            _rows(result, 'stops')
+                .map(
+                  (place) => (place: place, pos: path.project(_point(place))),
+                )
+                .toList()
+              ..sort(
+                (a, b) => (a.pos.along - at).abs().compareTo(
+                  (b.pos.along - at).abs(),
+                ),
+              );
+        for (final item in candidates) {
+          final place = item.place;
+          final name = place['name'] as String;
+          if ((item.pos.along - at).abs() > 250 ||
+              !seen.add(place['id'] as String))
+            continue;
+          final alreadyStop = stops.any(
+            (s) =>
+                s['id'] == place['id'] ||
+                (s['name'].toString().toLowerCase() == name.toLowerCase() &&
+                    JourneyCoverage.distance(_point(s), _point(place)) < 60),
+          );
+          if (alreadyStop) continue;
+          String? reason;
+          if (foodCategory(place['category'] as String) &&
+              !coverageInterests(selectedInterests).any(foodCategory)) {
+            reason = 'Outside the interests used for this gap search';
+          } else if (item.pos.away > 50) {
+            reason = 'More than 50 m from the walking path';
+          } else if ([
+            0.0,
+            ...occupied,
+            path.total,
+          ].any((m) => (item.pos.along - m).abs() < 90)) {
+            reason = 'Too close to another cue or route endpoint';
+          } else if (attempts >= 8) {
+            reason = 'Research limit reached for this scan';
+          } else {
+            if (verified(place) == null) {
+              attempts++;
+              try {
+                await researchStop(place, selectedInterests);
+              } catch (_) {
+                reason = 'Story research unavailable';
+              }
+            }
+            if (!mounted) return;
+            final words = verified(place)?.shortSpokenNarration;
+            if (words != null && shortPassage(words).isNotEmpty) {
+              passing.add({...place, 'metres': item.pos.along});
+              occupied.add(item.pos.along);
+              break;
+            }
+            reason ??= 'No short, sourced narration available';
+          }
+          notes.add('$name — $reason.');
+        }
+      } catch (_) {
+        notes.add('Nearby search unavailable at ${at.round()} m.');
+      }
+    }
+    if (!mounted) return;
+    setState(() {
+      plan = {
+        ...plan!,
+        'coverage': {
+          'passing': passing,
+          'notes': notes,
+          'probes': probes.length,
+        },
+      };
+      status = 'Coverage ready. Play the journey from home to hear it.';
+    });
+  });
+
+  Widget coveragePanel() {
+    final path = JourneyCoverage(geometry);
+    final report = plan!['coverage'] as _Json;
+    final passing = _rows(
+      report,
+      'passing',
+    ).where((p) => verified(p) != null).toList();
+    final cuePoints = [
+      for (final p in stops)
+        if (verified(p) != null) path.project(_point(p)).along,
+      for (final p in passing) (p['metres'] as num).toDouble(),
+    ]..sort();
+    final gaps = path.gaps(cuePoints)
+      ..sort((a, b) => (b.end - b.start).compareTo(a.end - a.start));
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Text(
+          cuePoints.isEmpty
+              ? 'No sourced stories ready along this route.'
+              : 'First story at ${cuePoints.first.round()} m · ${passing.length} pass-by stories',
+        ),
+        ExpansionTile(
+          title: const Text('Story gaps along the route'),
+          subtitle: Text(
+            gaps.isEmpty
+                ? 'No measurable gap'
+                : 'Longest quiet stretch: ${(gaps.first.end - gaps.first.start).round()} m',
+          ),
+          children: [
+            for (final gap in gaps)
+              ListTile(
+                title: Text(
+                  '${gap.start.round()}–${gap.end.round()} m from the start',
+                ),
+                trailing: Text('${(gap.end - gap.start).round()} m'),
+              ),
+          ],
+        ),
+        for (final place in passing)
+          ListTile(
+            title: Text(place['name']),
+            subtitle: Text(
+              "Pass-by story · ${(place['metres'] as num).round()} m",
+            ),
+            onTap: () => showStop(place),
+          ),
+        ExpansionTile(
+          title: const Text('Why places were skipped'),
+          children: [
+            for (final row in plannerSkips)
+              ListTile(title: Text(row['name']), subtitle: Text(row['reason'])),
+            for (final note in report['notes']) ListTile(title: Text(note)),
+            if (plannerSkips.isEmpty && (report['notes'] as List).isEmpty)
+              const ListTile(
+                title: Text('No skipped places reported for this route.'),
+              ),
+          ],
+        ),
+      ],
+    );
+  }
+
   Future<void> researchStop(_Json stop, List<String> selectedInterests) async {
     final place = subject(stop);
     final result = await api.createDriveStopStory(
@@ -699,24 +941,52 @@ class _JourneyLabState extends State<JourneyLabScreen> {
     '${(await getApplicationSupportDirectory()).path}/journey-lab-v1.json',
   );
 
+  _Json snapshot() => {
+    'start': _coordinates(start!),
+    'end': end == null ? null : _coordinates(end!),
+    'minutes': minutes,
+    'scope': scope,
+    'stops': stops,
+    'plan': plan,
+    'area': area,
+    'stories': stories,
+    'next': next,
+  };
+
+  Future<void> copyReplay() => run('Copying test replay', () async {
+    final bytes = utf8.encode(jsonEncode(snapshot()));
+    if (bytes.length > 450000)
+      throw StateError('This route is too large to copy.');
+    final packet = base64Url.encode(gzip.encode(bytes));
+    await Clipboard.setData(ClipboardData(text: 'WalkaboutLab1.$packet'));
+    if (mounted)
+      setState(
+        () => status = 'Replay copied. Send it to your tester, including route locations and stories.',
+      );
+  });
+
+  Future<void> pasteReplay() => run('Opening copied replay', () async {
+    final text =
+        (await Clipboard.getData(Clipboard.kTextPlain))?.text?.trim() ?? '';
+    if (!text.startsWith('WalkaboutLab1.') || text.length > 700000) {
+      throw const FormatException('Copy a Walkabout test replay first.');
+    }
+    final buffer = BytesBuilder();
+    await for (final chunk in gzip.decoder.bind(
+      Stream.value(base64Url.decode(text.substring('WalkaboutLab1.'.length))),
+    )) {
+      if (buffer.length + chunk.length > 450000)
+        throw const FormatException('Replay exceeds the size limit.');
+      buffer.add(chunk);
+    }
+    restore(jsonDecode(utf8.decode(buffer.takeBytes())) as _Json);
+  });
+
   Future<void> save() => run('Saving route', () async {
     final file = await savedFile();
     await file.parent.create(recursive: true);
     final temp = File('${file.path}.tmp');
-    await temp.writeAsString(
-      jsonEncode({
-        'start': _coordinates(start!),
-        'end': end == null ? null : _coordinates(end!),
-        'minutes': minutes,
-        'scope': scope,
-        'stops': stops,
-        'plan': plan,
-        'area': area,
-        'stories': stories,
-        'next': next,
-      }),
-      flush: true,
-    );
+    await temp.writeAsString(jsonEncode(snapshot()), flush: true);
     await temp.rename(file.path);
     if (mounted) setState(() => status = 'Test route saved on this device.');
   });
@@ -727,18 +997,59 @@ class _JourneyLabState extends State<JourneyLabScreen> {
       if (mounted) setState(() => status = 'No saved test route yet.');
       return;
     }
-    final data = jsonDecode(await file.readAsString()) as _Json;
+    restore(jsonDecode(await file.readAsString()) as _Json);
+  });
+
+  void restore(_Json data) {
     final origin = _point(data['start']);
     final destination = data['end'] == null ? null : _point(data['end']);
     final ordered = _rows(data, 'stops').toList();
     final savedPlan = data['plan'] as _Json;
     final points = _rows(savedPlan, 'coordinates').map(_point).toList();
+    if (points.length < 2 ||
+        points.length > 30000 ||
+        ordered.length > 20 ||
+        ![
+          'Neighbourhood',
+          'City',
+          'Region',
+        ].contains(data['scope'] ?? 'Neighbourhood') ||
+        data['minutes'] is! int ||
+        data['minutes'] < 15 ||
+        data['minutes'] > 240 ||
+        data['stories'] is! _Json ||
+        data['next'] is! int)
+      throw const FormatException('Invalid test replay.');
+    for (final row in [
+      ...ordered,
+      ...?savedPlan['coverage']?['passing'] as List?,
+    ]) {
+      _point(row);
+      if (row['name'] is! String ||
+          row['id'] is! String ||
+          row['category'] is! String)
+        throw const FormatException('Invalid replay place.');
+      if (row['metres'] != null && row['metres'] is! num)
+        throw const FormatException('Invalid cue position.');
+      final raw = data['stories'][row['id']];
+      if (raw != null) LocationStoryResponse.fromJson(raw);
+    }
+    if (data['area'] != null) introduction(data['area']);
+    if (savedPlan['coverage'] != null) {
+      _rows(savedPlan['coverage'], 'passing');
+      (savedPlan['coverage']['notes'] as List).cast<String>().toList();
+    }
+    for (final row in savedPlan['skipped'] ?? []) {
+      if (row['name'] is! String || row['reason'] is! String)
+        throw const FormatException('Invalid skipped place.');
+    }
     if (!mounted) return;
     setState(() {
       start = origin;
       end = destination;
       stops = ordered;
       plan = savedPlan;
+      plannerSkips = savedPlan['skipped'] as List? ?? [];
       geometry = points;
       minutes = data['minutes'];
       scope = data['scope'] ?? 'Neighbourhood';
@@ -749,7 +1060,7 @@ class _JourneyLabState extends State<JourneyLabScreen> {
       replacing = null;
     });
     fit();
-  });
+  }
 
   void openPrepared(PreparedWalk walk) {
     Navigator.of(context).push(
@@ -1120,7 +1431,12 @@ class _JourneyLabState extends State<JourneyLabScreen> {
                 onPressed: busy ? null : generate,
                 child: const Text('Generate journey stories'),
               ),
-              if (stops.isNotEmpty)
+              OutlinedButton(
+                onPressed: busy ? null : checkCoverage,
+                child: const Text('Check story gaps'),
+              ),
+              if (plan?['coverage'] != null) coveragePanel(),
+              if (stops.isNotEmpty || plan?['coverage'] != null)
                 FilledButton.icon(
                   onPressed: busy ? null : previewJourney,
                   icon: const Icon(Icons.play_arrow),
@@ -1172,6 +1488,15 @@ class _JourneyLabState extends State<JourneyLabScreen> {
                 TextButton(
                   onPressed: busy ? null : reopen,
                   child: const Text('Reopen test route'),
+                ),
+                if (plan?['coverage'] != null)
+                  TextButton(
+                    onPressed: busy ? null : copyReplay,
+                    child: const Text('Copy replay for a tester'),
+                  ),
+                TextButton(
+                  onPressed: busy ? null : pasteReplay,
+                  child: const Text('Open copied replay'),
                 ),
               ],
             ),
