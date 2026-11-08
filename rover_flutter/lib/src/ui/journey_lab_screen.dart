@@ -4,6 +4,7 @@ import 'dart:io';
 import 'dart:math' as math;
 
 import 'package:flutter/foundation.dart';
+import 'package:flutter/services.dart';
 import 'package:flutter/gestures.dart';
 import 'package:google_maps_flutter/google_maps_flutter.dart' as google;
 
@@ -56,6 +57,7 @@ class JourneyLabScreen extends StatefulWidget {
 
 class _JourneyLabState extends State<JourneyLabScreen> {
   late final api = widget.client ?? RoverApiClient();
+  final mapKey = GlobalKey();
   final map = MapController();
   static const initialCenter = LatLng(43.65, -79.38);
   google.GoogleMapController? googleController;
@@ -87,6 +89,7 @@ class _JourneyLabState extends State<JourneyLabScreen> {
     playbackId++;
     if (playingTitle != null) unawaited(speech.stop());
     if (widget.client == null) api.close(force: true);
+    googleController = null;
     map.dispose();
     query.dispose();
     super.dispose();
@@ -262,10 +265,25 @@ class _JourneyLabState extends State<JourneyLabScreen> {
 
   google.LatLng googlePoint(LatLng p) => google.LatLng(p.latitude, p.longitude);
 
+  Future<void> moveCamera(google.CameraUpdate update) async {
+    final controller = googleController;
+    if (controller == null || !mounted) return;
+    try {
+      await controller.moveCamera(update);
+    } on StateError {
+      // The platform view was detached while a camera update was in flight.
+      if (identical(controller, googleController)) googleController = null;
+    } on PlatformException catch (error) {
+      debugPrint('Journey Lab map unavailable: ${error.code}');
+    }
+  }
+
   void move(LatLng target, double zoom) {
     if (googleEnabled) {
-      googleController?.moveCamera(
-        google.CameraUpdate.newLatLngZoom(googlePoint(target), zoom),
+      unawaited(
+        moveCamera(
+          google.CameraUpdate.newLatLngZoom(googlePoint(target), zoom),
+        ),
       );
     } else {
       map.move(target, zoom);
@@ -286,6 +304,7 @@ class _JourneyLabState extends State<JourneyLabScreen> {
         zoom: 11,
       ),
       onMapCreated: (controller) {
+        if (!mounted) return;
         googleController = controller;
         if (geometry.isNotEmpty) fit();
       },
@@ -322,9 +341,7 @@ class _JourneyLabState extends State<JourneyLabScreen> {
         southwest: google.LatLng(lats.reduce(math.min), lons.reduce(math.min)),
         northeast: google.LatLng(lats.reduce(math.max), lons.reduce(math.max)),
       );
-      googleController?.moveCamera(
-        google.CameraUpdate.newLatLngBounds(bounds, 40),
-      );
+      unawaited(moveCamera(google.CameraUpdate.newLatLngBounds(bounds, 40)));
       return;
     }
     map.fitCamera(
@@ -354,24 +371,31 @@ class _JourneyLabState extends State<JourneyLabScreen> {
     final finish = end ?? (stops.isEmpty ? start! : _point(stops.last));
     final prompt =
         'Introduce this ${scope.toLowerCase()} walk from ${pin(start!)} to ${pin(finish)}. '
-        'Use sourced local history. Interests: ${selectedInterests.join(', ')}. '
+        'Include sourced local history, former landmarks or neighbourhood festivals where relevant. Interests: ${selectedInterests.join(', ')}. '
         'Stops in walking order: ${stops.map((s) => s['name']).join(', ')}.';
     return prompt.length <= 500 ? prompt : prompt.substring(0, 500);
   }
 
-  Future<void> previewJourney() async {
-    if (busy || stops.isEmpty || plan == null) return;
-    if (stops.any((s) => verified(s) == null)) await generate();
-    if (!mounted || busy || plan == null) return;
+  Future<void> previewJourney({_Json? onlyStop}) async {
+    if (busy ||
+        stops.isEmpty ||
+        start == null ||
+        (onlyStop == null && plan == null))
+      return;
     final id = ++playbackId;
     bool active() => mounted && id == playbackId;
     await run('Playing test journey', () async {
       try {
         setState(() {
           playingTitle = 'Starting your journey';
-          playingText = '';
+          playingText = 'Preparing narration…';
           simulatedPosition = start;
         });
+        final mapContext = mapKey.currentContext;
+        if (onlyStop == null && mapContext != null) {
+          await Scrollable.ensureVisible(mapContext, alignment: 0.1);
+        }
+        if (!active()) return;
         await speech.configure(rate: 0.5);
         if (!active()) return;
         Future<void> narrate(String title, String words) async {
@@ -383,7 +407,7 @@ class _JourneyLabState extends State<JourneyLabScreen> {
         }
 
         final intro = area == null ? null : introduction(area!);
-        if (intro != null) {
+        if (onlyStop == null && intro != null) {
           await narrate(
             intro.title,
             intro.variants
@@ -407,6 +431,7 @@ class _JourneyLabState extends State<JourneyLabScreen> {
 
         for (var i = 0; i < stops.length && active(); i++) {
           final stop = stops[i];
+          if (onlyStop != null && onlyStop != stop) continue;
           final point = _point(stop);
           var nearest = cursor;
           for (var j = cursor; j < geometry.length; j++) {
@@ -418,9 +443,22 @@ class _JourneyLabState extends State<JourneyLabScreen> {
             playingTitle = 'Walking to ${stop['name']}';
             playingText = '';
           });
-          await travel(nearest);
+          if (onlyStop == null) await travel(nearest);
           if (!active()) return;
           setState(() => next = i + 1);
+          if (verified(stop) == null) {
+            setState(() {
+              playingTitle = 'Preparing story ${i + 1} of ${stops.length}';
+              playingText = 'Researching ${stop['name']}…';
+            });
+            await narrate(
+              'Preparing story',
+              'Finding a story about ${stop['name']}.',
+            );
+            if (!active()) return;
+            await researchStop(stop, interests);
+            if (!active()) return;
+          }
           final story = verified(stop);
           await narrate(
             '${i + 1}. ${stop['name']}',
@@ -428,10 +466,20 @@ class _JourneyLabState extends State<JourneyLabScreen> {
                 'No verified story is available for ${stop['name']}.',
           );
         }
-        if (active()) await travel(geometry.length - 1);
-        if (active()) setState(() => status = 'Test journey complete.');
-      } catch (_) {
-        if (active()) rethrow;
+        if (active() && onlyStop == null) await travel(geometry.length - 1);
+        if (active())
+          setState(
+            () => status = onlyStop == null
+                ? 'Test journey complete.'
+                : 'Story finished.',
+          );
+      } catch (error) {
+        if (active()) {
+          ScaffoldMessenger.of(
+            context,
+          ).showSnackBar(SnackBar(content: Text('Playback stopped: $error')));
+          rethrow;
+        }
       } finally {
         if (mounted)
           setState(() {
@@ -501,19 +549,9 @@ class _JourneyLabState extends State<JourneyLabScreen> {
       if (verified(stop) != null) continue;
       setState(() => working = 'Researching ${place.name}');
       try {
-        final result = await api.createDriveStopStory(
-          id: place.id,
-          interests: selectedInterests,
-          journeyStart: _coordinates(start!),
-          journeyEnd: _coordinates(end ?? _point(stops.last)),
-          name: place.name,
-          latitude: place.location.latitude,
-          longitude: place.location.longitude,
-        );
+        await researchStop(stop, selectedInterests);
         if (!mounted) return;
-        if (usableDriveStory(result, place, DateTime.now().toUtc())) {
-          setState(() => stories[place.id] = result.toJson());
-        } else {
+        if (verified(stop) == null) {
           issues.add('No verified story for ${place.name}.');
         }
       } catch (e) {
@@ -526,6 +564,22 @@ class _JourneyLabState extends State<JourneyLabScreen> {
       );
     }
   });
+
+  Future<void> researchStop(_Json stop, List<String> selectedInterests) async {
+    final place = subject(stop);
+    final result = await api.createDriveStopStory(
+      id: place.id,
+      interests: selectedInterests,
+      journeyStart: _coordinates(start!),
+      journeyEnd: _coordinates(end ?? _point(stops.last)),
+      name: place.name,
+      latitude: place.location.latitude,
+      longitude: place.location.longitude,
+    );
+    if (mounted && usableDriveStory(result, place, DateTime.now().toUtc())) {
+      setState(() => stories[place.id] = result.toJson());
+    }
+  }
 
   static AdaptiveRouteStory? introduction(_Json result) =>
       AreaStoryCollection.fromJson(result).stories
@@ -728,48 +782,50 @@ class _JourneyLabState extends State<JourneyLabScreen> {
                       _Tap.stop => 'Tap near a named place to choose a stop.',
                     },
             ),
-            SizedBox(
-              height: 300,
-              child: googleEnabled
-                  ? googleMap()
-                  : FlutterMap(
-                      mapController: map,
-                      options: MapOptions(
-                        initialCenter: initialCenter,
-                        initialZoom: 11,
-                        onTap: (_, p) => tap(p),
-                      ),
-                      children: [
-                        TileLayer(
-                          urlTemplate:
-                              'https://tile.openstreetmap.org/{z}/{x}/{y}.png',
-                          userAgentPackageName: 'ai.myrover.rover',
+            _KeptMap(
+              child: SizedBox(
+                key: mapKey,
+                height: 300,
+                child: googleEnabled
+                    ? googleMap()
+                    : FlutterMap(
+                        mapController: map,
+                        options: MapOptions(
+                          initialCenter: initialCenter,
+                          initialZoom: 11,
+                          onTap: (_, p) => tap(p),
                         ),
-                        if (geometry.isNotEmpty)
-                          PolylineLayer(
-                            polylines: [
-                              Polyline(
-                                points: geometry,
-                                strokeWidth: 5,
-                                color: Colors.indigo,
-                              ),
+                        children: [
+                          TileLayer(
+                            urlTemplate: 'https://tile.openstreetmap.org/{z}/{x}/{y}.png',
+                            userAgentPackageName: 'ai.myrover.rover',
+                          ),
+                          if (geometry.isNotEmpty)
+                            PolylineLayer(
+                              polylines: [
+                                Polyline(
+                                  points: geometry,
+                                  strokeWidth: 5,
+                                  color: Colors.indigo,
+                                ),
+                              ],
+                            ),
+                          MarkerLayer(
+                            markers: [
+                              if (start case final p?)
+                                marker(p, 'S', Colors.green.shade800),
+                              if (end case final p?)
+                                marker(p, 'E', Colors.red.shade800),
+                              for (final (i, s) in stops.indexed)
+                                marker(_point(s), '${i + 1}', Colors.indigo),
                             ],
                           ),
-                        MarkerLayer(
-                          markers: [
-                            if (start case final p?)
-                              marker(p, 'S', Colors.green.shade800),
-                            if (end case final p?)
-                              marker(p, 'E', Colors.red.shade800),
-                            for (final (i, s) in stops.indexed)
-                              marker(_point(s), '${i + 1}', Colors.indigo),
-                          ],
-                        ),
-                        const SimpleAttributionWidget(
-                          source: Text('OpenStreetMap contributors'),
-                        ),
-                      ],
-                    ),
+                          const SimpleAttributionWidget(
+                            source: Text('OpenStreetMap contributors'),
+                          ),
+                        ],
+                      ),
+              ),
             ),
             if (end != null)
               Align(
@@ -806,12 +862,23 @@ class _JourneyLabState extends State<JourneyLabScreen> {
               ListTile(
                 leading: Text('${i + 1}'),
                 title: Text(s['name']),
-                subtitle: Text(
-                  [
-                    s['category'],
-                    s['attribution'],
-                    s['sourceUrl'],
-                  ].whereType<String>().join('\n'),
+                subtitle: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(
+                      [
+                        s['category'],
+                        s['attribution'],
+                      ].whereType<String>().join(' · '),
+                    ),
+                    TextButton.icon(
+                      onPressed: busy
+                          ? null
+                          : () => previewJourney(onlyStop: s),
+                      icon: const Icon(Icons.volume_up_outlined),
+                      label: const Text('Play story'),
+                    ),
+                  ],
                 ),
                 onTap: verified(s) == null ? null : () => showStop(s),
                 trailing: PopupMenuButton<String>(
@@ -920,7 +987,7 @@ class _JourneyLabState extends State<JourneyLabScreen> {
                           final index = next % stops.length;
                           move(_point(stops[index]), 16);
                           setState(() => next = index + 1);
-                          showStop(stops[index]);
+                          previewJourney(onlyStop: stops[index]);
                         },
                   child: Text('Simulate stop ${next % stops.length + 1}'),
                 ),
@@ -944,5 +1011,23 @@ class _JourneyLabState extends State<JourneyLabScreen> {
         ),
       ),
     );
+  }
+}
+
+class _KeptMap extends StatefulWidget {
+  const _KeptMap({required this.child});
+  final Widget child;
+  @override
+  State<_KeptMap> createState() => _KeptMapState();
+}
+
+class _KeptMapState extends State<_KeptMap> with AutomaticKeepAliveClientMixin {
+  @override
+  bool get wantKeepAlive => true;
+
+  @override
+  Widget build(BuildContext context) {
+    super.build(context);
+    return widget.child;
   }
 }

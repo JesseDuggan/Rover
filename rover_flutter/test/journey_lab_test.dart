@@ -111,6 +111,7 @@ void main() {
       }
 
       final map = find.byType(FlutterMap);
+      final originalMap = tester.element(map);
       final center = tester.getCenter(map);
       await tester.tapAt(center - const Offset(40, 0));
       await tester.pump(const Duration(milliseconds: 400));
@@ -156,13 +157,25 @@ void main() {
         return null;
       });
       addTearDown(() => messenger.setMockMethodCallHandler(voiceChannel, null));
+      tester.view.physicalSize = const Size(900, 600);
+      await tester.pump();
+      final position = tester.state<ScrollableState>(find.byType(Scrollable).first).position;
+      position.jumpTo(position.maxScrollExtent);
+      await tester.pump();
+      expect(tester.element(find.byType(FlutterMap, skipOffstage: false)), same(originalMap));
+      position.jumpTo(0);
+      tester.view.physicalSize = const Size(900, 1500);
+      await tester.pump();
       await press('Play journey from home');
       for (var i = 0; i < 6; i++) {
         await tester.pump(const Duration(milliseconds: 300));
       }
       expect(api.receivedJourney, isTrue);
+      expect(spoken, ['Finding a story about Town Museum.', 'Museum story.']);
+      spoken.clear();
+      await press('Play story');
       expect(spoken, ['Museum story.']);
-      expect(find.text('Test journey complete.'), findsOneWidget);
+      expect(find.text('Story finished.'), findsOneWidget);
     },
   );
 }
