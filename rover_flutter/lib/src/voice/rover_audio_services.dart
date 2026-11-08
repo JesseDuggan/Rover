@@ -1,3 +1,4 @@
+import '../voice/spoken_location.dart';
 import 'package:flutter/services.dart';
 
 import 'rover_voice_state.dart';
@@ -44,7 +45,9 @@ class DeviceTextToSpeech implements RoverTextToSpeech {
 
   @override
   Future<void> speak(String text) async {
-    await voiceChannel.invokeMethod<void>('ttsSpeak', {'text': text});
+    final spoken = spokenLocationText(text);
+    if (spoken.isEmpty) return;
+    await voiceChannel.invokeMethod<void>('ttsSpeak', {'text': spoken});
   }
 
   @override

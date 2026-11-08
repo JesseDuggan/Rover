@@ -1,3 +1,4 @@
+import '../voice/spoken_location.dart';
 import 'dart:async';
 import 'dart:convert';
 import 'dart:io';
@@ -371,7 +372,7 @@ class _JourneyLabState extends State<JourneyLabScreen> {
     final finish = end ?? (stops.isEmpty ? start! : _point(stops.last));
     final prompt =
         'Introduce this ${scope.toLowerCase()} walk from ${pin(start!)} to ${pin(finish)}. '
-        'Include sourced local history, former landmarks or neighbourhood festivals where relevant. Interests: ${selectedInterests.join(', ')}. '
+        'Use place names in narration; omit coordinates. Include sourced local history, former landmarks or neighbourhood festivals where relevant. Interests: ${selectedInterests.join(', ')}. '
         'Stops in walking order: ${stops.map((s) => s['name']).join(', ')}.';
     return prompt.length <= 500 ? prompt : prompt.substring(0, 500);
   }
@@ -401,7 +402,7 @@ class _JourneyLabState extends State<JourneyLabScreen> {
         Future<void> narrate(String title, String words) async {
           setState(() {
             playingTitle = title;
-            playingText = words;
+            playingText = spokenLocationText(words);
           });
           await speech.speak(words);
         }

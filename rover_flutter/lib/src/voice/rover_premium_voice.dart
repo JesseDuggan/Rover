@@ -1,3 +1,4 @@
+import '../voice/spoken_location.dart';
 // ignore_for_file: prefer_initializing_formals
 
 import 'dart:typed_data';
@@ -69,6 +70,7 @@ class RoverPremiumVoiceCoordinator {
     String? storyId,
     String? variantId,
   }) async {
+    text = spokenLocationText(text);
     if (!enabled || text.trim().isEmpty) {
       return;
     }
@@ -118,6 +120,8 @@ class RoverPremiumVoiceCoordinator {
     String? storyId,
     String? variantId,
   }) async {
+    text = spokenLocationText(text);
+    if (text.trim().isEmpty) return false;
     final generation = ++_playbackGeneration;
     if (!enabled) {
       statusMessage = 'Using device voice.';

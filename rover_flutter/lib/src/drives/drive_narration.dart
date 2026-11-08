@@ -1,3 +1,4 @@
+import '../voice/spoken_location.dart';
 import 'dart:convert';
 import 'dart:io';
 
@@ -112,7 +113,7 @@ class DeviceDriveNarration implements DriveNarration {
         final attribution = story.requiredAttribution.isEmpty
             ? ''
             : ' Sources: ${story.requiredAttribution.join(', ')}.';
-        final text = 'Coming up: ${place.name}. $short$attribution';
+        final text = spokenLocationText('Coming up: ${place.name}. $short$attribution');
         final audio = await repository.renderSpeech(
           RenderSpeechRequest(
             text: text,
