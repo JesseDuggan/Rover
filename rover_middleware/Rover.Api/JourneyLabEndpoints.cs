@@ -11,8 +11,9 @@ public sealed record LabPlace(string Id, string Name, double Latitude, double Lo
     string? Attribution = null, string? SourceUrl = null, string? Address = null);
 public sealed record LabPlanRequest(GeoLocation Start, GeoLocation? End, LabPlace[] Stops, bool Suggest,
     int Minutes, string[] Interests);
+public sealed record LabDecision(string Name, string Reason);
 public sealed record LabPlan(IReadOnlyList<LabPlace> Stops, IReadOnlyList<GeoLocation> Coordinates,
-    int WalkingMinutes, int VisitMinutes, int DistanceMeters, string? StopSelectionStatus = null);
+    int WalkingMinutes, int VisitMinutes, int DistanceMeters, string? StopSelectionStatus = null, IReadOnlyList<LabDecision>? Skipped = null);
 
 public static class JourneyLabEndpoints
 {
@@ -74,11 +75,16 @@ public static class JourneyLabEndpoints
             ContentType.History, ContentSource.LocalRecommendation, 0, 0, WalkGeofenceDefaults.StandardArrivalRadiusMeters) { IsDestination = true };
         if (request.Suggest && end is not null)
         {
-            var session = await planner.PlanToPlaceAsync(command with { LimitLabDetours = true }, end, ct);
+            var decisions = new Dictionary<string, LabDecision>();
+            var session = await planner.PlanToPlaceAsync(command with {
+                LimitLabDetours = true,
+                RecordLabDecision = (stop, reason) => decisions[stop.StopId] = new(stop.Name, reason)
+            }, end, ct);
+            foreach (var stop in session.Stops) decisions.Remove(stop.StopId);
             var suggestions = session.Stops.Where(s => !s.IsDestination).Select(s => new LabPlace(s.StopId, s.Name,
                 s.Location.Latitude, s.Location.Longitude, s.Category, string.Join(", ", s.RequiredAttribution), s.SourceUrl)).ToArray();
             return Describe(suggestions, session.Route, session.Stops.Sum(s => s.EstimatedVisitMinutes), routes)
-                with { StopSelectionStatus = session.StopSelectionStatus };
+                with { StopSelectionStatus = session.StopSelectionStatus, Skipped = decisions.Values.ToArray() };
         }
 
         var visits = request.Stops.Select((p, i) => new WalkStop(p.Id, i + 1, p.Name, new(p.Latitude, p.Longitude),

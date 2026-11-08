@@ -269,6 +269,10 @@ public sealed class MockWalkPlanner : IWalkPlanner
             {
                 var found = await _localDiscoveryProvider.DiscoverForPlanningAsync(
                     command with { StartingLocation = center, SelectedPlace = null }, ct, 30);
+                if (command.RecordLabDecision is { } record)
+                    foreach (var stop in found.Stops)
+                        record(stop, !WalkInterestPolicy.Allows(stop, command.Interests)
+                            ? "Outside selected interests" : "Outside the eligible walking corridor or at the endpoint");
                 candidates.AddRange(found.Stops.Where(stop => WalkInterestPolicy.Allows(stop, command.Interests) && !SamePlace(stop, requested) &&
                     (!requested.IsDestination || (RouteMath.DistanceFromRouteMeters(stop.Location, geometry) <= detourRadius &&
                         RouteMath.DistanceMeters(stop.Location, geometry[0]) > RouteMath.DistanceFromRouteMeters(stop.Location, geometry) + 1 &&
@@ -297,6 +301,7 @@ public sealed class MockWalkPlanner : IWalkPlanner
             var shortlist = unique.GroupBy(stop => (int)(RouteMath.ProgressPercentage(stop.Location, direct) / 12.5))
                 .SelectMany(section => WalkInterestPolicy.TakeBalanced(section.OrderByDescending(NamedDistrictVenue).ThenBy(stop =>
                     RouteMath.DistanceFromRouteMeters(stop.Location, direct.Coordinates)), 4, command.Interests, WalkInterestPolicy.Group));
+            foreach (var stop in unique) command.RecordLabDecision?.Invoke(stop, "Other candidates filled this section’s shortlist");
             var verified = new List<WalkStop>();
             foreach (var batch in shortlist.Chunk(4))
             {
@@ -310,6 +315,10 @@ public sealed class MockWalkPlanner : IWalkPlanner
                         + RouteMath.DistanceMeters(anchor, access.Coordinates[0]);
                     return access.Provider == direct.Provider && seconds + gap / 1.35 < 180;
                 }));
+                for (var i = 0; i < batch.Length; i++)
+                    command.RecordLabDecision?.Invoke(batch[i], accepted[i]
+                        ? "Eligible, but left out when balancing the route and time budget"
+                        : "Walking access under three minutes could not be verified");
                 verified.AddRange(batch.Where((_, i) => accepted[i]));
             }
             unique = verified;

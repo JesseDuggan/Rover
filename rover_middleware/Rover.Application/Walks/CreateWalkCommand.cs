@@ -9,6 +9,7 @@ public sealed record CreateWalkCommand(
     WalkingPace WalkingPace,
     IReadOnlyCollection<AccessibilityPreference> AccessibilityPreferences)
 {
+    public Action<WalkStop, string>? RecordLabDecision { get; init; }
     public bool LimitLabDetours { get; init; }
     public GeoLocation? StoryDestination { get; init; }
     public Guid? ProfileId { get; init; }
