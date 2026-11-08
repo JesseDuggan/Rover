@@ -24,6 +24,42 @@ class FakeJourneyApi extends RoverApiClient {
     'address': '1 Main Street',
     'sourceUrl': 'https://example.org/museum',
   };
+  @override
+  Future<Json> researchAreaStories({
+    required double latitude,
+    required double longitude,
+    required List<String> interests,
+    required List<String> excludedTitles,
+    int searchRadiusMeters = 1000,
+  }) async {
+    return {
+      'stories': [
+        for (final audience in ['unreviewed', 'family'])
+          {
+            'storyId': audience,
+            'title': 'Neighbourhood history',
+            'audienceSuitability': audience,
+            'anchor': {'latitude': latitude, 'longitude': longitude},
+            'expiresUtc': DateTime.now()
+                .toUtc()
+                .add(const Duration(hours: 1))
+                .toIso8601String(),
+            'sources': [
+              {'sourceId': 'archive'},
+            ],
+            'claims': [
+              {
+                'sourceIds': ['archive'],
+              },
+            ],
+            'variants': [
+              {'narration': 'Local history: $audience.'},
+            ],
+          },
+      ],
+    };
+  }
+
   bool receivedJourney = false;
   @override
   Future<StoryQuestionResponse> researchStoryQuestion(
@@ -159,10 +195,15 @@ void main() {
       addTearDown(() => messenger.setMockMethodCallHandler(voiceChannel, null));
       tester.view.physicalSize = const Size(900, 600);
       await tester.pump();
-      final position = tester.state<ScrollableState>(find.byType(Scrollable).first).position;
+      final position = tester
+          .state<ScrollableState>(find.byType(Scrollable).first)
+          .position;
       position.jumpTo(position.maxScrollExtent);
       await tester.pump();
-      expect(tester.element(find.byType(FlutterMap, skipOffstage: false)), same(originalMap));
+      expect(
+        tester.element(find.byType(FlutterMap, skipOffstage: false)),
+        same(originalMap),
+      );
       position.jumpTo(0);
       tester.view.physicalSize = const Size(900, 1500);
       await tester.pump();
@@ -171,7 +212,15 @@ void main() {
         await tester.pump(const Duration(milliseconds: 300));
       }
       expect(api.receivedJourney, isTrue);
-      expect(spoken, ['Finding a story about Town Museum.', 'Museum story.']);
+      expect(
+        spoken,
+        containsAllInOrder([
+          'Finding a story about Town Museum.',
+          'Museum story.',
+        ]),
+      );
+      expect(spoken.where((s) => s == 'Local history: family.'), hasLength(1));
+      expect(spoken, isNot(contains('Local history: unreviewed.')));
       spoken.clear();
       await press('Play story');
       expect(spoken, ['Museum story.']);

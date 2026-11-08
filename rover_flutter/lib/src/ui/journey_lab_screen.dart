@@ -415,11 +415,100 @@ class _JourneyLabState extends State<JourneyLabScreen> {
                 .narration,
           );
         }
+        final nearby = <AdaptiveRouteStory>[];
+        final covered = <String>{
+          for (final stop in stops) stop['name'] as String,
+          if (intro != null) intro.title,
+        };
+        LatLng? searchedAt;
+        Future<void> betweenStops(LatLng point) async {
+          const distance = Distance();
+          if (searchedAt == null || distance(searchedAt!, point) >= 750) {
+            searchedAt = point;
+            setState(() {
+              playingTitle = 'Between stops';
+              playingText = 'Looking for a neighbourhood story…';
+            });
+            try {
+              final result = await api.researchAreaStories(
+                latitude: point.latitude,
+                longitude: point.longitude,
+                interests: interests,
+                excludedTitles: covered
+                    .where((t) => t.length <= 160)
+                    .take(120)
+                    .toList(),
+              );
+              if (!active()) return;
+              nearby.addAll(AreaStoryCollection.fromJson(result).stories);
+            } catch (_) {
+              // An unavailable neighbourhood story must not interrupt arrivals.
+            }
+          }
+          if (!active()) return;
+          final story = nearby
+              .where(
+                (s) =>
+                    s.canAutoplay &&
+                    s.sources.isNotEmpty &&
+                    s.claims.isNotEmpty &&
+                    s.expiresUtc?.isAfter(DateTime.now().toUtc()) == true &&
+                    s.variants.any((v) => v.narration.trim().isNotEmpty) &&
+                    !covered.any(
+                      (title) =>
+                          title.trim().toLowerCase() ==
+                          s.title.trim().toLowerCase(),
+                    ) &&
+                    distance(
+                          point,
+                          LatLng(s.relevanceLatitude, s.relevanceLongitude),
+                        ) <=
+                        1000,
+              )
+              .firstOrNull;
+          if (story == null) return;
+          covered.add(story.title);
+          await narrate(
+            'Between stops · ${story.title}',
+            story.variants
+                .firstWhere((v) => v.narration.trim().isNotEmpty)
+                .narration,
+          );
+        }
+
         var cursor = 0;
         Future<void> travel(int target) async {
+          const distance = Distance();
+          var length = 0.0;
+          for (var j = cursor; j < target; j++) {
+            length += distance(geometry[j], geometry[j + 1]);
+          }
+          var travelled = 0.0;
+          var playedMidpoint = false;
           final stride = math.max(1, ((target - cursor) / 10).ceil());
           while (cursor < target && active()) {
-            cursor = math.min(target, cursor + stride);
+            final nextIndex = math.min(target, cursor + stride);
+            for (var j = cursor; j < nextIndex; j++) {
+              final from = geometry[j], to = geometry[j + 1];
+              final segment = distance(from, to);
+              if (!playedMidpoint &&
+                  length >= 100 &&
+                  travelled + segment >= length / 2 &&
+                  segment > 0) {
+                playedMidpoint = true;
+                final fraction = (length / 2 - travelled) / segment;
+                final midpoint = LatLng(
+                  from.latitude + (to.latitude - from.latitude) * fraction,
+                  from.longitude + (to.longitude - from.longitude) * fraction,
+                );
+                setState(() => simulatedPosition = midpoint);
+                move(midpoint, 16);
+                await betweenStops(midpoint);
+                if (!active()) return;
+              }
+              travelled += segment;
+            }
+            cursor = nextIndex;
             final point = geometry[cursor];
             setState(() {
               simulatedPosition = point;
