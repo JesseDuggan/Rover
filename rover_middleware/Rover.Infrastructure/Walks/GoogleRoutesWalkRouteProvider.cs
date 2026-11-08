@@ -129,7 +129,7 @@ public sealed class GoogleRoutesWalkRouteProvider : IWalkRouteProvider
                 bounds,
                 route.GetProperty("distanceMeters").GetInt32(),
                 Math.Max(1, (int)Math.Ceiling(ParseDurationSeconds(route.GetProperty("duration")) / 60d)),
-                maneuvers);
+                maneuvers) { WalkingSeconds = ParseDurationSeconds(route.GetProperty("duration")) };
         }
         catch (OperationCanceledException) when (!cancellationToken.IsCancellationRequested)
         {

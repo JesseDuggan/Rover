@@ -80,6 +80,23 @@ public static class RouteMath
         return DistanceToSegmentMetersWithRatio(point, start, end).DistanceMeters;
     }
 
+    public static GeoLocation ClosestRoutePoint(GeoLocation point, IReadOnlyList<GeoLocation> geometry)
+    {
+        var nearest = geometry[0];
+        var best = double.PositiveInfinity;
+        for (var i = 1; i < geometry.Count; i++)
+        {
+            var a = geometry[i - 1];
+            var b = geometry[i];
+            var (distance, ratio) = DistanceToSegmentMetersWithRatio(point, a, b);
+            if (distance >= best) continue;
+            best = distance;
+            nearest = new(a.Latitude + (b.Latitude - a.Latitude) * ratio,
+                a.Longitude + (b.Longitude - a.Longitude) * ratio);
+        }
+        return nearest;
+    }
+
     private static (double DistanceMeters, double Ratio) DistanceToSegmentMetersWithRatio(GeoLocation point, GeoLocation start, GeoLocation end)
     {
         var originLat = DegreesToRadians(start.Latitude);

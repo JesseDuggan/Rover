@@ -261,9 +261,9 @@ public sealed class MockWalkPlanner : IWalkPlanner
         {
             var geometry = direct.Coordinates;
             var spareMinutes = command.AvailableMinutes - direct.DurationMinutes - requested.EstimatedVisitMinutes;
-            var detourRadius = Math.Clamp(spareMinutes * 20, 600, 1600);
+            var detourRadius = command.LimitLabDetours ? 250 : Math.Clamp(spareMinutes * 20, 600, 1600);
             var centers = CorridorCenters(geometry, 450, 12).ToList();
-            if (spareMinutes >= 20 && centers.Count <= 6)
+            if (!command.LimitLabDetours && spareMinutes >= 20 && centers.Count <= 6)
                 centers.AddRange(ExploreEitherSide(centers[centers.Count / 2], command.StartingLocation, requested.Location, detourRadius * 0.75));
             foreach (var center in centers.Distinct())
             {
@@ -279,6 +279,29 @@ public sealed class MockWalkPlanner : IWalkPlanner
         var unique = new List<WalkStop>();
         foreach (var candidate in candidates)
             if (!unique.Any(stop => SamePlace(stop, candidate))) unique.Add(candidate);
+        if (command.LimitLabDetours)
+        {
+            // Spread the bounded routing checks across the original route.
+            var shortlist = unique.GroupBy(stop => (int)(RouteMath.ProgressPercentage(stop.Location, direct) / 12.5))
+                .SelectMany(section => WalkInterestPolicy.TakeBalanced(section.OrderBy(stop =>
+                    RouteMath.DistanceFromRouteMeters(stop.Location, direct.Coordinates)), 4, command.Interests, WalkInterestPolicy.Group));
+            var verified = new List<WalkStop>();
+            foreach (var batch in shortlist.Chunk(4))
+            {
+                var accepted = await Task.WhenAll(batch.Select(async stop =>
+                {
+                    var anchor = RouteMath.ClosestRoutePoint(stop.Location, direct.Coordinates);
+                    var access = await _routeProvider.CreateRouteAsync(command with { StartingLocation = anchor }, [stop], ct);
+                    var seconds = access.WalkingSeconds ?? (access.DurationMinutes * 60d);
+                    // Routes can snap a park pin to a distant entrance. Include the unmapped gap.
+                    var gap = RouteMath.DistanceMeters(access.Coordinates[^1], stop.Location)
+                        + RouteMath.DistanceMeters(anchor, access.Coordinates[0]);
+                    return access.Provider == direct.Provider && seconds + gap / 1.35 < 180;
+                }));
+                verified.AddRange(batch.Where((_, i) => accepted[i]));
+            }
+            unique = verified;
+        }
         var selection = _storySelector?.Enabled == true && unique.Count > 0
             ? await _storySelector.SelectAsync(command with { StoryDestination = requested.Location }, unique, DesiredStopCount(command.AvailableMinutes) - 1, ct)
             : null;

@@ -116,6 +116,11 @@ internal static class SelectedPlaceTests
             "Include useful discoveries near both halves of the destination corridor.");
         Check(discovery.Commands.All(command => command.Interests.SequenceEqual(Command().Interests) &&
             command.AccessibilityPreferences.SequenceEqual(Command().AccessibilityPreferences)), "Preserve interests and accessibility.");
+        var limited = await new MockWalkPlanner(new TimedAccessRoutes(), new Discovery(),
+            placeSearch: new WalkPlaceSearchService([new Search()])).PlanWalkAsync(
+                Command() with { LimitLabDetours = true }, default);
+        Check(limited.Stops.Any(stop => stop.StopId == "museum") && limited.Stops.All(stop => stop.StopId != "monument"),
+            "Lab must retain a 179-second approach and exclude a 180-second approach even during refill.");
         var shortWalk = await planner.PlanWalkAsync(Command(minutes: 15), default);
         Check(shortWalk.Stops.Any(stop => stop.ProviderPlaceId == "target"), "Never trim an explicit endpoint.");
         Check(shortWalk.EstimatedDurationMinutes >= shortWalk.Route.DurationMinutes, "Report real duration, not a capped estimate.");
@@ -277,6 +282,17 @@ internal static class SelectedPlaceTests
         public Task<IReadOnlyList<NearbyDiscovery>> FindAsync(WalkSession session, GeoLocation currentLocation,
             string? interest, IReadOnlyCollection<string> dismissedDiscoveryIds, CancellationToken ct) =>
             Task.FromResult<IReadOnlyList<NearbyDiscovery>>(options ?? Array.Empty<NearbyDiscovery>());
+    }
+    private sealed class TimedAccessRoutes : IWalkRouteProvider
+    {
+        public string ProviderName => "Mock";
+        public async Task<WalkRoute> CreateRouteAsync(CreateWalkCommand command, IReadOnlyList<WalkStop> stops, CancellationToken ct)
+        {
+            var route = await new MockWalkRouteProvider().CreateRouteAsync(command, stops, ct);
+            return new WalkRoute(route.RouteId, route.Provider, route.Version, route.GeneratedAtUtc,
+                route.Coordinates, route.Bounds, route.DistanceMeters, route.DurationMinutes, route.Maneuvers)
+                { WalkingSeconds = stops.Count == 1 && stops[0].StopId == "museum" ? 179 : 180 };
+        }
     }
     private sealed class DetourRoutes(int addedMinutes) : IWalkRouteProvider
     {

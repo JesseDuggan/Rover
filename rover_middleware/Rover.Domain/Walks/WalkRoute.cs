@@ -36,6 +36,7 @@ public sealed class WalkRoute
     public IReadOnlyList<GeoLocation> Coordinates { get; }
     public RouteBounds Bounds { get; }
     public int DistanceMeters { get; }
+    public double? WalkingSeconds { get; init; }
     public int DurationMinutes { get; }
     public IReadOnlyList<WalkRouteManeuver> Maneuvers { get; }
 }

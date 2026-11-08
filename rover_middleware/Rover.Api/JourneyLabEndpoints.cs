@@ -74,7 +74,7 @@ public static class JourneyLabEndpoints
             ContentType.History, ContentSource.LocalRecommendation, 0, 0, WalkGeofenceDefaults.StandardArrivalRadiusMeters) { IsDestination = true };
         if (request.Suggest && end is not null)
         {
-            var session = await planner.PlanToPlaceAsync(command, end, ct);
+            var session = await planner.PlanToPlaceAsync(command with { LimitLabDetours = true }, end, ct);
             var suggestions = session.Stops.Where(s => !s.IsDestination).Select(s => new LabPlace(s.StopId, s.Name,
                 s.Location.Latitude, s.Location.Longitude, s.Category, string.Join(", ", s.RequiredAttribution), s.SourceUrl)).ToArray();
             return Describe(suggestions, session.Route, session.Stops.Sum(s => s.EstimatedVisitMinutes), routes)

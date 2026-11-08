@@ -369,7 +369,8 @@ public sealed class GooglePlacesLocationContextProvider : LocationContextProvide
         {
             var value = interest.ToLowerInvariant();
             if (value.Contains("history")) mapped.AddRange(["historical_place", "historical_landmark"]);
-            if (value.Contains("architect")) mapped.Add("cultural_landmark");
+            if (value.Contains("architect")) mapped.AddRange(["cultural_landmark", "church"]);
+            if (value.Contains("film") || value.Contains("movie") || value.Contains("culture")) mapped.AddRange(["movie_theater", "performing_arts_theater", "cultural_center"]);
             if (value.Contains("museum")) mapped.Add("museum");
             if (value.Contains("culture") || value.Contains("art")) mapped.Add("art_gallery");
             if (value.Contains("nature") || value.Contains("outdoor")) mapped.Add("park");

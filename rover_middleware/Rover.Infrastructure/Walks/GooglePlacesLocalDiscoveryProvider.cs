@@ -63,6 +63,14 @@ public sealed class GooglePlacesLocalDiscoveryProvider : ILocalDiscoveryProvider
             places = places.Concat(nonFood.Places);
             warnings = warnings.Concat(nonFood.Warnings);
         }
+        if (command.LimitLabDetours && other.Any(i => WalkInterestPolicy.Group(i) is "history" or "architecture" or "art"
+            || i.Contains("culture", StringComparison.OrdinalIgnoreCase) || i.Contains("film", StringComparison.OrdinalIgnoreCase)))
+        {
+            var landmarks = await _placesProvider.SearchAsync(new CandidateObservationQuery(
+                "historic theatres, heritage buildings, churches and local cultural landmarks",
+                command.StartingLocation, null, null, 650, null, []), cancellationToken);
+            places = landmarks.Places.Concat(places);
+        }
         var uniquePlaces = places.DistinctBy(place => place.CanonicalId).ToArray();
         var ranked = uniquePlaces
             .Where(place => WalkInterestPolicy.WantsFood(command.Interests)
