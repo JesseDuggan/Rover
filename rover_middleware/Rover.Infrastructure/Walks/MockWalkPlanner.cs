@@ -271,7 +271,8 @@ public sealed class MockWalkPlanner : IWalkPlanner
                     command with { StartingLocation = center, SelectedPlace = null }, ct, 30);
                 candidates.AddRange(found.Stops.Where(stop => WalkInterestPolicy.Allows(stop, command.Interests) && !SamePlace(stop, requested) &&
                     (!requested.IsDestination || (RouteMath.DistanceFromRouteMeters(stop.Location, geometry) <= detourRadius &&
-                        RouteMath.ProgressPercentage(stop.Location, direct) > 0 &&
+                        RouteMath.DistanceMeters(stop.Location, geometry[0]) > RouteMath.DistanceFromRouteMeters(stop.Location, geometry) + 1 &&
+                        RouteMath.DistanceMeters(stop.Location, geometry[^1]) > RouteMath.DistanceFromRouteMeters(stop.Location, geometry) + 1 &&
                         RouteMath.DistanceMeters(stop.Location, requested.Location) > 25))));
             }
         }

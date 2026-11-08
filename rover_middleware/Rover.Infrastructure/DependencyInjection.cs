@@ -517,7 +517,7 @@ public static class DependencyInjection
             ApiKey = Environment.GetEnvironmentVariable("OPENAI_API_KEY"),
             Model = Environment.GetEnvironmentVariable("ROVER_STORY_LED_PLANNING_MODEL")
                 ?? Environment.GetEnvironmentVariable("OPENAI_MODEL") ?? configuration["Rover:Conversation:OpenAI:Model"],
-            TimeoutSeconds = configuration.GetValue("Rover:StoryLedPlanning:TimeoutSeconds", 12)
+            TimeoutSeconds = configuration.GetValue("Rover:StoryLedPlanning:TimeoutSeconds", 30)
         });
         services.AddHttpClient<IStoryLedStopSelector, OpenAIStoryLedStopSelector>();
         services.AddScoped<IWalkPlanner, MockWalkPlanner>();
