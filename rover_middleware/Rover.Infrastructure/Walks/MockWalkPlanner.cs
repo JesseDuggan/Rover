@@ -271,7 +271,8 @@ public sealed class MockWalkPlanner : IWalkPlanner
                     command with { StartingLocation = center, SelectedPlace = null }, ct, 30);
                 if (command.RecordLabDecision is { } record)
                     foreach (var stop in found.Stops)
-                        record(stop, !WalkInterestPolicy.Allows(stop, command.Interests)
+                        record(stop, WalkInterestPolicy.IsTicketOffice(stop.Name, stop.Category)
+                            ? "Ticket sales office" : !WalkInterestPolicy.Allows(stop, command.Interests)
                             ? "Outside selected interests" : "Outside the eligible walking corridor or at the endpoint");
                 candidates.AddRange(found.Stops.Where(stop => WalkInterestPolicy.Allows(stop, command.Interests) && !SamePlace(stop, requested) &&
                     (!requested.IsDestination || (RouteMath.DistanceFromRouteMeters(stop.Location, geometry) <= detourRadius &&

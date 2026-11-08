@@ -24,6 +24,15 @@ public static class WalkInterestPolicy
             "concert hall" or "opera house" or "playhouse" or "cinema" or "live music venue" or "performing arts";
     }
 
+    public static bool IsTicketOffice(string name, string category)
+    {
+        // Some ticket agents have the same provider category as the venue they serve.
+        static bool Matches(string label) => System.Text.RegularExpressions.Regex.IsMatch(label,
+            @"\b(?:box[\s-]*office|ticket(?:ing)?[\s-]*(?:office|agency|agent|outlet|counter|service)|ticketking|ticketmaster|billetterie|taquilla|biglietteria|kartenverkauf)\b",
+            System.Text.RegularExpressions.RegexOptions.IgnoreCase | System.Text.RegularExpressions.RegexOptions.CultureInvariant);
+        return Matches(name) || Matches(category);
+    }
+
     public static string Group(string category)
     {
         if (IsFood(category)) return "food";
@@ -79,8 +88,8 @@ public static class WalkInterestPolicy
     }
 
     public static bool Allows(WalkStop stop, IEnumerable<string> interests) =>
-        !IsFood(stop) || (interests.Any(value => IsFood(value) && !IsCoffee(value))
-            || (interests.Any(IsCoffee) && IsCoffee(stop.Category)));
+        !IsTicketOffice(stop.Name, stop.Category) && (!IsFood(stop) || (interests.Any(value => IsFood(value) && !IsCoffee(value))
+            || (interests.Any(IsCoffee) && IsCoffee(stop.Category))));
 
     public static bool IsCoffee(string value) =>
         value.Contains("coffee", StringComparison.OrdinalIgnoreCase) ||

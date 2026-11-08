@@ -35,7 +35,8 @@ public static class JourneyLabEndpoints
             var found = await places.GetContextAsync(new LocationContextQuery(request.Location, 400,
                 null, null, [], request.Interests), ct);
             var stops = found.Places.Where(p => p.SourceReferences.Count > 0 &&
-                    RouteMath.DistanceMeters(request.Location, p.Coordinates) <= 400)
+                    RouteMath.DistanceMeters(request.Location, p.Coordinates) <= 400 &&
+                    !WalkInterestPolicy.IsTicketOffice(p.Name, p.Categories.FirstOrDefault() ?? ""))
                 .OrderBy(p => RouteMath.DistanceMeters(request.Location, p.Coordinates))
                 .DistinctBy(p => p.CanonicalId).Take(15)
                 .Select(ToLabPlace);
