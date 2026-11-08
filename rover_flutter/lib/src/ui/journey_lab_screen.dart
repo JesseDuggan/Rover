@@ -1,5 +1,9 @@
 import '../voice/spoken_location.dart';
+
 import 'dart:async';
+
+import 'prepared_walk_screen.dart';
+
 import 'dart:convert';
 import 'dart:io';
 import 'dart:math' as math;
@@ -747,6 +751,59 @@ class _JourneyLabState extends State<JourneyLabScreen> {
     fit();
   });
 
+  void openPrepared(PreparedWalk walk) {
+    Navigator.of(context).push(
+      MaterialPageRoute<void>(
+        builder: (_) => PreparedWalkScreen(
+          walk: walk,
+          research: (stop) async {
+            final result = await api.researchStoryQuestion(
+              StoryQuestionRequest(
+                location: RoverLatLng(
+                  latitude: stop.point.latitude,
+                  longitude: stop.point.longitude,
+                ),
+                question:
+                    'What occupies the site of ${stop.name} today? Use a dated or current source for this specific place. If the current use cannot be verified, say so.',
+                scope: 'Street',
+                format: 'Single',
+                storyCount: 1,
+              ),
+            );
+            final answer = result.answers
+                .where(
+                  (a) =>
+                      a.story.canAutoplay &&
+                      a.story.sources.isNotEmpty &&
+                      a.variant.narration.trim().isNotEmpty,
+                )
+                .firstOrNull;
+            if (answer == null) return null;
+            return WalkAnswer(answer.variant.narration, {
+              for (final source in answer.story.sources)
+                if (source.url != null)
+                  source.title ?? source.providerName: source.url!,
+            });
+          },
+        ),
+      ),
+    );
+  }
+
+  List<PreparedStop> get preparedStops => [
+    for (final s in stops)
+      if (verified(s) case final story?)
+        PreparedStop(
+          s['name'],
+          _point(s),
+          WalkAnswer(story.shortSpokenNarration, {
+            for (final source in story.sourceReferences)
+              if (source.sourceUrl != null)
+                source.sourceTitle ?? source.providerName: source.sourceUrl!,
+          }),
+        ),
+  ];
+
   void showStop(_Json stop) {
     final story = verified(stop);
     showModalBottomSheet<void>(
@@ -828,6 +885,11 @@ class _JourneyLabState extends State<JourneyLabScreen> {
         child: ListView(
           padding: const EdgeInsets.all(16),
           children: [
+            OutlinedButton.icon(
+              onPressed: busy ? null : () => openPrepared(bloorRehearsal),
+              icon: const Icon(Icons.headphones),
+              label: const Text('Bloor West rehearsal'),
+            ),
             TextField(
               controller: query,
               enabled: !busy,
@@ -1058,6 +1120,19 @@ class _JourneyLabState extends State<JourneyLabScreen> {
                   onPressed: busy ? null : previewJourney,
                   icon: const Icon(Icons.play_arrow),
                   label: const Text('Play journey from home'),
+                ),
+              if (preparedStops.isNotEmpty)
+                OutlinedButton(
+                  onPressed: busy
+                      ? null
+                      : () => openPrepared(
+                          PreparedWalk(
+                            'Prepared walk',
+                            List.of(geometry),
+                            preparedStops,
+                          ),
+                        ),
+                  child: const Text('Test prepared stories at home or on foot'),
                 ),
               if (intro != null)
                 ListTile(
