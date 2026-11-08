@@ -99,6 +99,45 @@ void main() {
       await t.pumpWidget(const SizedBox());
     },
   );
+  testWidgets('Perth GPS field test plays the museum checkpoint once', (
+    t,
+  ) async {
+    final voice = Voice(), location = Location();
+    await t.pumpWidget(
+      MaterialApp(
+        home: PreparedWalkScreen(
+          walk: perthFieldTest,
+          voice: voice,
+          location: location,
+          research: (_) => throw StateError('Unexpected network research'),
+        ),
+      ),
+    );
+    await t.tap(find.text('Test on foot with GPS'));
+    await t.pump();
+    final start = perthFieldTest.path.first,
+        museum = perthFieldTest.stops.single.point,
+        end = perthFieldTest.path.last;
+    location.at(start.latitude, start.longitude);
+    await t.pump();
+    expect(voice.spoken, isEmpty);
+    location.at(museum.latitude, museum.longitude);
+    await t.pump();
+    await t.pump();
+    expect(voice.spoken.single, contains('Roderick Matheson'));
+    await t.tap(find.text('What’s there now?'));
+    await t.pump();
+    expect(voice.spoken.last, contains('Perth Museum'));
+    await voice.stop();
+    await t.pump();
+    location.at(end.latitude, end.longitude);
+    await t.pump();
+    await t.pump();
+    expect(find.text('Walk complete'), findsOneWidget);
+    expect(voice.spoken, hasLength(2));
+    await t.pumpWidget(const SizedBox());
+    await location.readings.close();
+  });
   for (final live in [false, true]) {
     testWidgets(
       'theatre, interruption, answer and resume with ${live ? "GPS" : "simulation"}',

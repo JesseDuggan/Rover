@@ -890,6 +890,11 @@ class _JourneyLabState extends State<JourneyLabScreen> {
               icon: const Icon(Icons.headphones),
               label: const Text('Bloor West rehearsal'),
             ),
+            OutlinedButton.icon(
+              onPressed: busy ? null : () => openPrepared(perthFieldTest),
+              icon: const Icon(Icons.directions_walk),
+              label: const Text('Perth field test'),
+            ),
             TextField(
               controller: query,
               enabled: !busy,

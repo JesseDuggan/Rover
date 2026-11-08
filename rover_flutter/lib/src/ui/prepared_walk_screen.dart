@@ -67,6 +67,32 @@ const bloorRehearsal = PreparedWalk(
   ],
 );
 
+const perthFieldTest = PreparedWalk(
+  'Perth field test',
+  [
+    LatLng(44.89905, -76.24898),
+    LatLng(44.89920, -76.24912),
+    LatLng(44.90104, -76.25059),
+    LatLng(44.90128, -76.25114),
+  ],
+  [
+    PreparedStop(
+      'Matheson House',
+      LatLng(44.90104, -76.25059),
+      WalkAnswer(
+        'Look for the stone house at number eleven on Gore Street East. Built for Roderick Matheson in 1840, it stayed in his family for nearly a century. Later, people came here for tea, and the local Legion used the building too.',
+        {
+          'Town of Perth heritage walking tour': 'https://www.perth.ca/media/sq2hmfhl/heritage-perth-walking-tour-2014.pdf',
+        },
+      ),
+      answer: WalkAnswer(
+        'Matheson House is home to Perth Museum. The town moved the collection here in 1967. Inside, restored rooms show how the family lived.',
+        {'Town of Perth Museum': 'https://www.perth.ca/museum'},
+      ),
+    ),
+  ],
+);
+
 enum _Phase { ready, locating, walking, story, question, answer, done }
 
 class PreparedWalkScreen extends StatefulWidget {
@@ -340,6 +366,13 @@ class _PreparedWalkState extends State<PreparedWalkScreen> {
             const ListTile(
               title: Text('Runnymede Road to the Humber bridge'),
               subtitle: Text('Shared rehearsal · 8 November 2026'),
+            ),
+          if (identical(walk, perthFieldTest))
+            const ListTile(
+              title: Text('Town Hall to Foster Street'),
+              subtitle: Text(
+                'Follow Gore Street East past Perth Museum · 8 November 2026',
+              ),
             ),
           if (choosing) ...[
             if (phase == _Phase.done) const Text('Walk complete'),
