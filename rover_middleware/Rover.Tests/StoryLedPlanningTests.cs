@@ -130,6 +130,7 @@ internal static class StoryLedPlanningTests
             searches.Add(types);
             // A combined distance-ranked search would return only the nearby cafes.
             var categories = types.Contains("cafe") ? Enumerable.Repeat("cafe", 20)
+                : types.Contains("concert_hall") ? new[] { "concert_hall", "performing_arts_theater" }
                 : Enumerable.Repeat("park", 6).Concat(Enumerable.Repeat("art_gallery", 6));
             var places = categories.Select((category, i) => new { id = $"{category}{i}", displayName = new { text = $"{category} {i}" },
                 location = new { latitude = 43.65 + (category == "cafe" ? .001 : .005) + i * .00001, longitude = -79.4 },
@@ -147,10 +148,16 @@ internal static class StoryLedPlanningTests
             "Mixed requests must reach beyond the provider's food-heavy nearest results.");
         Check(stops.Count == 6 && stops.GroupBy(WalkInterestPolicy.Group).Count(group => group.Count() == 2) == 3,
             "The local discovery limit must retain each requested group.");
+        var cultural = await discovery.FindCandidateStopsAsync(command with { Interests = ["nature", "culture"] }, default, 3);
+        Check(searches.Any(types => types.Contains("concert_hall") && !types.Contains("park"))
+            && cultural.Any(stop => WalkInterestPolicy.Group(stop) == "culture"),
+            "A broad search that omits performance venues must trigger a focused search and retain a venue.");
     }
 
     private static async Task InterestBalance()
     {
+        foreach (var category in new[] { "performing_arts_theater", "Theatre", "concert hall", "Opera house", "Movies", "film and television" })
+            Check(WalkInterestPolicy.Group(category) == WalkInterestPolicy.Group("Culture"), $"Culture should match {category}.");
         var categories = new[] { "Cafe", "Historic monument", "Art gallery", "Park", "Architectural building" };
         var requested = new[] { "food", "history", "art", "nature", "architecture" };
         var variety = categories.SelectMany((category, group) => Enumerable.Range(1, 12).Select(i =>

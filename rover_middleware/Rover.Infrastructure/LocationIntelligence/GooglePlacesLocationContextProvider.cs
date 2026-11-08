@@ -368,6 +368,11 @@ public sealed class GooglePlacesLocationContextProvider : LocationContextProvide
         foreach (var interest in interests)
         {
             var value = interest.ToLowerInvariant();
+            if (value == "performing arts")
+            {
+                mapped.AddRange(["performing_arts_theater", "concert_hall", "opera_house", "movie_theater"]);
+                continue;
+            }
             if (value.Contains("history")) mapped.AddRange(["historical_place", "historical_landmark"]);
             if (value.Contains("architect")) mapped.AddRange(["cultural_landmark", "church"]);
             if (value.Contains("film") || value.Contains("movie") || value.Contains("culture")) mapped.AddRange(["movie_theater", "performing_arts_theater", "cultural_center"]);

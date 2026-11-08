@@ -17,10 +17,18 @@ public static class WalkInterestPolicy
     public static bool IsFood(WalkStop stop) =>
         stop.ContentType == ContentType.FoodAndDrink || IsFood(stop.Category);
 
+    public static bool IsPerformanceVenue(string category)
+    {
+        var value = category.Trim().ToLowerInvariant().Replace('_', ' ');
+        return value.Contains("theatre") || value.Contains("theater") || value is
+            "concert hall" or "opera house" or "playhouse" or "cinema" or "live music venue" or "performing arts";
+    }
+
     public static string Group(string category)
     {
         if (IsFood(category)) return "food";
         var words = category.ToLowerInvariant().Split([' ', '-', '/', '&', '_'], StringSplitOptions.RemoveEmptyEntries);
+        if (IsPerformanceVenue(category) || words.Any(word => word is "culture" or "film" or "movies" or "music")) return "culture";
         if (words.Any(word => word is "architecture" or "architectural" or "building" or "buildings" or "cathedral" or "church")) return "architecture";
         if (words.Any(word => word is "art" or "arts" or "gallery" or "sculpture" or "mural")) return "art";
         if (words.Any(word => word is "park" or "parks" or "garden" or "gardens" or "nature" or "outdoors" or "outdoor" or "trail" or "beach")) return "nature";
@@ -29,7 +37,7 @@ public static class WalkInterestPolicy
         return category.Trim().ToLowerInvariant();
     }
 
-    public static string Group(WalkStop stop) => IsFood(stop) ? "food" : stop.ContentType switch
+    public static string Group(WalkStop stop) => IsFood(stop) ? "food" : IsPerformanceVenue(stop.Category) ? "culture" : stop.ContentType switch
     {
         ContentType.Architecture => "architecture",
         ContentType.PublicArt => "art",
