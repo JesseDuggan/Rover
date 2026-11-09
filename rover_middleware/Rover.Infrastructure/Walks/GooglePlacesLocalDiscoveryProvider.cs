@@ -80,7 +80,13 @@ public sealed class GooglePlacesLocalDiscoveryProvider : ILocalDiscoveryProvider
             places = landmarks.Places.Concat(places);
         }
         var uniquePlaces = places.DistinctBy(place => place.CanonicalId).ToArray();
+        var wantsCommercialStops = command.Interests.Any(i => WalkInterestPolicy.Group(i) == "shopping"
+            || i.Contains("tour agency", StringComparison.OrdinalIgnoreCase));
         var ranked = uniquePlaces
+            .Where(place => !command.LimitLabDetours || wantsCommercialStops
+                || !WalkInterestPolicy.IsCommercialListing(place.Categories.FirstOrDefault() ?? "")
+                || HasHeritageEvidence(place, command.Interests)
+                || place.Categories.Any(type => WalkInterestPolicy.IsFood(type) && WalkInterestPolicy.WantsFood(command.Interests)))
             .Where(place => WalkInterestPolicy.WantsFood(command.Interests)
                 || !place.Categories.Any(WalkInterestPolicy.IsFood)
                 || HasHeritageEvidence(place, command.Interests))

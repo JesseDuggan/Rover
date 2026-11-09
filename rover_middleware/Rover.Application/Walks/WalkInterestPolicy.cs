@@ -24,6 +24,13 @@ public static class WalkInterestPolicy
             "concert hall" or "opera house" or "playhouse" or "cinema" or "live music venue" or "performing arts";
     }
 
+    public static bool IsCommercialListing(string category)
+    {
+        var type = category.Trim().Replace('_', ' ').ToLowerInvariant();
+        return type is "store" or "shop" or "tour agency" or "tour operator" or "travel agency"
+            || type.EndsWith(" store") || type.EndsWith(" shop");
+    }
+
     public static bool IsTicketOffice(string name, string category)
     {
         // Some ticket agents have the same provider category as the venue they serve.
