@@ -27,12 +27,14 @@ internal static class StoryEditorialTests
     {
         await Verify(true);
         await Verify(true, false);
+        await Verify(true, rejectedDraft: "What I searched and why it fell short: I searched the archive.");
+        await Verify(true, rejectedDraft: "This plaque marks the exact spot of the historic photograph.");
     }
-    private static async Task Verify(bool question, bool relevant = true, bool recovery = false, bool foodOnly = false, string? scope = null, bool areaRecovery = false, string? coordinateCase = null)
+    private static async Task Verify(bool question, bool relevant = true, bool recovery = false, bool foodOnly = false, string? scope = null, bool areaRecovery = false, string? coordinateCase = null, string? rejectedDraft = null)
     {
         var anchor = new GeoLocation(52.2946778, 4.7108732);
         var segment = new RouteStorySegment("area", 0, anchor, anchor, anchor, 0, 0, 0, 0, false, []);
-        const string passage = "This test archive describes a local workshop and the people who worked there. " +
+        var passage = (rejectedDraft ?? "") + " This test archive describes a local workshop and the people who worked there. " +
             "Accounts disagree about its opening date. The collection preserves their tools and written records. " +
             "Those records explain how the workshop changed over time. The archive also documents the surrounding community. " +
             "Location: test archive; latitude 52.295; longitude 4.711.";
@@ -124,6 +126,11 @@ internal static class StoryEditorialTests
                     Question = question ? new("How did the workshop change?", StoryQuestionScope.Neighbourhood,
                         StoryQuestionFormat.ThenAndNow, 1, 180) : null
                 }, default);
+            if (rejectedDraft is not null)
+            {
+                Check(result.Stories.Count == 0, "An annotated failed search or overprecise draft must not reach playback.");
+                continue;
+            }
             if (foodOnly && !question)
             {
                 Check(result.Stories.Count == 0, "Automatic history must not override food-only preferences.");

@@ -109,6 +109,22 @@ public sealed class StoryQuestionService(ILocalRouteResearcher researcher, TimeP
                 }
             }
         }
+        // The closest stop identifies the street for a gap. Its coordinates must never
+        // be assigned to a different historical subject on that street.
+        if (scope == StoryQuestionScope.Street && places is not null &&
+            text.Contains("Research this block or landscape", StringComparison.Ordinal))
+        {
+            var landmark = Regex.Match(text, @"The nearest planned stop is (.{1,256}?)\.?$", RegexOptions.CultureInvariant);
+            if (landmark.Success)
+            {
+                var name = landmark.Groups[1].Value;
+                var nearby = await places.SearchAsync(name, center, token);
+                var matches = nearby.Places.Where(p => string.Equals(p.Name, name, StringComparison.OrdinalIgnoreCase)
+                    && RouteMath.DistanceMeters(p.Location, center) <= 1000).ToArray();
+                if (matches.Length == 1 && !string.IsNullOrWhiteSpace(matches[0].Address))
+                    text += $" Geographic reference: {matches[0].Address}. Research the street between stops: a former use, public work, landscape change or local tradition. Verify the subject's own location.";
+            }
+        }
         var query = new LocalRouteResearchQuery(segments, new ApproximateLiveLocation(null, null, null, null),
             subjects.Select(s => s.Name).ToArray(), [], request.Language, subjects)
         {
