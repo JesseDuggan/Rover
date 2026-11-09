@@ -24,7 +24,8 @@ class PreparedStop {
 }
 
 class PreparedWalk {
-  const PreparedWalk(this.title, this.path, this.stops);
+  const PreparedWalk(this.title, this.path, this.stops, {this.theme});
+  final String? theme;
   final String title;
   final List<LatLng> path;
   final List<PreparedStop> stops;
@@ -100,11 +101,13 @@ class PreparedWalkScreen extends StatefulWidget {
     super.key,
     required this.walk,
     required this.research,
+    this.followUp,
     this.voice,
     this.location = const GeolocatorLocationProvider(),
   });
   final PreparedWalk walk;
   final Future<WalkAnswer?> Function(PreparedStop) research;
+  final Future<WalkAnswer?> Function(PreparedStop, String)? followUp;
   final RoverTextToSpeech? voice;
   final RoverLocationProvider location;
   @override
@@ -121,6 +124,10 @@ class _PreparedWalkState extends State<PreparedWalkScreen> {
   LatLng? lastFix;
   bool approachedFinish = false;
   final heard = <PreparedStop>{};
+  final completed = <PreparedStop>[];
+  final skipped = <PreparedStop>{};
+  int sentence = 0, speechTurn = 0;
+  bool get trail => widget.walk.theme != null;
   int segment = 0, epoch = 0;
   PreparedStop? subject;
   WalkAnswer? transcript;
@@ -152,12 +159,16 @@ class _PreparedWalkState extends State<PreparedWalkScreen> {
       segment = 0;
       approachedFinish = false;
       heard.clear();
+      completed.clear();
+      skipped.clear();
       subject = null;
       transcript = null;
       notice = '';
       phase = _Phase.locating;
     });
     try {
+      await voice.stop();
+      if (!valid(ticket)) return;
       await voice.configure(rate: 0.5);
       if (!valid(ticket)) return;
       if (useGps) {
@@ -167,6 +178,13 @@ class _PreparedWalkState extends State<PreparedWalkScreen> {
           unavailable(failure.recovery);
           return;
         }
+      }
+      if (trail) {
+        final opening =
+            'On this walk, explore ${widget.walk.theme}. Our first chapter is at ${widget.walk.stops.first.name}.';
+        setState(() => transcript = WalkAnswer(opening, {}));
+        await voice.speak(opening);
+        if (!valid(ticket)) return;
       }
       setState(() => phase = _Phase.walking);
       if (useGps) {
@@ -245,17 +263,26 @@ class _PreparedWalkState extends State<PreparedWalkScreen> {
         .firstOrNull;
     if (stop != null) {
       heard.add(stop);
+      sentence = 0;
       unawaited(tell(stop));
     } else if (live
         ? approachedFinish && distance(point, widget.walk.path.last) <= 25
         : segment >= widget.walk.path.length - 1) {
       cancel();
-      setState(() => phase = _Phase.done);
+      final recap = completed.isEmpty
+          ? 'You reached the end without finishing a chapter.'
+          : 'You reached the end of ${widget.walk.theme}. You heard the stories of ${completed.map((s) => s.name).join(", ")}.';
+      setState(() {
+        phase = _Phase.done;
+        if (trail) transcript = WalkAnswer(recap, {});
+      });
+      if (trail) unawaited(voice.speak(recap).catchError((Object _) {}));
     }
   }
 
   Future<void> tell(PreparedStop stop) async {
     final ticket = epoch;
+    final turn = ++speechTurn;
     setState(() {
       subject = stop;
       transcript = stop.story;
@@ -263,14 +290,109 @@ class _PreparedWalkState extends State<PreparedWalkScreen> {
       notice = '';
     });
     try {
-      await voice.speak(stop.story.text);
+      if (trail) {
+        final parts = [
+          if (completed.isNotEmpty)
+            'From ${completed.last.name}, we move on to ${stop.name}.',
+          ...stop.story.text.split(RegExp(r'(?<=[.!?])\s+')),
+        ];
+        while (sentence < parts.length) {
+          await voice.speak(parts[sentence]);
+          if (!valid(ticket) || turn != speechTurn) return;
+          sentence++;
+        }
+        completed.add(stop);
+      } else {
+        await voice.speak(stop.story.text);
+      }
     } catch (_) {
       if (valid(ticket) && phase == _Phase.story)
         setState(() => notice = 'Audio unavailable. The story is shown below.');
     }
-    if (!valid(ticket) || phase != _Phase.story) return;
+    if (!valid(ticket) || turn != speechTurn || phase != _Phase.story) return;
     setState(() => phase = _Phase.question);
     questionWindow = Timer(const Duration(seconds: 12), resumeWalk);
+  }
+
+  Future<void> skipChapter() async {
+    final active = phase == _Phase.story || phase == _Phase.question;
+    final stop = active
+        ? subject
+        : widget.walk.stops.where((s) => !heard.contains(s)).firstOrNull;
+    if (stop == null) return;
+    final ticket = epoch;
+    speechTurn++;
+    questionWindow?.cancel();
+    heard.add(stop);
+    if (!completed.contains(stop)) skipped.add(stop);
+    setState(() => phase = _Phase.locating);
+    await voice.stop();
+    if (!valid(ticket)) return;
+    setState(() {
+      notice = 'Continuing past ${stop.name}.';
+      transcript = null;
+    });
+    resumeWalk();
+  }
+
+  Future<void> askChapter() async {
+    final stop = subject;
+    if (stop == null) return;
+    final ticket = epoch;
+    final interrupted = phase == _Phase.story;
+    speechTurn++;
+    questionWindow?.cancel();
+    setState(() => phase = _Phase.answer);
+    try {
+      await voice.stop();
+      if (!valid(ticket)) return;
+      var typed = '';
+      final question = await showDialog<String>(
+        context: context,
+        builder: (ctx) => AlertDialog(
+          title: Text('Ask about ${stop.name}'),
+          content: TextField(
+            autofocus: true,
+            maxLength: 400,
+            onChanged: (v) => typed = v,
+            onSubmitted: (v) => Navigator.pop(ctx, v.trim()),
+          ),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.pop(ctx),
+              child: const Text('Cancel'),
+            ),
+            FilledButton(
+              onPressed: () => Navigator.pop(ctx, typed.trim()),
+              child: const Text('Ask'),
+            ),
+          ],
+        ),
+      );
+      if (!valid(ticket) || question == null || question.isEmpty) return;
+      setState(() => notice = 'Looking up your question…');
+      final answer = await widget.followUp!(stop, question);
+      if (!valid(ticket)) return;
+      final reply =
+          answer ??
+          const WalkAnswer('I couldn’t verify an answer for this place.', {});
+      setState(() {
+        transcript = reply;
+        notice = '';
+      });
+      await voice.speak(reply.text);
+    } catch (_) {
+      if (valid(ticket))
+        setState(() => notice = 'Question lookup was unavailable.');
+    } finally {
+      if (valid(ticket)) {
+        if (interrupted) {
+          unawaited(tell(stop));
+        } else {
+          resumeWalk();
+        }
+      }
+    }
   }
 
   Future<void> ask() async {
@@ -374,6 +496,22 @@ class _PreparedWalkState extends State<PreparedWalkScreen> {
                 'Follow Gore Street East past Perth Museum · 8 November 2026',
               ),
             ),
+          if (trail) ...[
+            if (choosing)
+              for (final (i, s) in walk.stops.indexed)
+                ListTile(
+                  leading: Text('${i + 1}'),
+                  title: Text(s.name),
+                  subtitle: Text(
+                    s.story.text,
+                    maxLines: 2,
+                    overflow: TextOverflow.ellipsis,
+                  ),
+                ),
+            Text(
+              '${completed.length} of ${walk.stops.length} chapters heard · ${skipped.length} skipped',
+            ),
+          ],
           if (choosing) ...[
             if (phase == _Phase.done) const Text('Walk complete'),
             FilledButton.icon(
@@ -395,7 +533,21 @@ class _PreparedWalkState extends State<PreparedWalkScreen> {
               _Phase.answer => 'Follow-up · ${subject?.name}',
               _ => 'Story · ${subject?.name}',
             }),
-            if (asking)
+            if (trail && (phase == _Phase.walking || asking))
+              TextButton(
+                onPressed: skipChapter,
+                child: Text(
+                  phase == _Phase.walking
+                      ? 'Skip next stop'
+                      : 'Continue to next stop',
+                ),
+              ),
+            if (asking && trail && widget.followUp != null)
+              FilledButton(
+                onPressed: askChapter,
+                child: const Text('Ask a question'),
+              ),
+            if (asking && !trail)
               FilledButton(
                 onPressed: ask,
                 child: const Text('What’s there now?'),

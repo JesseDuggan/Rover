@@ -101,3 +101,41 @@ List<String> coverageInterests(List<String> interests) {
   final other = interests.where((i) => !foodCategory(i)).toList();
   return other.isEmpty ? interests : other;
 }
+
+// Estimate quiet walking time at the planned route speed. Arrival narration
+// holds the walker in place; only pass-by speech covers distance.
+typedef WalkingCue = ({double at, String walkingSpeech});
+typedef QuietStretch = ({double start, double end});
+({double? first, QuietStretch longest, double secondsPerMetre}) quietWalking(
+  double metres,
+  double walkingMinutes,
+  Iterable<WalkingCue> events,
+) {
+  final secondsPerMetre = walkingMinutes > 0 && metres > 0
+      ? walkingMinutes * 60 / metres
+      : 0.85;
+  final ordered =
+      events.where((c) => c.at.isFinite && c.at >= 0 && c.at <= metres).toList()
+        ..sort((a, b) => a.at.compareTo(b.at));
+  var cursor = 0.0;
+  var longest = (start: 0.0, end: 0.0);
+  void consider(double end) {
+    if (end - cursor > longest.end - longest.start)
+      longest = (start: cursor, end: end);
+  }
+
+  for (final cue in ordered) {
+    consider(cue.at);
+    final words = RegExp(r'\S+').allMatches(cue.walkingSpeech).length;
+    cursor = math.min(
+      metres,
+      math.max(cursor, cue.at + words * 60 / 150 / secondsPerMetre),
+    );
+  }
+  consider(metres);
+  return (
+    first: ordered.firstOrNull?.at,
+    longest: longest,
+    secondsPerMetre: secondsPerMetre,
+  );
+}

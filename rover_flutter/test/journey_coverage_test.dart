@@ -3,6 +3,18 @@ import 'package:latlong2/latlong.dart';
 import 'package:rover/src/ui/journey_coverage.dart';
 
 void main() {
+  test('first arrival and quiet time use walking distance covered by pass-by audio', () {
+    final report = quietWalking(600, 10, [
+      (at: 100.0, walkingSpeech: List.filled(150, 'word').join(' ')),
+      (at: 450.0, walkingSpeech: ''),
+    ]);
+    expect(report.first, 100);
+    expect(report.longest, (start: 160.0, end: 450.0));
+    expect(report.secondsPerMetre, 1);
+    final empty = quietWalking(300, 5, []);
+    expect(empty.first, isNull);
+    expect(empty.longest, (start: 0.0, end: 300.0));
+  });
   for (final origin in [const LatLng(-33.9, 18.4), const LatLng(65, 179.999)]) {
     test('Coverage follows the pedestrian bend at ${origin.latitude}', () {
       const geo = JourneyCoverage.distance;

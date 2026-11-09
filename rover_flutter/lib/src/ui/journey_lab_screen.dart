@@ -3,6 +3,7 @@ import '../voice/spoken_location.dart';
 import 'dart:async';
 
 import 'prepared_walk_screen.dart';
+import 'king_street_trail.dart';
 import 'journey_coverage.dart';
 
 import 'dart:convert';
@@ -18,6 +19,7 @@ import 'package:google_maps_flutter/google_maps_flutter.dart' as google;
 import '../maps/google_maps_config.dart';
 import '../voice/rover_audio_services.dart';
 import '../api/story_question_models.dart';
+import '../api/problem_details.dart';
 
 import 'package:flutter/material.dart';
 import 'package:flutter_map/flutter_map.dart';
@@ -71,6 +73,14 @@ class _JourneyLabState extends State<JourneyLabScreen> {
   bool get googleEnabled =>
       Platform.isAndroid && const GoogleMapsConfig().hasApiKey;
   String scope = 'Neighbourhood';
+  String? trailTheme;
+  static const themes = [
+    'Stage and screen',
+    'Local history',
+    'Architecture',
+    'Art and culture',
+    'Nature',
+  ];
   final query = TextEditingController();
   _Tap mode = _Tap.start;
   LatLng? start, end;
@@ -89,8 +99,14 @@ class _JourneyLabState extends State<JourneyLabScreen> {
   LatLng? simulatedPosition;
   int? replacing;
   bool get busy => working != null;
-  List<String> get interests =>
-      PreferencesScope.of(context).preferences.interests;
+  List<String> get interests => trailTheme == null
+      ? PreferencesScope.of(context).preferences.interests
+      : switch (trailTheme) {
+          'Stage and screen' => ['film and television', 'movies', 'culture'],
+          'Local history' => ['history', 'notable people'],
+          'Art and culture' => ['art', 'culture'],
+          _ => [trailTheme!.toLowerCase()],
+        };
 
   @override
   void dispose() {
@@ -112,7 +128,12 @@ class _JourneyLabState extends State<JourneyLabScreen> {
     try {
       await action();
     } catch (e) {
-      if (mounted) setState(() => status = '$label failed. $e');
+      if (mounted) {
+        final interrupted = label == 'Generating stories' && researchInterrupted(e);
+        setState(() => status = interrupted
+            ? 'Story research was interrupted. Any stories already prepared are still here. Check your connection, then tap Generate journey stories to continue.'
+            : '$label failed. $e');
+      }
     } finally {
       if (mounted) setState(() => working = null);
     }
@@ -211,69 +232,80 @@ class _JourneyLabState extends State<JourneyLabScreen> {
     }
   }
 
-  Future<void> route(bool suggest) =>
-      run(suggest ? 'Finding suggestions' : 'Building walking route', () async {
-        if (suggest && stops.isNotEmpty) {
-          final replace = await showDialog<bool>(
-            context: context,
-            builder: (context) => AlertDialog(
-              title: const Text('Replace current stops?'),
-              content: const Text(
-                'Suggestions will replace the ordered stops. You can edit the new list before building.',
-              ),
-              actions: [
-                TextButton(
-                  onPressed: () => Navigator.pop(context, false),
-                  child: const Text('Cancel'),
-                ),
-                FilledButton(
-                  onPressed: () => Navigator.pop(context, true),
-                  child: const Text('Replace stops'),
-                ),
-              ],
+  Future<void> route(bool suggest) => run(
+    suggest ? 'Finding suggestions' : 'Building walking route',
+    () async {
+      if (suggest && stops.isNotEmpty) {
+        final replace = await showDialog<bool>(
+          context: context,
+          builder: (context) => AlertDialog(
+            title: const Text('Replace current stops?'),
+            content: const Text(
+              'Suggestions will replace the ordered stops. You can edit the new list before building.',
             ),
-          );
-          if (!mounted || replace != true) return;
-        }
-        final result = await api.planJourney(
-          start: _coordinates(start!),
-          end: end == null ? null : _coordinates(end!),
-          stops: suggest ? [] : stops,
-          suggest: suggest,
-          minutes: minutes,
-          interests: interests,
+            actions: [
+              TextButton(
+                onPressed: () => Navigator.pop(context, false),
+                child: const Text('Cancel'),
+              ),
+              FilledButton(
+                onPressed: () => Navigator.pop(context, true),
+                child: const Text('Replace stops'),
+              ),
+            ],
+          ),
         );
-        if (!mounted) return;
-        final ordered = _rows(result, 'stops')
-            .map(
-              (s) => <String, dynamic>{
-                ...?stops.where((p) => p['id'] == s['id']).firstOrNull,
-                ...s,
-              },
-            )
-            .toList();
-        if (ordered.length > 20) {
-          throw StateError('Planner returned more than 20 stops');
-        }
-        if (suggest) {
-          edit(() => stops = ordered);
-          plannerSkips = result['skipped'] as List? ?? [];
-          status = 'Review the stops, then build the walking route.';
-        } else {
-          final points = _rows(result, 'coordinates').map(_point).toList();
-          if (points.length < 2) {
-            throw StateError('No walking geometry available');
-          }
-          final skipSnapshot = plannerSkips;
-          edit(() => stops = ordered);
-          setState(() {
-            plannerSkips = skipSnapshot;
-            plan = {...result, 'skipped': skipSnapshot};
-            geometry = points;
-          });
-          fit();
-        }
+        if (!mounted || replace != true) return;
+      }
+      final result = await api.planJourney(
+        start: _coordinates(start!),
+        end: end == null ? null : _coordinates(end!),
+        stops: suggest ? [] : stops,
+        suggest: suggest,
+        minutes: minutes,
+        interests: interests,
+      );
+      if (!mounted) return;
+      final ordered = _rows(result, 'stops')
+          .map(
+            (s) => <String, dynamic>{
+              ...?stops.where((p) => p['id'] == s['id']).firstOrNull,
+              ...s,
+            },
+          )
+          .toList();
+      if (ordered.length > 20) {
+        throw StateError('Planner returned more than 20 stops');
+      }
+      final points = _rows(result, 'coordinates').map(_point).toList();
+      if (points.length < 2) throw StateError('No walking geometry available');
+      final skips = suggest ? (result['skipped'] as List? ?? []) : plannerSkips;
+      final previousScan =
+          !suggest &&
+              jsonEncode(plan?['coordinates']) ==
+                  jsonEncode(result['coordinates'])
+          ? (plan?['gapSearches'])
+          : null;
+      edit(() => stops = ordered);
+      setState(() {
+        plannerSkips = skips;
+        plan = {
+          ...result,
+          'skipped': skips,
+          if (previousScan != null) 'gapSearches': previousScan,
+        };
+        geometry = points;
       });
+      fit();
+      if (suggest) {
+        await scanCoverage(planning: true);
+        if (mounted)
+          setState(
+            () => status = 'Gap check complete. Review the route, then generate journey stories.',
+          );
+      }
+    },
+  );
 
   google.LatLng googlePoint(LatLng p) => google.LatLng(p.latitude, p.longitude);
 
@@ -427,23 +459,60 @@ class _JourneyLabState extends State<JourneyLabScreen> {
                 .narration,
           );
         }
-        if (onlyStop == null && plan?['coverage'] != null) {
+        if (onlyStop != null) {
+          final words = verified(onlyStop)?.shortSpokenNarration;
+          if (words != null) await narrate(onlyStop['name'], words);
+          if (active())
+            setState(
+              () => status = words == null
+                  ? 'No prepared story here. Tap Generate journey stories.'
+                  : 'Story finished.',
+            );
+          return;
+        }
+        {
           final path = JourneyCoverage(geometry);
-          final events = <({double at, _Json place, bool passing})>[
-            for (final stop in stops)
-              (
-                at: path.project(_point(stop)).along,
-                place: stop,
-                passing: false,
-              ),
-            for (final place in _rows(plan!['coverage'], 'passing'))
-              if (verified(place) != null)
-                (
-                  at: (place['metres'] as num).toDouble(),
-                  place: place,
-                  passing: true,
-                ),
-          ]..sort((a, b) => a.at.compareTo(b.at));
+          final events =
+              <({double at, String title, String words, bool passing})>[
+                for (final stop in stops)
+                  if (verified(stop)?.shortSpokenNarration
+                      case final String words)
+                    (
+                      at: path.project(_point(stop)).along,
+                      title: stop['name'] as String,
+                      words: words,
+                      passing: false,
+                    ),
+                for (final place
+                    in (plan?['coverage']?['passing'] as List? ?? [])
+                        .cast<_Json>())
+                  if (verified(place)?.shortSpokenNarration
+                      case final String words)
+                    (
+                      at: (place['metres'] as num).toDouble(),
+                      title: 'Passing · ${place['name']}',
+                      words: shortPassage(words),
+                      passing: true,
+                    ),
+                for (final cue
+                    in (plan?['between'] as List? ?? []).cast<_Json>())
+                  if (DateTime.tryParse(cue['expiresUtc'] as String)
+                          ?.isAfter(DateTime.now()) ==
+                      true)
+                    (
+                      at: (cue['metres'] as num).toDouble(),
+                      title: 'Between stops · ${cue['title']}',
+                      words: cue['words'] as String,
+                      passing: true,
+                    ),
+              ]..sort((a, b) => a.at.compareTo(b.at));
+          if (events.isEmpty && intro == null) {
+            setState(
+              () => status =
+                  'No prepared stories. Tap Generate journey stories first.',
+            );
+            return;
+          }
           var cursor = 0.0;
           Future<void> advance(double target) async {
             final steps = ((target - cursor) / 35).ceil().clamp(1, 40);
@@ -465,14 +534,7 @@ class _JourneyLabState extends State<JourneyLabScreen> {
             });
             await advance(event.at);
             if (!active()) return;
-            final words = verified(event.place)?.shortSpokenNarration;
-            if (words == null) continue;
-            final voice = narrate(
-              event.passing
-                  ? 'Passing · ${event.place['name']}'
-                  : event.place['name'],
-              event.passing ? shortPassage(words) : words,
-            );
+            final voice = narrate(event.title, event.words);
             if (event.passing) {
               final nextAt = index + 1 < events.length
                   ? events[index + 1].at
@@ -489,153 +551,6 @@ class _JourneyLabState extends State<JourneyLabScreen> {
           if (active()) setState(() => status = 'Test journey complete.');
           return;
         }
-        final nearby = <AdaptiveRouteStory>[];
-        final covered = <String>{
-          for (final stop in stops) stop['name'] as String,
-          if (intro != null) intro.title,
-        };
-        LatLng? searchedAt;
-        Future<void> betweenStops(LatLng point) async {
-          const distance = Distance();
-          if (searchedAt == null || distance(searchedAt!, point) >= 750) {
-            searchedAt = point;
-            setState(() {
-              playingTitle = 'Between stops';
-              playingText = 'Looking for a neighbourhood story…';
-            });
-            try {
-              final result = await api.researchAreaStories(
-                latitude: point.latitude,
-                longitude: point.longitude,
-                interests: interests,
-                excludedTitles: covered
-                    .where((t) => t.length <= 160)
-                    .take(120)
-                    .toList(),
-              );
-              if (!active()) return;
-              nearby.addAll(AreaStoryCollection.fromJson(result).stories);
-            } catch (_) {
-              // An unavailable neighbourhood story must not interrupt arrivals.
-            }
-          }
-          if (!active()) return;
-          final story = nearby
-              .where(
-                (s) =>
-                    s.canAutoplay &&
-                    s.sources.isNotEmpty &&
-                    s.claims.isNotEmpty &&
-                    s.expiresUtc?.isAfter(DateTime.now().toUtc()) == true &&
-                    s.variants.any((v) => v.narration.trim().isNotEmpty) &&
-                    !covered.any(
-                      (title) =>
-                          title.trim().toLowerCase() ==
-                          s.title.trim().toLowerCase(),
-                    ) &&
-                    distance(
-                          point,
-                          LatLng(s.relevanceLatitude, s.relevanceLongitude),
-                        ) <=
-                        1000,
-              )
-              .firstOrNull;
-          if (story == null) return;
-          covered.add(story.title);
-          await narrate(
-            'Between stops · ${story.title}',
-            story.variants
-                .firstWhere((v) => v.narration.trim().isNotEmpty)
-                .narration,
-          );
-        }
-
-        var cursor = 0;
-        Future<void> travel(int target) async {
-          const distance = Distance();
-          var length = 0.0;
-          for (var j = cursor; j < target; j++) {
-            length += distance(geometry[j], geometry[j + 1]);
-          }
-          var travelled = 0.0;
-          var playedMidpoint = false;
-          final stride = math.max(1, ((target - cursor) / 10).ceil());
-          while (cursor < target && active()) {
-            final nextIndex = math.min(target, cursor + stride);
-            for (var j = cursor; j < nextIndex; j++) {
-              final from = geometry[j], to = geometry[j + 1];
-              final segment = distance(from, to);
-              if (!playedMidpoint &&
-                  length >= 100 &&
-                  travelled + segment >= length / 2 &&
-                  segment > 0) {
-                playedMidpoint = true;
-                final fraction = (length / 2 - travelled) / segment;
-                final midpoint = LatLng(
-                  from.latitude + (to.latitude - from.latitude) * fraction,
-                  from.longitude + (to.longitude - from.longitude) * fraction,
-                );
-                setState(() => simulatedPosition = midpoint);
-                move(midpoint, 16);
-                await betweenStops(midpoint);
-                if (!active()) return;
-              }
-              travelled += segment;
-            }
-            cursor = nextIndex;
-            final point = geometry[cursor];
-            setState(() {
-              simulatedPosition = point;
-            });
-            move(point, 16);
-            await Future<void>.delayed(const Duration(milliseconds: 160));
-          }
-        }
-
-        for (var i = 0; i < stops.length && active(); i++) {
-          final stop = stops[i];
-          if (onlyStop != null && onlyStop != stop) continue;
-          final point = _point(stop);
-          var nearest = cursor;
-          for (var j = cursor; j < geometry.length; j++) {
-            if (const Distance()(geometry[j], point) <
-                const Distance()(geometry[nearest], point))
-              nearest = j;
-          }
-          setState(() {
-            playingTitle = 'Walking to ${stop['name']}';
-            playingText = '';
-          });
-          if (onlyStop == null) await travel(nearest);
-          if (!active()) return;
-          setState(() => next = i + 1);
-          if (verified(stop) == null) {
-            setState(() {
-              playingTitle = 'Preparing story ${i + 1} of ${stops.length}';
-              playingText = 'Researching ${stop['name']}…';
-            });
-            await narrate(
-              'Preparing story',
-              'Finding a story about ${stop['name']}.',
-            );
-            if (!active()) return;
-            await researchStop(stop, interests);
-            if (!active()) return;
-          }
-          final story = verified(stop);
-          await narrate(
-            '${i + 1}. ${stop['name']}',
-            story?.shortSpokenNarration ??
-                'No verified story is available for ${stop['name']}.',
-          );
-        }
-        if (active() && onlyStop == null) await travel(geometry.length - 1);
-        if (active())
-          setState(
-            () => status = onlyStop == null
-                ? 'Test journey complete.'
-                : 'Story finished.',
-          );
       } catch (error) {
         if (active()) {
           ScaffoldMessenger.of(
@@ -657,6 +572,14 @@ class _JourneyLabState extends State<JourneyLabScreen> {
     playbackId++;
     await speech.stop();
   }
+
+  bool researchInterrupted(Object error) =>
+      error is RoverApiConnectionException ||
+      error is RoverApiTimeoutException ||
+      error is SocketException ||
+      error is HttpException ||
+      error is TimeoutException ||
+      (error is RoverApiException && [502, 503, 504].contains(error.statusCode));
 
   Future<void> generate() => run('Generating stories', () async {
     final issues = <String>[];
@@ -703,23 +626,168 @@ class _JourneyLabState extends State<JourneyLabScreen> {
           setState(() => area = result);
         }
       } catch (e) {
+        if (researchInterrupted(e)) rethrow;
         issues.add('Area research failed. $e');
       }
     }
-    for (final stop in stops) {
-      if (!mounted) return;
-      final place = subject(stop);
-      if (verified(stop) != null) continue;
-      setState(() => working = 'Researching ${place.name}');
+    final pending = stops.where((stop) => verified(stop) == null).toList();
+    Future<String?> prepare(_Json stop) async {
+      final name = subject(stop).name;
       try {
         await researchStop(stop, selectedInterests);
-        if (!mounted) return;
-        if (verified(stop) == null) {
-          issues.add('No verified story for ${place.name}.');
-        }
+        if (mounted && verified(stop) == null) return 'No verified story for $name.';
       } catch (e) {
-        issues.add('${place.name}: $e');
+        if (researchInterrupted(e)) rethrow;
+        return '$name: $e';
       }
+      return null;
+    }
+    for (var index = 0; index < pending.length; index += 2) {
+      if (!mounted) return;
+      final batch = pending.skip(index).take(2).toList();
+      final names = batch.map((stop) => subject(stop).name).join(' and ');
+      setState(() => working = 'Researching $names');
+      final results = await Future.wait(batch.map(prepare));
+      issues.addAll(results.whereType<String>());
+    }
+    if (mounted && plan != null) await scanCoverage(duringGeneration: true);
+    if (mounted && plan != null && plan!['between'] == null) {
+      setState(() => working = 'Preparing between-stop stories');
+      final path = JourneyCoverage(geometry);
+      final cues = <_Json>[];
+      final covered = {
+        for (final stop in stops) stop['name'] as String,
+        if (area != null && introduction(area!) != null)
+          introduction(area!)!.title,
+      };
+      final nearby = <AdaptiveRouteStory>[];
+      var eventQueries = 0;
+      LatLng? searchedAt;
+      var failed = false;
+      for (final gap in path.gaps([
+        for (final stop in stops)
+          if (verified(stop) != null) path.project(_point(stop)).along,
+        for (final place in (plan?['coverage']?['passing'] as List? ?? []))
+          (place['metres'] as num).toDouble(),
+      ])) {
+        if (gap.end - gap.start < 100) continue;
+        final metres = (gap.start + gap.end) / 2;
+        final point = path.at(metres);
+        const distance = Distance();
+        if (searchedAt == null || distance(searchedAt!, point) >= 750) {
+          searchedAt = point;
+          setState(() => working = 'Looking for a neighbourhood story');
+          if (eventQueries < 3) {
+            eventQueries++;
+            final nearest = [...stops]
+              ..sort(
+                (a, b) => distance(
+                  point,
+                  _point(a),
+                ).compareTo(distance(point, _point(b))),
+              );
+            final landmark = nearest.isEmpty
+                ? ''
+                : ' The nearest planned stop is ${nearest.first["name"]}.';
+            try {
+              final response = await api.researchStoryQuestion(
+                StoryQuestionRequest(
+                  location: RoverLatLng(
+                    latitude: point.latitude,
+                    longitude: point.longitude,
+                  ),
+                  scope: 'Street',
+                  format: 'Single',
+                  storyCount: 1,
+                  availableNarrationSeconds: 45,
+                  question:
+                      'Find one sourced story along this stretch of the walk.$landmark Identify what is actually here. Look for an interesting local feature, how the landscape formed, who used this place or how it changed. Tie the detail to its exact site. Include a current activity only with dated local evidence.',
+                ),
+              );
+              if (!mounted) return;
+              nearby.addAll(
+                response.answers
+                    .map((answer) => answer.story)
+                    .where(
+                      (story) =>
+                          distance(
+                                point,
+                                LatLng(
+                                  story.relevanceLatitude,
+                                  story.relevanceLongitude,
+                                ),
+                              ) <=
+                              250 &&
+                          path
+                                  .project(
+                                    LatLng(
+                                      story.relevanceLatitude,
+                                      story.relevanceLongitude,
+                                    ),
+                                  )
+                                  .away <=
+                              50,
+                    ),
+              );
+            } catch (e) {
+              if (researchInterrupted(e)) rethrow;
+              failed = true;
+            }
+          }
+          try {
+            final result = await api.researchAreaStories(
+              latitude: point.latitude,
+              longitude: point.longitude,
+              interests: interests,
+              excludedTitles: covered
+                  .where((t) => t.length <= 160)
+                  .take(120)
+                  .toList(),
+            );
+            if (!mounted) return;
+            nearby.addAll(AreaStoryCollection.fromJson(result).stories);
+          } catch (e) {
+            if (researchInterrupted(e)) rethrow;
+            failed = true;
+          }
+        }
+        if (!mounted) return;
+        final story = nearby
+            .where(
+              (s) =>
+                  s.canAutoplay &&
+                  s.sources.isNotEmpty &&
+                  s.claims.isNotEmpty &&
+                  s.expiresUtc?.isAfter(DateTime.now().toUtc()) == true &&
+                  s.variants.any((v) => v.narration.trim().isNotEmpty) &&
+                  !covered.any(
+                    (title) =>
+                        title.trim().toLowerCase() ==
+                        s.title.trim().toLowerCase(),
+                  ) &&
+                  distance(
+                        point,
+                        LatLng(s.relevanceLatitude, s.relevanceLongitude),
+                      ) <=
+                      1000,
+            )
+            .firstOrNull;
+        if (story == null) continue;
+        covered.add(story.title);
+        cues.add({
+          'metres': metres,
+          'title': story.title,
+          'words': story.variants
+              .firstWhere((v) => v.narration.trim().isNotEmpty)
+              .narration,
+          'expiresUtc': story.expiresUtc!.toIso8601String(),
+          'sources': story.sources.map((source) => source.toJson()).toList(),
+        });
+      }
+      if (!mounted) return;
+      if (failed)
+        issues.add('Some neighbourhood stories could not be prepared.');
+      if (cues.isNotEmpty || !failed) plan = {...plan!, 'between': cues};
     }
     if (mounted) {
       setState(
@@ -728,40 +796,47 @@ class _JourneyLabState extends State<JourneyLabScreen> {
     }
   });
 
-  Future<void> checkCoverage() => run('Checking story gaps', () async {
+  Future<void> checkCoverage() =>
+      run('Checking story gaps', () => scanCoverage());
+  Future<void> scanCoverage({bool planning = false, bool duringGeneration = false}) async {
+    final searches = Map<String, dynamic>.from(
+      plan?['gapSearches'] as Map? ?? {},
+    );
+    final findings = <_Json>[];
+    void record(double at, String reason) {
+      findings.add({'metres': at, 'reason': reason});
+    }
+
     final path = JourneyCoverage(geometry);
     final selectedInterests = List<String>.of(interests);
     final passing = <_Json>[], notes = <String>[];
     final occupied = <double>[];
     for (final stop in stops) {
-      if (!mounted) return;
-      if (verified(stop) == null) {
-        setState(() => working = 'Checking story for ${stop['name']}');
-        try {
-          await researchStop(stop, selectedInterests);
-        } catch (_) {
-          notes.add("${stop['name']} — stop research unavailable.");
-        }
-      }
-      if (!mounted) return;
-      if (verified(stop) != null) {
-        occupied.add(path.project(_point(stop)).along);
+      final at = path.project(_point(stop)).along;
+      if (planning || verified(stop) != null) {
+        occupied.add(at);
       } else {
-        notes.add("${stop['name']} — no verified stop narration ready.");
+        final reason = "${stop['name']} — no verified stop narration ready.";
+        notes.add(reason);
+        record(at, reason);
       }
     }
-    final seen = <String>{};
+    final seen = <String>{for (final stop in stops) stop['id'] as String};
     final probes = path.searchPoints(occupied);
     var attempts = 0;
     for (final at in probes) {
       if (!mounted) return;
       setState(() => working = 'Checking the route at ${at.round()} m');
       try {
-        final result = await api.nearbyJourneyStops(
-          location: _coordinates(path.at(at)),
-          interests: coverageInterests(selectedInterests),
-        );
+        final key = at.round().toString();
+        final result =
+            searches[key] as _Json? ??
+            await api.nearbyJourneyStops(
+              location: _coordinates(path.at(at)),
+              interests: coverageInterests(selectedInterests),
+            );
         if (!mounted) return;
+        searches[key] = result;
         final candidates =
             _rows(result, 'stops')
                 .map(
@@ -798,6 +873,10 @@ class _JourneyLabState extends State<JourneyLabScreen> {
             path.total,
           ].any((m) => (item.pos.along - m).abs() < 90)) {
             reason = 'Too close to another cue or route endpoint';
+          } else if (planning) {
+            passing.add({...place, 'metres': item.pos.along});
+            occupied.add(item.pos.along);
+            break;
           } else if (attempts >= 8) {
             reason = 'Research limit reached for this scan';
           } else {
@@ -805,7 +884,8 @@ class _JourneyLabState extends State<JourneyLabScreen> {
               attempts++;
               try {
                 await researchStop(place, selectedInterests);
-              } catch (_) {
+              } catch (e) {
+                if (duringGeneration && researchInterrupted(e)) rethrow;
                 reason = 'Story research unavailable';
               }
             }
@@ -819,8 +899,14 @@ class _JourneyLabState extends State<JourneyLabScreen> {
             reason ??= 'No short, sourced narration available';
           }
           notes.add('$name — $reason.');
+          record(item.pos.along, notes.last);
         }
-      } catch (_) {
+        if (candidates.every((c) => (c.pos.along - at).abs() > 250)) {
+          record(at, 'Nearby search returned no candidate on this stretch.');
+        }
+      } catch (e) {
+        if (duringGeneration && researchInterrupted(e)) rethrow;
+        record(at, 'Nearby place search was unavailable.');
         notes.add('Nearby search unavailable at ${at.round()} m.');
       }
     }
@@ -828,15 +914,19 @@ class _JourneyLabState extends State<JourneyLabScreen> {
     setState(() {
       plan = {
         ...plan!,
-        'coverage': {
-          'passing': passing,
-          'notes': notes,
-          'probes': probes.length,
-        },
+        'gapSearches': searches,
+        if (planning) 'gapCandidateCount': passing.length,
+        if (!planning)
+          'coverage': {
+            'findings': findings,
+            'passing': passing,
+            'notes': notes,
+            'probes': probes.length,
+          },
       };
       status = 'Coverage ready. Play the journey from home to hear it.';
     });
-  });
+  }
 
   Widget coveragePanel() {
     final path = JourneyCoverage(geometry);
@@ -845,36 +935,75 @@ class _JourneyLabState extends State<JourneyLabScreen> {
       report,
       'passing',
     ).where((p) => verified(p) != null).toList();
-    final cuePoints = [
+    final cues = <WalkingCue>[
       for (final p in stops)
-        if (verified(p) != null) path.project(_point(p)).along,
-      for (final p in passing) (p['metres'] as num).toDouble(),
-    ]..sort();
-    final gaps = path.gaps(cuePoints)
-      ..sort((a, b) => (b.end - b.start).compareTo(a.end - a.start));
+        if (verified(p) != null)
+          (at: path.project(_point(p)).along, walkingSpeech: ''),
+      for (final p in passing)
+        if (shortPassage(verified(p)!.shortSpokenNarration).isNotEmpty)
+          (
+            at: (p['metres'] as num).toDouble(),
+            walkingSpeech: shortPassage(verified(p)!.shortSpokenNarration),
+          ),
+      for (final c in (plan?['between'] as List? ?? []).cast<_Json>())
+        if (DateTime.tryParse(c['expiresUtc'] as String)
+                    ?.isAfter(DateTime.now()) ==
+                true &&
+            (c['words'] as String).trim().isNotEmpty)
+          (
+            at: (c['metres'] as num).toDouble(),
+            walkingSpeech: c['words'] as String,
+          ),
+    ];
+    final timing = quietWalking(
+      path.total,
+      (plan!['walkingMinutes'] as num).toDouble(),
+      cues,
+    );
+    final gap = timing.longest;
+    String duration(double m) {
+      final seconds = (m * timing.secondsPerMetre).round();
+      if (seconds < 60) return '$seconds sec';
+      return '${seconds ~/ 60} min ${seconds % 60} sec';
+    }
+
+    final introReady = area != null && introduction(area!) != null;
+    final reasons = <String>{
+      for (final f in (report['findings'] as List? ?? []).cast<_Json>())
+        if ((f['metres'] as num) >= gap.start &&
+            (f['metres'] as num) <= gap.end)
+          f['reason'] as String,
+    };
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
         Text(
-          cuePoints.isEmpty
-              ? 'No sourced stories ready along this route.'
-              : 'First story at ${cuePoints.first.round()} m · ${passing.length} pass-by stories',
+          introReady
+              ? 'First story: at the start (area introduction).'
+              : timing.first == null
+              ? 'No playable story yet.'
+              : 'First story: about ${duration(timing.first!)} from the start.',
         ),
+        if (introReady && timing.first != null)
+          Text(
+            'First story along the path: about ${duration(timing.first!)} into the walk.',
+          ),
+        Text(
+          'Longest quiet stretch: about ${duration(gap.end - gap.start)} · ${gap.start.round()}–${gap.end.round()} m from the start.',
+        ),
+        if (gap.end > gap.start)
+          Text(
+            reasons.isEmpty
+                ? 'There is no prepared narration covering this part of the route.'
+                : reasons.take(2).join(' '),
+          ),
         ExpansionTile(
           title: const Text('Story gaps along the route'),
-          subtitle: Text(
-            gaps.isEmpty
-                ? 'No measurable gap'
-                : 'Longest quiet stretch: ${(gaps.first.end - gaps.first.start).round()} m',
-          ),
           children: [
-            for (final gap in gaps)
-              ListTile(
-                title: Text(
-                  '${gap.start.round()}–${gap.end.round()} m from the start',
-                ),
-                trailing: Text('${(gap.end - gap.start).round()} m'),
-              ),
+            const Text(
+              'Estimates use the planned walking time and about 150 spoken words per minute.',
+            ),
+            for (final reason in reasons) ListTile(title: Text(reason)),
           ],
         ),
         for (final place in passing)
@@ -903,6 +1032,34 @@ class _JourneyLabState extends State<JourneyLabScreen> {
 
   Future<void> researchStop(_Json stop, List<String> selectedInterests) async {
     final place = subject(stop);
+    // Reviewed primary-source fallback for the organisation pin, including the real performance venues.
+    // Keep it available if either live research service is empty or unavailable.
+    if (place.id == 'google-ChIJy70XqzTL1IkR1Lhf72C_vWU') {
+      setState(
+        () => stories[place.id] = {
+          'placeId': place.id,
+          'storyTitle': 'The Toronto Symphony Orchestra’s two halls',
+          'shortSpokenNarration': 'The Toronto Symphony Orchestra performs at Roy Thomson Hall. Its first audience heard it at Massey Hall, on April 23, 1923. On the programme that day was Tchaikovsky’s Fifth Symphony. A century later the orchestra chose that same symphony for its return to Massey Hall, a musical link to its first audience.',
+          'factIdsUsed': ['tso-first-programme', 'tso-performance-venues'],
+          'researchStatus': 'ready',
+          'requiredAttribution': ['Toronto Symphony Orchestra'],
+          'sourceReferences': [
+            for (final entry in {
+              'Historic season announcement':
+                  'https://newsroom.tso.ca/historic-202223-season-announcement',
+              'Performance venues':
+                  'https://newsroom.tso.ca/category/media-kit',
+            }.entries)
+              {
+                'providerName': 'Toronto Symphony Orchestra',
+                'attribution': 'Toronto Symphony Orchestra',
+                'sourceUrl': entry.value,
+                'sourceTitle': entry.key,
+              },
+          ],
+        },
+      );
+    }
     final result = await api.createDriveStopStory(
       id: place.id,
       interests: selectedInterests,
@@ -912,8 +1069,85 @@ class _JourneyLabState extends State<JourneyLabScreen> {
       latitude: place.location.latitude,
       longitude: place.location.longitude,
     );
-    if (mounted && usableDriveStory(result, place, DateTime.now().toUtc())) {
+    if (!mounted) return;
+    final usable = usableDriveStory(result, place, DateTime.now().toUtc());
+    final organisation = RegExp(
+      r'\b(orchestra|symphony|symphonique|orchestre|ensemble|ballet company|theatre company|philharmonic)\b',
+      caseSensitive: false,
+    ).hasMatch(place.name);
+    if (usable && verified(stop) == null)
       setState(() => stories[place.id] = result.toJson());
+    if (usable && !organisation) return;
+    final prompt = organisation
+        ? "Research the ${place.name} itself. Find a named work, artist or historic first in its official archives or programmes. Tell us what happened, when, and at which named venue. Identify its regular performance venue and distinguish that venue from its office and any historic venue. Mention the organisation by name. Cite the primary source and omit anything unverified."
+        : "Research ${place.name} at its mapped location (listed type: ${stop['category'] ?? 'unknown'}). Verify what it is. Choose a detail that fits: landforms, ecology or local traditions for natural sites; exhibits for museums; named performances for theatres; people or changing uses for other places. Check dated sources for current activity. Cite evidence specific to this place.";
+    final response = await api.researchStoryQuestion(
+      StoryQuestionRequest(
+        location: place.location,
+        scope: 'Street',
+        format: 'Single',
+        storyCount: 1,
+        availableNarrationSeconds: 60,
+        question: prompt.length <= 500 ? prompt : prompt.substring(0, 500),
+      ),
+    );
+    if (!mounted) return;
+    for (final answer in response.answers) {
+      final story = answer.story, variant = answer.variant;
+      final expiry = story.expiresUtc;
+      if (!story.canAutoplay ||
+          expiry == null ||
+          !expiry.isAfter(DateTime.now()) ||
+          !variant.narration.toLowerCase().contains(place.name.toLowerCase()) ||
+          variant.claimIds.isEmpty ||
+          (!organisation &&
+              JourneyCoverage.distance(
+                    _point(stop),
+                    LatLng(story.relevanceLatitude, story.relevanceLongitude),
+                  ) >
+                  150))
+        continue;
+      final sources = {
+        for (final source in story.sources)
+          if (source.url != null &&
+              ['http', 'https'].contains(Uri.tryParse(source.url!)?.scheme))
+            source.sourceId: source,
+      };
+      final claims = {for (final claim in story.claims) claim.claimId: claim};
+      if (!variant.claimIds.every(
+        (id) => claims[id]?.sourceIds.any(sources.containsKey) == true,
+      ))
+        continue;
+      final used = {for (final id in variant.claimIds) ...claims[id]!.sourceIds}
+          .where(sources.containsKey);
+      final refs = used.map((id) => sources[id]!).toList();
+      setState(
+        () => stories[place.id] = {
+          'placeId': place.id,
+          'storyTitle': story.title,
+          'shortSpokenNarration': variant.narration,
+          'factIdsUsed': variant.claimIds,
+          'researchStatus': 'ready',
+          'expiresUtc': expiry.toIso8601String(),
+          'requiredAttribution': [
+            for (final source in refs) source.attribution,
+          ],
+          'sourceReferences': [
+            for (final source in refs)
+              {
+                'providerName': source.providerName,
+                'providerRecordId': source.sourceId,
+                'sourceUrl': source.url,
+                'sourceTitle': source.title,
+                'attribution': source.attribution,
+                'retrievedUtc': source.retrievedUtc.toIso8601String(),
+                'confidenceScore': source.confidence,
+                'expiresUtc': expiry.toIso8601String(),
+              },
+          ],
+        },
+      );
+      break;
     }
   }
 
@@ -946,8 +1180,11 @@ class _JourneyLabState extends State<JourneyLabScreen> {
     'end': end == null ? null : _coordinates(end!),
     'minutes': minutes,
     'scope': scope,
+    'trailTheme': trailTheme,
     'stops': stops,
-    'plan': plan,
+    'plan': plan == null
+        ? null
+        : (Map<String, dynamic>.of(plan!)..remove('gapSearches')),
     'area': area,
     'stories': stories,
     'next': next,
@@ -1053,6 +1290,9 @@ class _JourneyLabState extends State<JourneyLabScreen> {
       geometry = points;
       minutes = data['minutes'];
       scope = data['scope'] ?? 'Neighbourhood';
+      trailTheme = themes.contains(data['trailTheme'])
+          ? data['trailTheme'] as String
+          : null;
       area = data['area'];
       stories = data['stories'];
       next = data['next'];
@@ -1067,38 +1307,41 @@ class _JourneyLabState extends State<JourneyLabScreen> {
       MaterialPageRoute<void>(
         builder: (_) => PreparedWalkScreen(
           walk: walk,
-          research: (stop) async {
-            final result = await api.researchStoryQuestion(
-              StoryQuestionRequest(
-                location: RoverLatLng(
-                  latitude: stop.point.latitude,
-                  longitude: stop.point.longitude,
-                ),
-                question:
-                    'What occupies the site of ${stop.name} today? Use a dated or current source for this specific place. If the current use cannot be verified, say so.',
-                scope: 'Street',
-                format: 'Single',
-                storyCount: 1,
-              ),
-            );
-            final answer = result.answers
-                .where(
-                  (a) =>
-                      a.story.canAutoplay &&
-                      a.story.sources.isNotEmpty &&
-                      a.variant.narration.trim().isNotEmpty,
-                )
-                .firstOrNull;
-            if (answer == null) return null;
-            return WalkAnswer(answer.variant.narration, {
-              for (final source in answer.story.sources)
-                if (source.url != null)
-                  source.title ?? source.providerName: source.url!,
-            });
-          },
+          research: (stop) => askAtStop(stop, 'What occupies this site today?'),
+          followUp: askAtStop,
         ),
       ),
     );
+  }
+
+  Future<WalkAnswer?> askAtStop(PreparedStop stop, String question) async {
+    final result = await api.researchStoryQuestion(
+      StoryQuestionRequest(
+        location: RoverLatLng(
+          latitude: stop.point.latitude,
+          longitude: stop.point.longitude,
+        ),
+        question:
+            'At ${stop.name}, the walker asks: $question. Verify the answer for this specific place.',
+        scope: 'Street',
+        format: 'Single',
+        storyCount: 1,
+      ),
+    );
+    final answer = result.answers
+        .where(
+          (a) =>
+              a.story.canAutoplay &&
+              a.story.sources.isNotEmpty &&
+              a.variant.narration.trim().isNotEmpty,
+        )
+        .firstOrNull;
+    if (answer == null) return null;
+    return WalkAnswer(answer.variant.narration, {
+      for (final source in answer.story.sources)
+        if (source.url != null)
+          source.title ?? source.providerName: source.url!,
+    });
   }
 
   List<PreparedStop> get preparedStops => [
@@ -1196,6 +1439,29 @@ class _JourneyLabState extends State<JourneyLabScreen> {
         child: ListView(
           padding: const EdgeInsets.all(16),
           children: [
+            FilledButton.icon(
+              onPressed: busy ? null : () => openPrepared(kingStreetTrail),
+              icon: const Icon(Icons.theater_comedy),
+              label: const Text('King Street Story Trail'),
+            ),
+            DropdownButtonFormField<String>(
+              initialValue: trailTheme ?? 'Profile interests',
+              key: ValueKey(trailTheme),
+              decoration: const InputDecoration(
+                labelText: 'Theme for your own route',
+              ),
+              items: [
+                for (final theme in ['Profile interests', ...themes])
+                  DropdownMenuItem(value: theme, child: Text(theme)),
+              ],
+              onChanged: busy
+                  ? null
+                  : (value) => edit(
+                      () => trailTheme = value == 'Profile interests'
+                          ? null
+                          : value,
+                    ),
+            ),
             OutlinedButton.icon(
               onPressed: busy ? null : () => openPrepared(bloorRehearsal),
               icon: const Icon(Icons.headphones),
@@ -1435,6 +1701,11 @@ class _JourneyLabState extends State<JourneyLabScreen> {
                 onPressed: busy ? null : checkCoverage,
                 child: const Text('Check story gaps'),
               ),
+              if (plan?['gapCandidateCount'] != null &&
+                  plan?['coverage'] == null)
+                Text(
+                  'Pass-by candidates found: ${plan!["gapCandidateCount"]}. Generate stories to verify them.',
+                ),
               if (plan?['coverage'] != null) coveragePanel(),
               if (stops.isNotEmpty || plan?['coverage'] != null)
                 FilledButton.icon(
@@ -1442,18 +1713,29 @@ class _JourneyLabState extends State<JourneyLabScreen> {
                   icon: const Icon(Icons.play_arrow),
                   label: const Text('Play journey from home'),
                 ),
+              if (trailTheme != null &&
+                  stories.isNotEmpty &&
+                  preparedStops.length < stops.length)
+                Text(
+                  'Missing verified chapters: ${stops.where((s) => verified(s) == null).map((s) => s["name"]).join(", ")}',
+                ),
               if (preparedStops.isNotEmpty)
                 OutlinedButton(
                   onPressed: busy
                       ? null
                       : () => openPrepared(
                           PreparedWalk(
-                            'Prepared walk',
+                            trailTheme ?? 'Prepared walk',
                             List.of(geometry),
                             preparedStops,
+                            theme: trailTheme,
                           ),
                         ),
-                  child: const Text('Test prepared stories at home or on foot'),
+                  child: Text(
+                    trailTheme == null
+                        ? 'Test prepared stories at home or on foot'
+                        : 'Preview Story Trail',
+                  ),
                 ),
               if (intro != null)
                 ListTile(

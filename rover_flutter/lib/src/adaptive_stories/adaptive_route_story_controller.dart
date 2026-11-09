@@ -388,29 +388,30 @@ class AdaptiveRouteStoryController extends ChangeNotifier {
                 const Duration(seconds: 5));
     final interruptedStory = _currentSelection;
     if (interruptedStory != null &&
-        voiceController.hasInterruptedAdaptiveStory(
-          interruptedStory.story.storyId,
-        ) &&
-        !voiceController.hasAutomaticallyResumableAdaptiveStory(
-          interruptedStory.story.storyId,
-        )) {
-      return;
-    }
-    if (interruptedStory != null &&
-        voiceController.hasAutomaticallyResumableAdaptiveStory(
-          interruptedStory.story.storyId,
-        ) &&
-        // Playback windows govern starting stories, not finishing one already heard.
-        !_isExcluded(interruptedStory.story) &&
-        session.status == RoamSessionStatus.active &&
-        (_safeForContextualStory(session) ||
-            (session.isOffRoute &&
-                session.isNearStoryAnchor(
-                  interruptedStory.story.relevanceLatitude,
-                  interruptedStory.story.relevanceLongitude,
-                )))) {
-      await playCurrent(session, voiceController, userRequested: false);
-      return;
+        voiceController.hasInterruptedAdaptiveStory(interruptedStory.story.storyId)) {
+      if (!voiceController.hasAutomaticallyResumableAdaptiveStory(
+        interruptedStory.story.storyId,
+      )) {
+        return; // The walker explicitly paused this story.
+      }
+      final story = interruptedStory.story;
+      final stillRelevant = !session.isOffRoute ||
+          session.isNearStoryAnchor(story.relevanceLatitude, story.relevanceLongitude);
+      if (!_isExcluded(story) &&
+          (pack?.expiresUtc.isAfter(now) ?? false) &&
+          (story.expiresUtc?.isAfter(now) ?? true) &&
+          _availableForOfflinePlayback(story) &&
+          stillRelevant) {
+        if (session.status == RoamSessionStatus.active &&
+            (_safeForContextualStory(session) || session.isOffRoute)) {
+          await playCurrent(session, voiceController, userRequested: false);
+        }
+        return;
+      }
+      // A stale interruption must not monopolize future selection or research.
+      _currentSelection = null;
+      _manualSelection = false;
+      _lastSelectionProgressMeters = null;
     }
     if (!statusDue && !selectionDue) {
       return;

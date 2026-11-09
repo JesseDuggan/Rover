@@ -45,7 +45,7 @@ void main() {
         variant: first.variants.first,
         reason: 'test',
       );
-    final tts = _StopCompletesStoryTts();
+    final tts = BlockingTextToSpeech(blockAt: 1);
     final voice = RoverVoiceController(
       walkRepository: FakeVoiceWalkRepository(),
       textToSpeech: tts,
@@ -84,9 +84,9 @@ void main() {
         tts.spoken,
         containsAllInOrder([
           'First fact.',
-          'You have arrived at ${session.currentStop.name}.',
-          'Continuing the story. First fact.',
           'Second fact.',
+          'You have arrived at ${session.currentStop.name}.',
+          'Continuing the story. Second fact.',
         ]),
       );
       expect(
@@ -115,6 +115,9 @@ void main() {
       // Completion is reported before its cache write finishes on Windows.
       await _until(() => !controller.isBusy);
       expect(tts.spoken.last, 'A verified fact.');
+      expect(tts.spoken.where((line) => line == 'First fact.'), hasLength(1));
+      expect(tts.releaseFirstSpeak.isCompleted, isFalse);
+      tts.releaseFirstSpeak.complete();
       expect(
         tts.spoken.where((text) => text.startsWith('You have arrived')),
         hasLength(1),
@@ -1506,16 +1509,6 @@ Future<void> _until(bool Function() ready) async {
       throw TimeoutException('Playback did not advance.');
     }
     await Future<void>.delayed(const Duration(milliseconds: 25));
-  }
-}
-
-class _StopCompletesStoryTts extends BlockingTextToSpeech {
-  @override
-  Future<void> stop() async {
-    await super.stop();
-    if (firstSpeakStarted.isCompleted && !releaseFirstSpeak.isCompleted) {
-      releaseFirstSpeak.complete();
-    }
   }
 }
 

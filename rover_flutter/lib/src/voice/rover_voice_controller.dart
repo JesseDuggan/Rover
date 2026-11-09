@@ -239,6 +239,7 @@ class RoverVoiceController extends ChangeNotifier {
       _staleJourneyJobs++;
       _activeScheduledStory = null;
       _interruptedScheduledStory = null;
+      _activeAdaptiveStory?.cancelAttempt();
       _activeAdaptiveStory = null;
       _interruptedAdaptiveStory = null;
       // A route update invalidates route stories, not an arrival already being heard.
@@ -1108,6 +1109,7 @@ class RoverVoiceController extends ChangeNotifier {
     _interruptedAdaptiveStory = null;
     playback.userPaused = false;
     if (playback.segments.isEmpty) return AdaptiveStoryPlaybackResult.blocked;
+    final cancelled = playback.startAttempt();
     _activeAdaptiveStory = playback;
     _errorMessage = null;
     _lastTurn = RoverVoiceTurn(
@@ -1147,16 +1149,19 @@ class RoverVoiceController extends ChangeNotifier {
             ),
           );
         }
-        final played = await _speakAnswer(
-          '$prefix${playback.segments[playback.segmentIndex]}',
-          priority: priority,
-          purpose: 'AdaptiveRouteStory',
-          audioCacheEligible: audioCacheEligible,
-          cacheExpiresUtc: selection.story.expiresUtc,
-          storyId: selection.story.storyId,
-          variantId:
-              '${selection.story.storyId}:${selection.variant.length.toLowerCase()}:${playback.segmentIndex}',
-        );
+        final played = await Future.any<bool>([
+          _speakAnswer(
+            '$prefix${playback.segments[playback.segmentIndex]}',
+            priority: priority,
+            purpose: 'AdaptiveRouteStory',
+            audioCacheEligible: audioCacheEligible,
+            cacheExpiresUtc: selection.story.expiresUtc,
+            storyId: selection.story.storyId,
+            variantId:
+                '${selection.story.storyId}:${selection.variant.length.toLowerCase()}:${playback.segmentIndex}',
+          ),
+          cancelled,
+        ]);
         if (!played || _isDisposed) {
           return playback.userPaused
               ? AdaptiveStoryPlaybackResult.paused
@@ -1488,6 +1493,7 @@ class RoverVoiceController extends ChangeNotifier {
     playback.wasInterrupted = true;
     playback.userPaused = reason == 'user pause';
     _interruptedAdaptiveStory = playback;
+    playback.cancelAttempt();
     _activeAdaptiveStory = null;
     _playbackGeneration++;
     await _premiumVoice?.stop();
@@ -2078,6 +2084,7 @@ class RoverVoiceController extends ChangeNotifier {
   @override
   void dispose() {
     _isDisposed = true;
+    _activeAdaptiveStory?.cancelAttempt();
     _playbackGeneration++;
     unawaited(_speechRecognizer.cancel());
     unawaited(_premiumVoice?.stop());
@@ -2134,6 +2141,20 @@ class _AdaptiveRouteStoryPlayback {
   final int routeRevision;
   final List<String> segments;
   final bool userRequested;
+  // A stopped audio engine may never acknowledge its outstanding sentence.
+  // Each resume gets a new signal so a late callback cannot advance it.
+  Completer<bool>? _cancelled;
+  Future<bool> startAttempt() {
+    final signal = Completer<bool>();
+    _cancelled = signal;
+    return signal.future;
+  }
+
+  void cancelAttempt() {
+    final signal = _cancelled;
+    if (signal != null && !signal.isCompleted) signal.complete(false);
+  }
+
   int segmentIndex = 0;
   bool wasInterrupted = false;
   bool userPaused = false;
