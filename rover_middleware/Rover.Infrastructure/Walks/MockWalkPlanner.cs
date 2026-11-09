@@ -1,3 +1,4 @@
+using Microsoft.Extensions.Logging;
 using Rover.Application.Walks;
 using Rover.Domain.Walks;
 
@@ -9,6 +10,7 @@ public sealed class MockWalkPlanner : IWalkPlanner
     private readonly ILocalDiscoveryProvider _localDiscoveryProvider;
     private readonly IStoryLedStopSelector? _storySelector;
     private readonly WalkPlaceSearchService? _placeSearch;
+    private readonly ILogger<MockWalkPlanner>? _logger;
 
     public MockWalkPlanner()
         : this(new MockWalkRouteProvider(), new NoOpLocalDiscoveryProvider())
@@ -16,12 +18,14 @@ public sealed class MockWalkPlanner : IWalkPlanner
     }
 
     public MockWalkPlanner(IWalkRouteProvider routeProvider, ILocalDiscoveryProvider? localDiscoveryProvider = null,
-        IStoryLedStopSelector? storySelector = null, WalkPlaceSearchService? placeSearch = null)
+        IStoryLedStopSelector? storySelector = null, WalkPlaceSearchService? placeSearch = null,
+        ILogger<MockWalkPlanner>? logger = null)
     {
         _routeProvider = routeProvider;
         _localDiscoveryProvider = localDiscoveryProvider ?? new NoOpLocalDiscoveryProvider();
         _storySelector = storySelector;
         _placeSearch = placeSearch;
+        _logger = logger;
     }
 
     public async Task<WalkSession> PlanWalkAsync(CreateWalkCommand command, CancellationToken cancellationToken)
@@ -287,12 +291,14 @@ public sealed class MockWalkPlanner : IWalkPlanner
         var unique = new List<WalkStop>();
         foreach (var candidate in candidates)
             if (!unique.Any(stop => SamePlace(stop, candidate))) unique.Add(candidate);
+        var uncheckedPlaces = new List<WalkStop>();
         if (command.LimitLabDetours)
         {
             // Spread the bounded routing checks across the original route.
             var shortlist = unique.GroupBy(stop => (int)(RouteMath.ProgressPercentage(stop.Location, direct) / 12.5))
                 .SelectMany(section => WalkInterestPolicy.TakeBalanced(section.OrderBy(stop =>
-                    RouteMath.DistanceFromRouteMeters(stop.Location, direct.Coordinates)), 4, command.Interests, WalkInterestPolicy.Group));
+                    RouteMath.DistanceFromRouteMeters(stop.Location, direct.Coordinates)), 4, command.Interests, WalkInterestPolicy.Group)).ToArray();
+            uncheckedPlaces.AddRange(unique.Except(shortlist));
             foreach (var stop in unique) command.RecordLabDecision?.Invoke(stop, "Other candidates filled this section’s shortlist");
             var verified = new List<WalkStop>();
             foreach (var batch in shortlist.Chunk(4))
@@ -366,7 +372,7 @@ public sealed class MockWalkPlanner : IWalkPlanner
         }
         (stops, route) = await FillAvailableTimeAsync(command, stops, route, pool, ct, balanceInterests: true);
         if (requested.IsDestination && (command.LimitLabDetours || _localDiscoveryProvider.RequiresRealPlaces))
-            (stops, route) = await RefillShortRouteAsync(command, direct, stops, route, ct);
+            (stops, route) = await RefillShortRouteAsync(command, direct, stops, route, ct, uncheckedPlaces);
         var duration = route.DurationMinutes + stops.Sum(stop => stop.EstimatedVisitMinutes);
         EnsureSelectedPlaceRoute(route);
         var summary = requested.IsDestination ? $"Walk to {requested.Name}." : $"Walk via {requested.Name}.";
@@ -391,29 +397,48 @@ public sealed class MockWalkPlanner : IWalkPlanner
     }
 
     private async Task<(IReadOnlyList<WalkStop>, WalkRoute)> RefillShortRouteAsync(CreateWalkCommand command,
-        WalkRoute corridor, IReadOnlyList<WalkStop> stops, WalkRoute route, CancellationToken ct)
+        WalkRoute corridor, IReadOnlyList<WalkStop> stops, WalkRoute route, CancellationToken ct, IReadOnlyList<WalkStop>? uncheckedPlaces = null)
     {
         if (stops.Count >= 12 || route.DurationMinutes + stops.Sum(s => s.EstimatedVisitMinutes) >= command.AvailableMinutes * 0.9)
             return (stops, route);
         try
         {
-            var extra = await SearchUnderfilledRouteAsync(command with { LimitLabDetours = true }, corridor, stops, ct);
-            return await FillAvailableTimeAsync(command, stops, route, extra, ct, balanceInterests: true);
+            var extra = await SearchUnderfilledRouteAsync(command with { LimitLabDetours = true }, corridor, stops, uncheckedPlaces ?? [], ct);
+            var filled = await FillAvailableTimeAsync(command, stops, route, extra, ct, balanceInterests: true);
+            _logger?.LogInformation("Second search verified {Verified} additional candidates and added {Added} stops for a {Budget}-minute walk.",
+                extra.Count, filled.Item1.Count - stops.Count, command.AvailableMinutes);
+            return filled;
         }
         catch (HttpRequestException) { return (stops, route); }
         catch (OperationCanceledException) when (!ct.IsCancellationRequested) { return (stops, route); }
     }
 
     private async Task<IReadOnlyList<WalkStop>> SearchUnderfilledRouteAsync(CreateWalkCommand command,
-        WalkRoute direct, IReadOnlyList<WalkStop> stops, CancellationToken ct)
+        WalkRoute direct, IReadOnlyList<WalkStop> stops, IReadOnlyList<WalkStop> uncheckedPlaces, CancellationToken ct)
     {
         var geometry = direct.Coordinates;
         var anchors = stops.Select(stop => stop.Location).Append(geometry[0]).ToList();
         var probes = CorridorCenters(geometry, 250, 21).Skip(1).SkipLast(1).ToList();
         if (probes.Count == 0) probes.Add(geometry[geometry.Count / 2]);
-        string[] scopes = ["Small local discoveries and overlooked sights", "Neighbourhood attractions and local destinations",
-            "Major landmarks and signature attractions"];
-        var interests = string.Join(", ", command.Interests);
+        var groups = command.Interests.Select(WalkInterestPolicy.Group).Distinct().ToArray();
+        if (groups.Length == 0) groups = ["local"];
+        string SearchText(int section, int tier)
+        {
+            var group = groups[(section + tier) % groups.Length];
+            string[] terms = group switch
+            {
+                "history" => ["historical plaques and memorials", "local heritage sites", "historic landmarks"],
+                "architecture" => ["architectural details and public courtyards", "distinctive buildings", "iconic architecture"],
+                "art" => ["public sculptures and murals", "art galleries", "art museums and installations"],
+                "nature" => ["public gardens", "parks and viewpoints", "natural landmarks"],
+                "culture" => ["cultural monuments", "local cultural venues", "cultural landmarks"],
+                "food" => command.Interests.All(i => !WalkInterestPolicy.IsFood(i) || WalkInterestPolicy.IsCoffee(i))
+                    ? ["local coffee kiosks", "neighbourhood cafes", "specialty coffee houses"]
+                    : ["local food stalls", "neighbourhood eateries", "destination restaurants"],
+                _ => [$"local {group} sights", $"{group} attractions", $"famous {group} landmarks"]
+            };
+            return terms[tier];
+        }
         var verified = new List<WalkStop>();
         var checkedPlaces = new List<WalkStop>(stops);
         for (var section = 0; section < 3 && probes.Count > 0; section++)
@@ -421,12 +446,15 @@ public sealed class MockWalkPlanner : IWalkPlanner
             var center = probes.MaxBy(point => anchors.Min(anchor => RouteMath.DistanceMeters(point, anchor)))!;
             probes.Remove(center);
             anchors.Add(center);
-            var results = await Task.WhenAll(scopes.Select(scope => _localDiscoveryProvider.DiscoverForPlanningAsync(
+            var results = await Task.WhenAll(Enumerable.Range(0, 3).Select(tier => _localDiscoveryProvider.DiscoverForPlanningAsync(
                 command with { StartingLocation = center, SelectedPlace = null,
-                    AdditionalPlaceQuery = $"{scope} for {interests} within walking distance" }, ct, 10)));
+                    AdditionalPlaceQuery = SearchText(section, tier) }, ct, 10)));
             // Interleave the three searches so each scale gets a share of the access checks.
             var shortlist = new List<WalkStop>();
-            foreach (var stop in results.SelectMany(r => r.Stops.Select((stop, rank) => (stop, rank)))
+            var local = uncheckedPlaces.Where(stop => RouteMath.DistanceMeters(center, stop.Location) <= 850)
+                .OrderBy(stop => RouteMath.DistanceFromRouteMeters(stop.Location, geometry));
+            var sources = results.Select(result => result.Stops.AsEnumerable()).Append(local);
+            foreach (var stop in sources.SelectMany(source => source.Select((stop, rank) => (stop, rank)))
                 .OrderBy(item => item.rank).Select(item => item.stop))
             {
                 var offset = RouteMath.DistanceFromRouteMeters(stop.Location, geometry);

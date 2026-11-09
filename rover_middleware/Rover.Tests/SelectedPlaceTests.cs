@@ -123,7 +123,7 @@ internal static class SelectedPlaceTests
         Check(limited.Stops.Any(stop => stop.StopId == "museum") && limited.Stops.All(stop => stop.StopId != "monument"),
             "Lab must retain a 179-second approach and exclude a 180-second approach even during refill.");
         Check(repeatDiscovery.Commands.Where(c => c.AdditionalPlaceQuery != null)
-            .Select(c => c.AdditionalPlaceQuery).Distinct().Count() == 3, "Search three scales of attraction for a short Lab route.");
+            .Select(c => c.AdditionalPlaceQuery).Distinct().Count() >= 3, "Search three scales of attraction for a short Lab route.");
         Check(limited.Stops.Any(s => s.StopId == "plaque") && limited.Stops.All(s => s.StopId != "long-access"),
             "Add a newly discovered place only when its walking access is under three minutes.");
         var shortWalk = await planner.PlanWalkAsync(Command(minutes: 15), default);
