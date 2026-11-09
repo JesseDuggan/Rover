@@ -49,7 +49,7 @@ public sealed class ScenicDriveService(
     public Task<DrivePlaceResults> SearchAsync(string query, GeoLocation origin, CancellationToken ct) =>
         SearchWithinAsync(query, origin, 1_000_000, ct);
 
-    private async Task<DrivePlaceResults> SearchWithinAsync(string query, GeoLocation origin, int radius, CancellationToken ct)
+    internal async Task<DrivePlaceResults> SearchWithinAsync(string query, GeoLocation origin, int radius, CancellationToken ct)
     {
         if (string.IsNullOrWhiteSpace(query) || query.Length > 256 || !ValidLocation(origin))
             throw new ArgumentException("Enter a destination and allow access to your current location.");

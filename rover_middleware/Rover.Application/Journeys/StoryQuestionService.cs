@@ -115,14 +115,22 @@ public sealed class StoryQuestionService(ILocalRouteResearcher researcher, TimeP
             text.Contains("Research this block or landscape", StringComparison.Ordinal))
         {
             var landmark = Regex.Match(text, @"The nearest planned stop is (.{1,256}?)\.?$", RegexOptions.CultureInvariant);
-            if (landmark.Success)
+            var name = landmark.Groups[1].Value;
+            var interests = Regex.Match(text, @"^Walker interests: ([^.]{1,160})\.", RegexOptions.CultureInvariant);
+            var search = interests.Success ? $"Local landmarks and places of interest: {interests.Groups[1].Value}"
+                : "Local landmarks and places of interest";
+            var candidates = await places.SearchWithinAsync(search, center, 250, token);
+            subjects.AddRange(candidates.Places.Where(p => !string.Equals(p.Name, name, StringComparison.OrdinalIgnoreCase))
+                .OrderBy(p => RouteMath.DistanceMeters(center, p.Location)).Take(3)
+                .Select(p => new LocalResearchPublicPlace(p.Name, p.Address, p.Location)));
+            if (subjects.Count > 0)
+                text += " Check these nearby named sites for a distinctive documented former use, public work, or local tradition. Match evidence to the correct site and address.";
+            else if (landmark.Success)
             {
-                var name = landmark.Groups[1].Value;
-                var nearby = await places.SearchAsync(name, center, token);
-                var matches = nearby.Places.Where(p => string.Equals(p.Name, name, StringComparison.OrdinalIgnoreCase)
-                    && RouteMath.DistanceMeters(p.Location, center) <= 1000).ToArray();
+                var nearby = await places.SearchWithinAsync(name, center, 1000, token);
+                var matches = nearby.Places.Where(p => string.Equals(p.Name, name, StringComparison.OrdinalIgnoreCase)).ToArray();
                 if (matches.Length == 1 && !string.IsNullOrWhiteSpace(matches[0].Address))
-                    text += $" Geographic reference: {matches[0].Address}. Research the street between stops: a former use, public work, landscape change or local tradition. Verify the subject's own location.";
+                    text += $" Geographic reference: {matches[0].Address}. Research the street between stops. Verify the subject's own location.";
             }
         }
         var query = new LocalRouteResearchQuery(segments, new ApproximateLiveLocation(null, null, null, null),
