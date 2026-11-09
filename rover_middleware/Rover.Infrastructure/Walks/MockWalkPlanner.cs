@@ -309,6 +309,8 @@ public sealed class MockWalkPlanner : IWalkPlanner
                         ? "Eligible, but left out when balancing the route and time budget"
                         : "Walking access under three minutes could not be verified");
                 verified.AddRange(batch.Where((_, i) => accepted[i]));
+                // The second pass can check access from a different point on the original path.
+                uncheckedPlaces.AddRange(batch.Where((_, i) => !accepted[i]));
             }
             unique = verified;
         }
@@ -388,12 +390,18 @@ public sealed class MockWalkPlanner : IWalkPlanner
     private async Task<bool> HasShortAccessAsync(CreateWalkCommand command, WalkRoute direct, WalkStop stop, CancellationToken ct)
     {
         var anchor = RouteMath.ClosestRoutePoint(stop.Location, direct.Coordinates);
+        return await AccessSecondsAsync(command, direct, stop, anchor, ct) < 180;
+    }
+
+    private async Task<double> AccessSecondsAsync(CreateWalkCommand command, WalkRoute direct, WalkStop stop,
+        GeoLocation anchor, CancellationToken ct)
+    {
         var access = await _routeProvider.CreateRouteAsync(command with { StartingLocation = anchor }, [stop], ct);
         var seconds = access.WalkingSeconds ?? (access.DurationMinutes * 60d);
         // Routes can snap a park pin to a distant entrance. Include the unmapped gap.
         var gap = RouteMath.DistanceMeters(access.Coordinates[^1], stop.Location)
             + RouteMath.DistanceMeters(anchor, access.Coordinates[0]);
-        return access.Provider == direct.Provider && seconds + command.WalkingSecondsAtPace(gap / 1.35) < 180;
+        return access.Provider == direct.Provider ? seconds + command.WalkingSecondsAtPace(gap / 1.35) : double.PositiveInfinity;
     }
 
     private async Task<(IReadOnlyList<WalkStop>, WalkRoute)> RefillShortRouteAsync(CreateWalkCommand command,
@@ -403,7 +411,9 @@ public sealed class MockWalkPlanner : IWalkPlanner
             return (stops, route);
         try
         {
-            var extra = await SearchUnderfilledRouteAsync(command with { LimitLabDetours = true }, corridor, stops, uncheckedPlaces ?? [], ct);
+            var missingMinutes = command.AvailableMinutes - route.DurationMinutes - stops.Sum(s => s.EstimatedVisitMinutes);
+            var sections = Math.Clamp((int)Math.Ceiling(missingMinutes / 10d), 3, 7);
+            var extra = await SearchUnderfilledRouteAsync(command with { LimitLabDetours = true }, corridor, stops, uncheckedPlaces ?? [], sections, ct);
             var filled = await FillAvailableTimeAsync(command, stops, route, extra, ct, balanceInterests: true);
             _logger?.LogInformation("Second search verified {Verified} additional candidates and added {Added} stops for a {Budget}-minute walk.",
                 extra.Count, filled.Item1.Count - stops.Count, command.AvailableMinutes);
@@ -414,7 +424,7 @@ public sealed class MockWalkPlanner : IWalkPlanner
     }
 
     private async Task<IReadOnlyList<WalkStop>> SearchUnderfilledRouteAsync(CreateWalkCommand command,
-        WalkRoute direct, IReadOnlyList<WalkStop> stops, IReadOnlyList<WalkStop> uncheckedPlaces, CancellationToken ct)
+        WalkRoute direct, IReadOnlyList<WalkStop> stops, IReadOnlyList<WalkStop> uncheckedPlaces, int sections, CancellationToken ct)
     {
         var geometry = direct.Coordinates;
         var anchors = stops.Select(stop => stop.Location).Append(geometry[0]).ToList();
@@ -439,9 +449,26 @@ public sealed class MockWalkPlanner : IWalkPlanner
             };
             return terms[tier];
         }
+        var entrances = CorridorCenters(geometry, 65, 180);
+        async Task<double> VerifyApproach(WalkStop stop)
+        {
+            var nearest = RouteMath.ClosestRoutePoint(stop.Location, geometry);
+            var seconds = await AccessSecondsAsync(command, direct, stop, nearest, ct);
+            if (seconds < 180) return seconds;
+            // A closer point on the map may be across a barrier. Check a nearby
+            // point on each side along the same original pedestrian route.
+            var index = Enumerable.Range(0, entrances.Count).MinBy(i => RouteMath.DistanceMeters(entrances[i], nearest));
+            foreach (var i in new[] { index - 1, index + 1 })
+            {
+                if (i < 0 || i >= entrances.Count || RouteMath.DistanceMeters(entrances[i], nearest) > 130) continue;
+                seconds = Math.Min(seconds, await AccessSecondsAsync(command, direct, stop, entrances[i], ct));
+                if (seconds < 180) break;
+            }
+            return seconds;
+        }
         var verified = new List<WalkStop>();
         var checkedPlaces = new List<WalkStop>(stops);
-        for (var section = 0; section < 3 && probes.Count > 0; section++)
+        for (var section = 0; section < sections && probes.Count > 0; section++)
         {
             var center = probes.MaxBy(point => anchors.Min(anchor => RouteMath.DistanceMeters(point, anchor)))!;
             probes.Remove(center);
@@ -467,12 +494,14 @@ public sealed class MockWalkPlanner : IWalkPlanner
             }
             foreach (var batch in shortlist.Chunk(4))
             {
-                var access = await Task.WhenAll(batch.Select(stop => HasShortAccessAsync(command, direct, stop, ct)));
+                var access = await Task.WhenAll(batch.Select(VerifyApproach));
                 for (var i = 0; i < batch.Length; i++)
                 {
-                    if (access[i]) verified.Add(batch[i]);
-                    command.RecordLabDecision?.Invoke(batch[i], access[i] ? "Eligible in second search, subject to available time"
-                        : "Walking access under three minutes could not be verified");
+                    var seconds = access[i];
+                    if (seconds < 180) verified.Add(batch[i]);
+                    command.RecordLabDecision?.Invoke(batch[i], seconds < 180 ? "Eligible in second search, subject to available time"
+                        : double.IsFinite(seconds) ? $"Shortest checked walk from the original route: {Math.Ceiling(seconds)} seconds (limit: under 180)"
+                        : "Walking directions from the original route were unavailable");
                 }
             }
         }

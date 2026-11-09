@@ -126,6 +126,11 @@ internal static class SelectedPlaceTests
             .Select(c => c.AdditionalPlaceQuery).Distinct().Count() >= 3, "Search three scales of attraction for a short Lab route.");
         Check(limited.Stops.Any(s => s.StopId == "plaque") && limited.Stops.All(s => s.StopId != "long-access"),
             "Add a newly discovered place only when its walking access is under three minutes.");
+        var alternateAccess = await new MockWalkPlanner(new TimedAccessRoutes(allowAlternate: true), new Discovery(),
+            placeSearch: new WalkPlaceSearchService([new Search()])).PlanWalkAsync(
+                Command(minutes: 155) with { LimitLabDetours = true }, default);
+        Check(alternateAccess.Stops.Any(s => s.StopId == "monument") && alternateAccess.Stops.All(s => s.StopId != "long-access"),
+            "A different point on the original path must independently pass the strict walking-time limit.");
         var shortWalk = await planner.PlanWalkAsync(Command(minutes: 15), default);
         Check(shortWalk.Stops.Any(stop => stop.ProviderPlaceId == "target"), "Never trim an explicit endpoint.");
         Check(shortWalk.EstimatedDurationMinutes >= shortWalk.Route.DurationMinutes, "Report real duration, not a capped estimate.");
@@ -291,15 +296,17 @@ internal static class SelectedPlaceTests
             string? interest, IReadOnlyCollection<string> dismissedDiscoveryIds, CancellationToken ct) =>
             Task.FromResult<IReadOnlyList<NearbyDiscovery>>(options ?? Array.Empty<NearbyDiscovery>());
     }
-    private sealed class TimedAccessRoutes : IWalkRouteProvider
+    private sealed class TimedAccessRoutes(bool allowAlternate = false) : IWalkRouteProvider
     {
         public string ProviderName => "Mock";
         public async Task<WalkRoute> CreateRouteAsync(CreateWalkCommand command, IReadOnlyList<WalkStop> stops, CancellationToken ct)
         {
             var route = await new MockWalkRouteProvider().CreateRouteAsync(command, stops, ct);
+            var alternative = allowAlternate && stops.Count == 1 && stops[0].StopId == "monument" &&
+                RouteMath.DistanceMeters(command.StartingLocation, stops[0].Location) > 40;
             return new WalkRoute(route.RouteId, route.Provider, route.Version, route.GeneratedAtUtc,
                 route.Coordinates, route.Bounds, route.DistanceMeters, route.DurationMinutes, route.Maneuvers)
-                { WalkingSeconds = stops.Count == 1 && (stops[0].StopId is "museum" or "plaque") ? 179 : 180 };
+                { WalkingSeconds = stops.Count == 1 && ((stops[0].StopId is "museum" or "plaque") || alternative) ? 179 : 180 };
         }
     }
     private sealed class DetourRoutes(int addedMinutes) : IWalkRouteProvider
