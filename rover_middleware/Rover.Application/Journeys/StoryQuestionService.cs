@@ -89,6 +89,10 @@ public sealed class StoryQuestionService(ILocalRouteResearcher researcher, TimeP
         if (scope == StoryQuestionScope.Street && places is not null)
         {
             var selected = Regex.Match(text, @"^At (.{1,256}?), the walker asks: ", RegexOptions.CultureInvariant);
+            // Journey Lab also requests deeper research for a selected stop. Resolve the
+            // same verified address so a former tenant can be tied to this building.
+            if (!selected.Success)
+                selected = Regex.Match(text, @"\bLook up (.{1,256}?) at this site under former or local names\.", RegexOptions.CultureInvariant);
             if (selected.Success)
             {
                 var name = selected.Groups[1].Value;
