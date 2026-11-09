@@ -407,14 +407,16 @@ public sealed class MockWalkPlanner : IWalkPlanner
     private async Task<(IReadOnlyList<WalkStop>, WalkRoute)> RefillShortRouteAsync(CreateWalkCommand command,
         WalkRoute corridor, IReadOnlyList<WalkStop> stops, WalkRoute route, CancellationToken ct, IReadOnlyList<WalkStop>? uncheckedPlaces = null)
     {
-        if (stops.Count >= 12 || route.DurationMinutes + stops.Sum(s => s.EstimatedVisitMinutes) >= command.AvailableMinutes * 0.9)
+        var stopLimit = command.LimitLabDetours ? 20 : 12;
+        if (stops.Count >= stopLimit || route.DurationMinutes + stops.Sum(s => s.EstimatedVisitMinutes) >= command.AvailableMinutes * 0.9)
             return (stops, route);
         try
         {
             var missingMinutes = command.AvailableMinutes - route.DurationMinutes - stops.Sum(s => s.EstimatedVisitMinutes);
             var sections = Math.Clamp((int)Math.Ceiling(missingMinutes / 10d), 3, 7);
             var extra = await SearchUnderfilledRouteAsync(command with { LimitLabDetours = true }, corridor, stops, uncheckedPlaces ?? [], sections, ct);
-            var filled = await FillAvailableTimeAsync(command, stops, route, extra, ct, balanceInterests: true);
+            var filled = await FillAvailableTimeAsync(command, stops, route, extra, ct, balanceInterests: true,
+                stopLimit: stopLimit, attemptLimit: stopLimit, targetFraction: 1);
             _logger?.LogInformation("Second search verified {Verified} additional candidates and added {Added} stops for a {Budget}-minute walk.",
                 extra.Count, filled.Item1.Count - stops.Count, command.AvailableMinutes);
             return filled;
@@ -538,16 +540,17 @@ public sealed class MockWalkPlanner : IWalkPlanner
 
     private async Task<(IReadOnlyList<WalkStop>, WalkRoute)> FillAvailableTimeAsync(
         CreateWalkCommand command, IReadOnlyList<WalkStop> stops, WalkRoute route,
-        IReadOnlyList<WalkStop> candidates, CancellationToken ct, bool balanceInterests = false)
+        IReadOnlyList<WalkStop> candidates, CancellationToken ct, bool balanceInterests = false,
+        int stopLimit = 12, int attemptLimit = 8, double targetFraction = 0.9)
     {
         var remaining = candidates.Where(candidate => !stops.Any(stop => SamePlace(candidate, stop)))
             .DistinctBy(candidate => candidate.StopId).ToList();
         // Estimate detours cheaply, then validate the best one with actual walking directions.
         // A rejected detour leaves the last usable route intact.
-        for (var attempt = 0; attempt < 8 && remaining.Count > 0 && stops.Count < 12; attempt++)
+        for (var attempt = 0; attempt < attemptLimit && remaining.Count > 0 && stops.Count < stopLimit; attempt++)
         {
             var total = route.DurationMinutes + stops.Sum(stop => stop.EstimatedVisitMinutes);
-            if (total >= command.AvailableMinutes * 0.9) break;
+            if (total >= command.AvailableMinutes * targetFraction) break;
             var minutesPerMetre = route.DurationMinutes / Math.Max(1d, PlannedDistance(command.StartingLocation, stops));
             minutesPerMetre = Math.Clamp(minutesPerMetre, 0.01, 0.035);
             var eligible = remaining.Where(candidate => CanAddCoffee(command, stops, candidate)).ToArray();
