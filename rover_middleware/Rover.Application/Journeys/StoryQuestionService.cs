@@ -100,7 +100,13 @@ public sealed class StoryQuestionService(ILocalRouteResearcher researcher, TimeP
                 var matches = found.Places.Where(p => string.Equals(p.Name, name, StringComparison.OrdinalIgnoreCase)
                     && RouteMath.DistanceMeters(p.Location, center) <= 150).ToArray();
                 if (matches.Length == 1)
+                {
                     subjects.Add(new(name, matches[0].Address, matches[0].Location));
+                    if (selected.Value.StartsWith("Look up ", StringComparison.Ordinal))
+                        text = $"What documented former name, use, or human story explains {name} at {matches[0].Address}? "
+                            + "Search local archives for one detail about this same site. "
+                            + text[(selected.Index + selected.Length)..];
+                }
             }
         }
         var query = new LocalRouteResearchQuery(segments, new ApproximateLiveLocation(null, null, null, null),

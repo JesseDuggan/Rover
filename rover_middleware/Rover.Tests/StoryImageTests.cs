@@ -120,7 +120,7 @@ internal static class StoryImageTests
                     fullurl = "https://en.wikipedia.org/wiki/Nearby_museum", pageprops = new { wikibase_item = "Q1792" }
                 } } } })
                 : JsonSerializer.Serialize(new { query = new { pages = new[] { new { imageinfo = new[] { new {
-                    mime = "image/jpeg", thumburl = IncludeThumbnail ? "https://upload.wikimedia.org/view.jpg" : null,
+                    mime = "image/jpeg", thumburl = IncludeThumbnail ? "https://thumb.wikimedia.org/view.jpg" : null,
                     url = "https://upload.wikimedia.org/view.jpg",
                     width = 800, height = 600, size = 50000,
                     descriptionurl = "https://commons.wikimedia.org/wiki/File:" + File,

@@ -185,8 +185,8 @@ public sealed class StoryImageService(IHttpClientFactory clients, ILogger<StoryI
                 if (!Uri.TryCreate(licenseUrl, UriKind.Absolute, out var licenseUri)
                     || licenseUri.Scheme is not ("https" or "http") || licenseUri.Host != "creativecommons.org"
                     || !licenseUri.IsDefaultPort || licenseUri.UserInfo.Length != 0
-                    || !Regex.IsMatch(licenseUri.AbsolutePath, @"^/(licenses/(by|by-sa)/(1\.0|2\.0|2\.5|3\.0|4\.0)|publicdomain/(zero|mark)/1\.0)/$")) continue;
-                licenseUrl = "https://creativecommons.org" + licenseUri.AbsolutePath;
+                    || !Regex.IsMatch(licenseUri.AbsolutePath, @"^/(licenses/(by|by-sa)/(1\.0|2\.0|2\.5|3\.0|4\.0)|publicdomain/(zero|mark)/1\.0)/?$")) continue;
+                licenseUrl = "https://creativecommons.org" + licenseUri.AbsolutePath.TrimEnd('/') + "/";
                 var artist = Meta(meta, "Artist");
                 var url = Text(info, "thumburl");
                 if (url is null && info.TryGetProperty("width", out var width) && width.TryGetInt32(out var w) && w <= 1200
@@ -195,7 +195,7 @@ public sealed class StoryImageService(IHttpClientFactory clients, ILogger<StoryI
                     url = Text(info, "url");
                 var source = Text(info, "descriptionurl");
                 if (string.IsNullOrWhiteSpace(artist) || string.IsNullOrWhiteSpace(license)
-                    || !SafeUrl(url, "upload.wikimedia.org") || !SafeUrl(source, "commons.wikimedia.org")) continue;
+                    || !(SafeUrl(url, "upload.wikimedia.org") || SafeUrl(url, "thumb.wikimedia.org")) || !SafeUrl(source, "commons.wikimedia.org")) continue;
                 var credit = Meta(meta, "Credit");
                 var attribution = Meta(meta, "Attribution");
                 var caption = Meta(meta, "ImageDescription");
