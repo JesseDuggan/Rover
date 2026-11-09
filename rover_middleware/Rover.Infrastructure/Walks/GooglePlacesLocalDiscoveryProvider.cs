@@ -63,19 +63,10 @@ public sealed class GooglePlacesLocalDiscoveryProvider : ILocalDiscoveryProvider
             places = places.Concat(nonFood.Places);
             warnings = warnings.Concat(nonFood.Warnings);
         }
-        if (result.Enabled && !warnings.Any() && other.Any(interest => WalkInterestPolicy.Group(interest) == "culture")
-            && places.Count(place => place.Categories.Any(WalkInterestPolicy.IsPerformanceVenue)
-                && RouteMath.DistanceMeters(place.Coordinates, command.StartingLocation) <= 350) < 2)
-        {
-            var venues = await _placesProvider.GetContextAsync(query with { Interests = ["performing arts"] }, cancellationToken);
-            places = venues.Places.Concat(places);
-            warnings = warnings.Concat(venues.Warnings);
-        }
-        if (command.LimitLabDetours && other.Any(i => WalkInterestPolicy.Group(i) is "history" or "architecture" or "art"
-            || i.Contains("culture", StringComparison.OrdinalIgnoreCase) || i.Contains("film", StringComparison.OrdinalIgnoreCase)))
+        if (command.LimitLabDetours && other.Length > 0)
         {
             var landmarks = await _placesProvider.SearchAsync(new CandidateObservationQuery(
-                "historic theatres, heritage buildings, churches and local cultural landmarks",
+                $"Distinctive local landmarks and places of interest for {string.Join(", ", other)}",
                 command.StartingLocation, null, null, 650, null, []), cancellationToken);
             places = landmarks.Places.Concat(places);
         }
@@ -154,17 +145,15 @@ public sealed class GooglePlacesLocalDiscoveryProvider : ILocalDiscoveryProvider
 
     private static double Score(LocationPlace place, double distance, IReadOnlyCollection<string> interests)
     {
-        var interestMatch = (place.Categories.Any(WalkInterestPolicy.IsPerformanceVenue)
-            && interests.Any(i => WalkInterestPolicy.Group(i) == "culture")) || interests.Any(interest =>
+        var interestMatch = interests.Any(interest =>
             place.Name.Contains(interest, StringComparison.OrdinalIgnoreCase)
-            || place.Categories.Any(category => category.Contains(interest, StringComparison.OrdinalIgnoreCase)));
+            || place.Categories.Any(category => category.Contains(interest, StringComparison.OrdinalIgnoreCase) ||
+                WalkInterestPolicy.Group(category) == WalkInterestPolicy.Group(interest)));
         return (interestMatch ? 0 : 500) + distance;
     }
 
     private static string DisplayCategory(LocationPlace place)
     {
-        var venueType = place.Categories.FirstOrDefault(WalkInterestPolicy.IsPerformanceVenue);
-        if (venueType != null) return System.Globalization.CultureInfo.InvariantCulture.TextInfo.ToTitleCase(venueType.ToLowerInvariant());
         if (HasHeritageEvidence(place, new[] { "history" })) return "Historic building";
         var value = place.Categories.FirstOrDefault(category => !string.IsNullOrWhiteSpace(category)) ?? "Place";
         return System.Globalization.CultureInfo.InvariantCulture.TextInfo.ToTitleCase(value.Replace('_', ' ').ToLowerInvariant());

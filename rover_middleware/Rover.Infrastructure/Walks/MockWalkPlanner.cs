@@ -284,23 +284,11 @@ public sealed class MockWalkPlanner : IWalkPlanner
         var unique = new List<WalkStop>();
         foreach (var candidate in candidates)
             if (!unique.Any(stop => SamePlace(stop, candidate))) unique.Add(candidate);
-        var wantsPerformance = command.Interests.Any(interest => WalkInterestPolicy.Group(interest) == "culture");
-        // Several verified performance venues near one another identify a local theatre district.
-        // Prefer a named venue on the direct walk when the walker selected cultural interests.
-        var venues = unique.Where(stop => wantsPerformance && WalkInterestPolicy.IsPerformanceVenue(stop.Category)
-            && RouteMath.DistanceFromRouteMeters(stop.Location, direct.Coordinates) <= 120).ToArray();
-        var districtVenues = venues.Where(stop => venues.Any(other => other.StopId != stop.StopId
-            && RouteMath.DistanceMeters(stop.Location, other.Location) <= 350)).Select(stop => stop.StopId).ToHashSet();
-        bool NamedDistrictVenue(WalkStop stop) => districtVenues.Contains(stop.StopId)
-            && (stop.Name.EndsWith(" Theatre", StringComparison.OrdinalIgnoreCase)
-                || stop.Name.EndsWith(" Theater", StringComparison.OrdinalIgnoreCase)
-                || stop.Name.EndsWith(" Hall", StringComparison.OrdinalIgnoreCase)
-                || stop.Name.EndsWith(" Opera", StringComparison.OrdinalIgnoreCase));
         if (command.LimitLabDetours)
         {
             // Spread the bounded routing checks across the original route.
             var shortlist = unique.GroupBy(stop => (int)(RouteMath.ProgressPercentage(stop.Location, direct) / 12.5))
-                .SelectMany(section => WalkInterestPolicy.TakeBalanced(section.OrderByDescending(NamedDistrictVenue).ThenBy(stop =>
+                .SelectMany(section => WalkInterestPolicy.TakeBalanced(section.OrderBy(stop =>
                     RouteMath.DistanceFromRouteMeters(stop.Location, direct.Coordinates)), 4, command.Interests, WalkInterestPolicy.Group));
             foreach (var stop in unique) command.RecordLabDecision?.Invoke(stop, "Other candidates filled this section’s shortlist");
             var verified = new List<WalkStop>();
@@ -330,9 +318,6 @@ public sealed class MockWalkPlanner : IWalkPlanner
         var pool = (selection?.Stops.Count > 0 ? selection.Stops.Concat(unique) : unique).DistinctBy(stop => stop.StopId).ToArray();
         var recommended = selection?.Stops.Select(stop => stop.StopId).ToHashSet() ?? [];
         var chosen = new List<WalkStop>();
-        var representative = pool.Where(NamedDistrictVenue)
-            .OrderBy(stop => RouteMath.DistanceFromRouteMeters(stop.Location, direct.Coordinates)).FirstOrDefault();
-        if (representative is not null) chosen.Add(representative);
         // Pick near evenly spaced positions before considering additional candidates.
         // This prevents the first search centre from consuming the entire stop budget.
         foreach (var center in CorridorCenters(direct.Coordinates, 400, 12))
@@ -356,8 +341,7 @@ public sealed class MockWalkPlanner : IWalkPlanner
         while (coverageOrder.Count > 0)
         {
             // Reserve a small walking detour allowance as well as the visit.
-            var stop = representative is not null && coverageOrder.Contains(representative) ? representative
-                : retained.Count == 0 ? coverageOrder.MinBy(candidate => RouteMath.DistanceMeters(command.StartingLocation, candidate.Location))! : coverageOrder.MaxBy(candidate =>
+            var stop = retained.Count == 0 ? coverageOrder.MinBy(candidate => RouteMath.DistanceMeters(command.StartingLocation, candidate.Location))! : coverageOrder.MaxBy(candidate =>
                 retained.Min(other => RouteMath.DistanceMeters(candidate.Location, other.Location)))!;
             coverageOrder.Remove(stop);
             var cost = Math.Max(1, stop.EstimatedVisitMinutes) + 3;
@@ -366,7 +350,7 @@ public sealed class MockWalkPlanner : IWalkPlanner
             timeForStops -= cost;
         }
         IReadOnlyList<WalkStop> stops = requested.IsDestination
-            ? Resequence(command.StartingLocation, retained.OrderBy(stop => ReferenceEquals(stop, chosen.FirstOrDefault()) && representative is null && RouteMath.DistanceMeters(command.StartingLocation, stop.Location) <= 200 ? -1 : RouteMath.ProgressPercentage(stop.Location, direct)).ToArray())
+            ? Resequence(command.StartingLocation, retained.OrderBy(stop => ReferenceEquals(stop, chosen.FirstOrDefault()) && RouteMath.DistanceMeters(command.StartingLocation, stop.Location) <= 200 ? -1 : RouteMath.ProgressPercentage(stop.Location, direct)).ToArray())
             : CreateEfficientStopPlan(command, retained, retained.Count);
         if (requested.IsDestination)
             stops = Resequence(command.StartingLocation, stops.Append(requested).ToArray());

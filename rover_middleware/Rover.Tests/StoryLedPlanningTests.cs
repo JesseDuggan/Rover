@@ -148,10 +148,10 @@ internal static class StoryLedPlanningTests
             "Mixed requests must reach beyond the provider's food-heavy nearest results.");
         Check(stops.Count == 6 && stops.GroupBy(WalkInterestPolicy.Group).Count(group => group.Count() == 2) == 3,
             "The local discovery limit must retain each requested group.");
-        var cultural = await discovery.FindCandidateStopsAsync(command with { Interests = ["nature", "culture"] }, default, 3);
-        Check(searches.Any(types => types.Contains("concert_hall") && !types.Contains("park"))
-            && cultural.Any(stop => WalkInterestPolicy.Group(stop) == "culture"),
-            "A broad search that omits performance venues must trigger a focused search and retain a venue.");
+        searches.Clear();
+        await discovery.FindCandidateStopsAsync(command with { Interests = ["nature", "culture"] }, default, 3);
+        Check(searches.Count == 1 && searches[0].Contains("park") && searches[0].Contains("museum"),
+            "Nature and culture should use the mixed interests without an extra performance search.");
     }
 
     private static async Task InterestBalance()

@@ -32,9 +32,9 @@ public static class NearbyStoryResearch
         {
             MaximumStories = 1,
             Question = selectedDriveStop ? new StoryResearchQuestion(
-                $"What documented event or human story took place at {place.Name} at {place.Address}, and why is it remembered? " +
+                $"What is distinctive about {place.Name} at {place.Address}? Listed place types: {string.Join(", ", place.Categories)}. Verify its identity and choose a research angle appropriate to this exact site. " +
                 (request.RouteGeometry.Count == 2 ? FormattableString.Invariant($"This walking journey starts at {request.RouteGeometry[0].Latitude:F4},{request.RouteGeometry[0].Longitude:F4} and ends at {request.RouteGeometry[1].Latitude:F4},{request.RouteGeometry[1].Longitude:F4}. ") : "") +
-                "For a cinema or festival venue, which named film actually screened in THIS building? For a theatre or concert hall, which named production played on THIS stage? For another kind of place, find a documented local happening, person or turning point. Search local-language venue programmes and archives using former venue names as needed. In the first sentence name the place and the specific work or episode together. Cite the evidence tying them together; describe its date and significance in a single short family-friendly paragraph. Only call a screening a premiere if the source specifies that distinction. If the evidence cannot establish a specific connection, return no story. " +
+                "For natural sites investigate landscape formation, ecology, local stewardship or cultural history. For museums consult collection and exhibition records. For performance venues check named productions in official programmes. For other places investigate their original purpose, people, or changes over time. Choose one specific, sourced detail. Mention current activity only when a dated source confirms it is current. If no site-specific evidence is available, return no story. " +
                 "Do not substitute nearby attractions or invent access, parking, opening hours or safety advice.",
                 StoryQuestionScope.Street, StoryQuestionFormat.Single, 1, 90) : null
         };
