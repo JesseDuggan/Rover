@@ -3305,7 +3305,7 @@ static async Task LivePlanningRefusesSyntheticFallback()
         var calls = 0;
         using var client = new HttpClient(new RoutingHttpMessageHandler(_ =>
         {
-            calls++;
+            Interlocked.Increment(ref calls);
             if (scenario == "forbidden") return JsonResponse(HttpStatusCode.Forbidden, "{\"error\":\"private-provider-response\"}");
             var latitude = scenario == "filtered" ? 0 : 44.6791;
             var places = scenario == "empty" ? Array.Empty<object>() : new object[]
@@ -3342,7 +3342,7 @@ static async Task LivePlanningRefusesSyntheticFallback()
             AssertTrue(exception.Message.Contains(expected) && exception.Message.Contains("No fallback waypoints"), "Planning must expose the failure instead of inventing stops: " + scenario);
             AssertTrue(!exception.Message.Contains("private-provider-response"), "Raw provider failures must not leak into app errors.");
         }
-        AssertEqual(scenario switch { "disabled" or "missing-key" => 0, "success" => 3, _ => 1 }, calls);
+        AssertEqual(scenario switch { "disabled" or "missing-key" => 0, "success" => 6, _ => 1 }, calls);
     }
 }
 
