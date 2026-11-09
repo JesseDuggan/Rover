@@ -10,7 +10,8 @@ public sealed record LabNearbyRequest(GeoLocation Location, string[] Interests);
 public sealed record LabPlace(string Id, string Name, double Latitude, double Longitude, string Category,
     string? Attribution = null, string? SourceUrl = null, string? Address = null);
 public sealed record LabPlanRequest(GeoLocation Start, GeoLocation? End, LabPlace[] Stops, bool Suggest,
-    int Minutes, string[] Interests);
+    int Minutes, string[] Interests,
+    [property: System.Text.Json.Serialization.JsonConverter(typeof(System.Text.Json.Serialization.JsonStringEnumConverter<WalkingPace>))] WalkingPace Pace = WalkingPace.Standard);
 public sealed record LabDecision(string Name, string Reason);
 public sealed record LabPlan(IReadOnlyList<LabPlace> Stops, IReadOnlyList<GeoLocation> Coordinates,
     int WalkingMinutes, int VisitMinutes, int DistanceMeters, string? StopSelectionStatus = null, IReadOnlyList<LabDecision>? Skipped = null);
@@ -62,7 +63,7 @@ public static class JourneyLabEndpoints
 
     public static bool ValidPlan(LabPlanRequest request) =>
         ScenicDriveService.ValidLocation(request.Start) && (request.End is null || ScenicDriveService.ValidLocation(request.End))
-        && request.Minutes is >= 15 and <= 240 && ValidInterests(request.Interests)
+        && Enum.IsDefined(request.Pace) && request.Minutes is >= 15 and <= 240 && ValidInterests(request.Interests)
         && request.Stops is { Length: <= 20 } && request.Stops.All(p => p is not null && !string.IsNullOrWhiteSpace(p.Id)
             && p.Id.Length <= 256 && !string.IsNullOrWhiteSpace(p.Name) && p.Name.Length <= 256
             && p.Category is { Length: <= 120 } && ScenicDriveService.ValidLocation(new(p.Latitude, p.Longitude)))
@@ -71,7 +72,7 @@ public static class JourneyLabEndpoints
 
     public static async Task<LabPlan> BuildAsync(LabPlanRequest request, IWalkPlanner planner, IWalkRouteProvider routes, CancellationToken ct)
     {
-        var command = new CreateWalkCommand(request.Start, request.Minutes, request.Interests, WalkingPace.Standard, []);
+        var command = new CreateWalkCommand(request.Start, request.Minutes, request.Interests, request.Pace, []) { LimitLabDetours = true };
         var end = request.End is null ? null : new WalkStop("lab-end", 1, "Finish", request.End, "", "", "Destination",
             ContentType.History, ContentSource.LocalRecommendation, 0, 0, WalkGeofenceDefaults.StandardArrivalRadiusMeters) { IsDestination = true };
         if (request.Suggest && end is not null)

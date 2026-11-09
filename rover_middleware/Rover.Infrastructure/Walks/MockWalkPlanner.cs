@@ -302,7 +302,7 @@ public sealed class MockWalkPlanner : IWalkPlanner
                     // Routes can snap a park pin to a distant entrance. Include the unmapped gap.
                     var gap = RouteMath.DistanceMeters(access.Coordinates[^1], stop.Location)
                         + RouteMath.DistanceMeters(anchor, access.Coordinates[0]);
-                    return access.Provider == direct.Provider && seconds + gap / 1.35 < 180;
+                    return access.Provider == direct.Provider && seconds + command.WalkingSecondsAtPace(gap / 1.35) < 180;
                 }));
                 for (var i = 0; i < batch.Length; i++)
                     command.RecordLabDecision?.Invoke(batch[i], accepted[i]
@@ -327,7 +327,9 @@ public sealed class MockWalkPlanner : IWalkPlanner
                 .OrderBy(stop => (int)(RouteMath.DistanceMeters(center, stop.Location) / 150))
                 .ThenByDescending(stop => recommended.Contains(stop.StopId))
                 .ThenBy(stop => RouteMath.DistanceMeters(center, stop.Location));
-            var next = WalkInterestPolicy.TakeBalanced(nearby, 1, command.Interests, WalkInterestPolicy.Group,
+            var rankedHere = nearby.ToArray();
+            var recommendedHere = rankedHere.Where(stop => recommended.Contains(stop.StopId)).ToArray();
+            var next = WalkInterestPolicy.TakeBalanced(recommendedHere.Length > 0 ? recommendedHere : rankedHere, 1, command.Interests, WalkInterestPolicy.Group,
                 chosen.Select(WalkInterestPolicy.Group)).FirstOrDefault();
             if (next is not null && RouteMath.DistanceMeters(center, next.Location) <= 500)
                 chosen.Add(next);

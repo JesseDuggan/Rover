@@ -75,6 +75,7 @@ public sealed class MapboxWalkRouteProvider : IWalkRouteProvider
                     Math.Max(1, (int)Math.Ceiling(step.GetProperty("duration").GetDouble() / 60))))
                 .ToArray();
 
+            var walkingSeconds = command.WalkingSecondsAtPace(route.GetProperty("duration").GetDouble());
             return new WalkRoute(
                 $"mapbox-{Guid.NewGuid():n}",
                 ProviderName,
@@ -83,8 +84,8 @@ public sealed class MapboxWalkRouteProvider : IWalkRouteProvider
                 coordinates,
                 bounds,
                 (int)Math.Round(route.GetProperty("distance").GetDouble()),
-                (int)Math.Ceiling(route.GetProperty("duration").GetDouble() / 60),
-                maneuvers);
+                (int)Math.Ceiling(walkingSeconds / 60),
+                maneuvers) { WalkingSeconds = walkingSeconds };
         }
         catch (OperationCanceledException) when (!cancellationToken.IsCancellationRequested)
         {

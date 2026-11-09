@@ -65,8 +65,11 @@ public sealed class GooglePlacesLocalDiscoveryProvider : ILocalDiscoveryProvider
         }
         if (command.LimitLabDetours && other.Length > 0)
         {
+            var queryText = other.Any(i => WalkInterestPolicy.Group(i) == "architecture")
+                ? $"Landmark buildings and distinctive local architecture, including historic and modern buildings, {string.Join(", ", other)}"
+                : $"Local landmarks, public places and attractions for {string.Join(", ", other)}";
             var landmarks = await _placesProvider.SearchAsync(new CandidateObservationQuery(
-                $"Distinctive local landmarks and places of interest for {string.Join(", ", other)}",
+                queryText,
                 command.StartingLocation, null, null, 650, null, []), cancellationToken);
             places = landmarks.Places.Concat(places);
         }

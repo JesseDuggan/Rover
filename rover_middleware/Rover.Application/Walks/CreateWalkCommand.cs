@@ -10,6 +10,12 @@ public sealed record CreateWalkCommand(
     IReadOnlyCollection<AccessibilityPreference> AccessibilityPreferences)
 {
     public Action<WalkStop, string>? RecordLabDecision { get; init; }
+    public double WalkingSecondsAtPace(double seconds) => LimitLabDetours ? WalkingPace switch
+    {
+        WalkingPace.Leisurely => seconds * 1.35,
+        WalkingPace.Brisk => seconds * (1.35 / 1.7),
+        _ => seconds
+    } : seconds;
     public bool LimitLabDetours { get; init; }
     public GeoLocation? StoryDestination { get; init; }
     public Guid? ProfileId { get; init; }

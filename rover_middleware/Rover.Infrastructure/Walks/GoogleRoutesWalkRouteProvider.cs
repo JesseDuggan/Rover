@@ -120,6 +120,7 @@ public sealed class GoogleRoutesWalkRouteProvider : IWalkRouteProvider
                     coordinates.Max(point => point.Latitude),
                     coordinates.Max(point => point.Longitude)));
 
+            var walkingSeconds = command.WalkingSecondsAtPace(ParseDurationSeconds(route.GetProperty("duration")));
             return new WalkRoute(
                 $"google-{Guid.NewGuid():n}",
                 ProviderName,
@@ -128,8 +129,8 @@ public sealed class GoogleRoutesWalkRouteProvider : IWalkRouteProvider
                 coordinates,
                 bounds,
                 route.GetProperty("distanceMeters").GetInt32(),
-                Math.Max(1, (int)Math.Ceiling(ParseDurationSeconds(route.GetProperty("duration")) / 60d)),
-                maneuvers) { WalkingSeconds = ParseDurationSeconds(route.GetProperty("duration")) };
+                Math.Max(1, (int)Math.Ceiling(walkingSeconds / 60d)),
+                maneuvers) { WalkingSeconds = walkingSeconds };
         }
         catch (OperationCanceledException) when (!cancellationToken.IsCancellationRequested)
         {

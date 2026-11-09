@@ -116,6 +116,13 @@ internal static class StoryLedPlanningTests
         var disabledHandler = new Handler();
         await new MockWalkPlanner(new Router(), new Discovery(), Selector(disabledHandler, false)).PlanWalkAsync(Command, default);
         Check(disabledHandler.Request is null, "Flag-off must not call OpenAI.");
+        var options = new JsonSerializerOptions(JsonSerializerDefaults.Web);
+        var legacy = JsonSerializer.Deserialize<Rover.Api.LabPlanRequest>("{}", options)!;
+        var easy = JsonSerializer.Deserialize<Rover.Api.LabPlanRequest>("""{"pace":"Leisurely"}""", options)!;
+        Check(legacy.Pace == WalkingPace.Standard && easy.Pace == WalkingPace.Leisurely,
+            "Old planners default to standard pace and the app's named pace must round-trip.");
+        Check((Command with { WalkingPace = easy.Pace, LimitLabDetours = true }).WalkingSecondsAtPace(100) == 135,
+            "A leisurely Lab route must reserve more walking time.");
         await InterestBalance();
         await DiscoveryBalance();
     }
