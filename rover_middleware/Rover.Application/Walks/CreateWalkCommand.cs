@@ -16,6 +16,7 @@ public sealed record CreateWalkCommand(
         WalkingPace.Brisk => seconds * (1.35 / 1.7),
         _ => seconds
     } : seconds;
+    public string? AdditionalPlaceQuery { get; init; }
     public bool SearchProminentPlaces { get; init; }
     public bool LimitLabDetours { get; init; }
     public GeoLocation? StoryDestination { get; init; }

@@ -47,6 +47,19 @@ public sealed class GooglePlacesLocalDiscoveryProvider : ILocalDiscoveryProvider
             return new(Array.Empty<WalkStop>(), "Google Places local discovery is disabled.");
         }
 
+        if (command.AdditionalPlaceQuery is { } text)
+        {
+            var found = await _placesProvider.SearchAsync(new CandidateObservationQuery(
+                text, command.StartingLocation, null, null, 850, null, []), cancellationToken);
+            var additionalStops = found.Places.Where(place => place.SourceReferences.Count > 0)
+                .Select((place, index) => ToStop(place, index + 1, 0))
+                .Where(stop => WalkInterestPolicy.Allows(stop, command.Interests))
+                .Where(stop => !WalkInterestPolicy.IsCommercialListing(stop.Category)
+                    || command.Interests.Any(i => WalkInterestPolicy.Group(i) == "shopping"))
+                .Take(maximumStops).ToArray();
+            return new(additionalStops, string.Join(" ", found.Warnings));
+        }
+
         var query = new LocationContextQuery(command.StartingLocation,
             Math.Clamp(_options.MaximumDistanceMeters, 100, 50000), null, null, [], command.Interests);
         var food = command.Interests.Where(WalkInterestPolicy.IsFood).ToArray();

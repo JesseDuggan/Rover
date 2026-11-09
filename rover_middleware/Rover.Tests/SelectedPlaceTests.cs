@@ -116,11 +116,16 @@ internal static class SelectedPlaceTests
             "Include useful discoveries near both halves of the destination corridor.");
         Check(discovery.Commands.All(command => command.Interests.SequenceEqual(Command().Interests) &&
             command.AccessibilityPreferences.SequenceEqual(Command().AccessibilityPreferences)), "Preserve interests and accessibility.");
-        var limited = await new MockWalkPlanner(new TimedAccessRoutes(), new Discovery(),
+        var repeatDiscovery = new Discovery();
+        var limited = await new MockWalkPlanner(new TimedAccessRoutes(), repeatDiscovery,
             placeSearch: new WalkPlaceSearchService([new Search()])).PlanWalkAsync(
                 Command() with { LimitLabDetours = true }, default);
         Check(limited.Stops.Any(stop => stop.StopId == "museum") && limited.Stops.All(stop => stop.StopId != "monument"),
             "Lab must retain a 179-second approach and exclude a 180-second approach even during refill.");
+        Check(repeatDiscovery.Commands.Where(c => c.AdditionalPlaceQuery != null)
+            .Select(c => c.AdditionalPlaceQuery).Distinct().Count() == 3, "Search three scales of attraction for a short Lab route.");
+        Check(limited.Stops.Any(s => s.StopId == "plaque") && limited.Stops.All(s => s.StopId != "long-access"),
+            "Add a newly discovered place only when its walking access is under three minutes.");
         var shortWalk = await planner.PlanWalkAsync(Command(minutes: 15), default);
         Check(shortWalk.Stops.Any(stop => stop.ProviderPlaceId == "target"), "Never trim an explicit endpoint.");
         Check(shortWalk.EstimatedDurationMinutes >= shortWalk.Route.DurationMinutes, "Report real duration, not a capped estimate.");
@@ -264,6 +269,9 @@ internal static class SelectedPlaceTests
         public Task<IReadOnlyList<WalkStop>> FindCandidateStopsAsync(CreateWalkCommand command, CancellationToken ct, int maximumStops = 30)
         {
             Commands.Add(command);
+            if (command.AdditionalPlaceQuery != null)
+                return Task.FromResult<IReadOnlyList<WalkStop>>([Stop("plaque", new(52.011, 4.0165)),
+                    Stop("long-access", new(52.018, 4.027))]);
             return Task.FromResult<IReadOnlyList<WalkStop>>(new[] { Stop("museum", new(52.005, 4.0075)),
                 Stop("monument", new(52.015, 4.0225)), Stop("far", new(52.2, 4.3)),
                 new WalkStop("cafe", 1, "McCafe", new(52.01, 4.015), "Coffee", "Coffee", "Cafe",
@@ -291,7 +299,7 @@ internal static class SelectedPlaceTests
             var route = await new MockWalkRouteProvider().CreateRouteAsync(command, stops, ct);
             return new WalkRoute(route.RouteId, route.Provider, route.Version, route.GeneratedAtUtc,
                 route.Coordinates, route.Bounds, route.DistanceMeters, route.DurationMinutes, route.Maneuvers)
-                { WalkingSeconds = stops.Count == 1 && stops[0].StopId == "museum" ? 179 : 180 };
+                { WalkingSeconds = stops.Count == 1 && (stops[0].StopId is "museum" or "plaque") ? 179 : 180 };
         }
     }
     private sealed class DetourRoutes(int addedMinutes) : IWalkRouteProvider
