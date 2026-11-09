@@ -46,7 +46,7 @@ class StoryPicture {
         ? _europeanaThumbnail(value('url')) &&
               _europeanaSource(value('sourceUrl')) &&
               json['isArchive'] == true
-        : safe('url', 'upload.wikimedia.org') &&
+        : (safe('url', 'upload.wikimedia.org') || safe('url', 'thumb.wikimedia.org')) &&
               safe('sourceUrl', 'commons.wikimedia.org');
     if (!trustedImage ||
         !safe('licenseUrl', 'creativecommons.org') ||

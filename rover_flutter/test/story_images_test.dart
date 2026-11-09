@@ -15,6 +15,7 @@ void main() {
   };
   test('Only trusted picture and credit URLs are accepted', () {
     expect(StoryPicture.parse(picture), isNotNull);
+    expect(StoryPicture.parse({...picture, 'url': 'https://thumb.wikimedia.org/view.jpg'}), isNotNull);
     expect(
       StoryPicture.parse({...picture, 'url': 'http://localhost/private'}),
       isNull,
