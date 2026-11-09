@@ -18,6 +18,7 @@ typedef Json = Map<String, dynamic>;
 class FakeJourneyApi extends RoverApiClient {
   final requests = <List<Json>>[];
   final suggested = <bool>[];
+  final paces = <String>[];
   static const stop = <String, dynamic>{
     'name': 'Town Museum',
     'category': 'museum',
@@ -119,9 +120,11 @@ class FakeJourneyApi extends RoverApiClient {
     required bool suggest,
     required int minutes,
     required List<String> interests,
+    String pace = 'Standard',
   }) async {
     requests.add([...stops]);
     suggested.add(suggest);
+    paces.add(pace);
     return {
       'stops': [stop],
       if (suggest)
@@ -362,6 +365,7 @@ void main() {
       expect(api.researchCalls, 0);
       await press('Build walking route');
       expect(api.suggested, [true, false]);
+      expect(api.paces, ['Leisurely', 'Leisurely']);
       expect(api.requests.last, [FakeJourneyApi.stop]);
       expect(find.text('Generate journey stories'), findsOneWidget);
       expect(

@@ -46,11 +46,13 @@ class RoverApiClient {
     required bool suggest,
     required int minutes,
     required List<String> interests,
+    String pace = 'Standard',
   }) => _sendJson('POST', '/api/journey-lab/plan', body: {
     'start': start,
     'end': end,
     'stops': stops,
     'suggest': suggest,
+    'pace': pace,
     'minutes': minutes,
     'interests': interests,
   }, responseTimeout: const Duration(seconds: 105));

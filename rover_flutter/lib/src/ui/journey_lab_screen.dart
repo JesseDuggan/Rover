@@ -263,6 +263,11 @@ class _JourneyLabState extends State<JourneyLabScreen> {
         stops: suggest ? [] : stops,
         suggest: suggest,
         minutes: minutes,
+        pace: switch (PreferencesScope.of(context).preferences.walkingPace.toLowerCase()) {
+          '' || 'easy' || 'leisurely' || 'relaxed' => 'Leisurely',
+          'brisk' => 'Brisk',
+          _ => 'Standard',
+        },
         interests: interests,
       );
       if (!mounted) return;
@@ -407,6 +412,12 @@ class _JourneyLabState extends State<JourneyLabScreen> {
         longitude: point.longitude,
       ),
     );
+  }
+
+  String profileQuestion(String question, List<String> interests) {
+    final prefix = interests.isEmpty ? '' : 'Walker interests: ${interests.join(', ')}. ';
+    final words = '${prefix.length > 125 ? prefix.substring(0, 125) : prefix} $question'.trim();
+    return words.length <= 500 ? words : words.substring(0, 500);
   }
 
   String journeyQuestion(List<String> selectedInterests) {
@@ -700,8 +711,8 @@ class _JourneyLabState extends State<JourneyLabScreen> {
                   format: 'Single',
                   storyCount: 1,
                   availableNarrationSeconds: 45,
-                  question:
-                      'Find one sourced story along this stretch of the walk.$landmark Identify what is actually here. Look for an interesting local feature, how the landscape formed, who used this place or how it changed. Tie the detail to its exact site. Include a current activity only with dated local evidence.',
+                  question: profileQuestion(
+                      'Find one sourced story along this stretch of the walk.$landmark Identify what is actually here. Look for an interesting local feature, how the landscape formed, who used this place or how it changed. Tie the detail to its exact site. Include a current activity only with dated local evidence.', selectedInterests),
                 ),
               );
               if (!mounted) return;
@@ -1088,7 +1099,7 @@ class _JourneyLabState extends State<JourneyLabScreen> {
         format: 'Single',
         storyCount: 1,
         availableNarrationSeconds: 60,
-        question: prompt.length <= 500 ? prompt : prompt.substring(0, 500),
+        question: profileQuestion(prompt, selectedInterests),
       ),
     );
     if (!mounted) return;
