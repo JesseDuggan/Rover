@@ -16,6 +16,10 @@ import 'package:rover/src/ui/journey_lab_screen.dart';
 typedef Json = Map<String, dynamic>;
 
 class FakeJourneyApi extends RoverApiClient {
+  @override
+  Future<Json> getStoryImages(List<String> sourceUrls, {double? latitude, double? longitude}) async =>
+      {'status': 'empty', 'images': <Json>[]};
+
   final requests = <List<Json>>[];
   final suggested = <bool>[];
   final paces = <String>[];

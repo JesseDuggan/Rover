@@ -3,6 +3,11 @@ import 'package:latlong2/latlong.dart';
 import 'package:rover/src/ui/journey_coverage.dart';
 
 void main() {
+  test('unremarkable listing triggers more research, a concise sourced episode can stand alone', () {
+    expect(needsDeeperResearch('A popular destination with something for everyone.'), isTrue);
+    expect(needsDeeperResearch('The restored house once housed the town loom.'), isFalse);
+  });
+
   test('first arrival and quiet time use walking distance covered by pass-by audio', () {
     final report = quietWalking(600, 10, [
       (at: 100.0, walkingSpeech: List.filled(150, 'word').join(' ')),

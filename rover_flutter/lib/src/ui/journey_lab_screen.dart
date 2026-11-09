@@ -32,6 +32,7 @@ import '../api/rover_api_client.dart';
 import '../drives/drive_narration.dart';
 import '../drives/scenic_drive.dart';
 import '../just_walking/area_story_details.dart';
+import '../just_walking/story_images.dart';
 import '../just_walking/area_walking_controller.dart';
 import '../location/rover_location.dart';
 import '../preferences/preferences_controller.dart';
@@ -96,6 +97,9 @@ class _JourneyLabState extends State<JourneyLabScreen> {
   int playbackId = 0;
   String? playingTitle;
   String playingText = '';
+  List<String> playingSources = const [];
+  RoverLatLng? playingLocation;
+  List<StoryPicture>? playingPictures;
   LatLng? simulatedPosition;
   int? replacing;
   bool get busy => working != null;
@@ -453,10 +457,14 @@ class _JourneyLabState extends State<JourneyLabScreen> {
         if (!active()) return;
         await speech.configure(rate: 0.5);
         if (!active()) return;
-        Future<void> narrate(String title, String words) async {
+        Future<void> narrate(String title, String words, [List<String> sources = const [], dynamic pictures]) async {
           setState(() {
             playingTitle = title;
             playingText = spokenLocationText(words);
+            playingSources = sources;
+            playingPictures = parsePictures(pictures);
+            final point = onlyStop == null ? simulatedPosition : _point(onlyStop);
+            playingLocation = point == null ? null : RoverLatLng(latitude: point.latitude, longitude: point.longitude);
           });
           await speech.speak(words);
         }
@@ -472,7 +480,7 @@ class _JourneyLabState extends State<JourneyLabScreen> {
         }
         if (onlyStop != null) {
           final words = verified(onlyStop)?.shortSpokenNarration;
-          if (words != null) await narrate(onlyStop['name'], words);
+          if (words != null) await narrate(onlyStop['name'], words, pictureSources(onlyStop), stories[onlyStop['id']]?['pictures']);
           if (active())
             setState(
               () => status = words == null
@@ -484,7 +492,7 @@ class _JourneyLabState extends State<JourneyLabScreen> {
         {
           final path = JourneyCoverage(geometry);
           final events =
-              <({double at, String title, String words, bool passing})>[
+              <({double at, String title, String words, bool passing, List<String> sources, dynamic pictures})>[
                 for (final stop in stops)
                   if (verified(stop)?.shortSpokenNarration
                       case final String words)
@@ -492,6 +500,8 @@ class _JourneyLabState extends State<JourneyLabScreen> {
                       at: path.project(_point(stop)).along,
                       title: stop['name'] as String,
                       words: words,
+                      pictures: stories[stop['id']]?['pictures'],
+                      sources: pictureSources(stop),
                       passing: false,
                     ),
                 for (final place
@@ -503,6 +513,8 @@ class _JourneyLabState extends State<JourneyLabScreen> {
                       at: (place['metres'] as num).toDouble(),
                       title: 'Passing · ${place['name']}',
                       words: shortPassage(words),
+                      pictures: stories[place['id']]?['pictures'],
+                      sources: pictureSources(place),
                       passing: true,
                     ),
                 for (final cue
@@ -514,6 +526,8 @@ class _JourneyLabState extends State<JourneyLabScreen> {
                       at: (cue['metres'] as num).toDouble(),
                       title: 'Between stops · ${cue['title']}',
                       words: cue['words'] as String,
+                      pictures: cue['pictures'],
+                      sources: (cue['sources'] as List? ?? []).whereType<Map>().map((s) => s['url']).whereType<String>().toList(),
                       passing: true,
                     ),
               ]..sort((a, b) => a.at.compareTo(b.at));
@@ -545,7 +559,7 @@ class _JourneyLabState extends State<JourneyLabScreen> {
             });
             await advance(event.at);
             if (!active()) return;
-            final voice = narrate(event.title, event.words);
+            final voice = narrate(event.title, event.words, event.sources, event.pictures);
             if (event.passing) {
               final nextAt = index + 1 < events.length
                   ? events[index + 1].at
@@ -641,12 +655,17 @@ class _JourneyLabState extends State<JourneyLabScreen> {
         issues.add('Area research failed. $e');
       }
     }
-    final pending = stops.where((stop) => verified(stop) == null).toList();
+    final pending = stops.where((stop) {
+      final saved = verified(stop);
+      return saved == null || (stories[stop['id']]?['depthChecked'] != true &&
+          needsDeeperResearch(saved.shortSpokenNarration));
+    }).toList();
     Future<String?> prepare(_Json stop) async {
       final name = subject(stop).name;
       try {
         await researchStop(stop, selectedInterests);
         if (mounted && verified(stop) == null) return 'No verified story for $name.';
+        if (mounted) stories[stop['id']]['depthChecked'] = true;
       } catch (e) {
         if (researchInterrupted(e)) rethrow;
         return '$name: $e';
@@ -675,12 +694,13 @@ class _JourneyLabState extends State<JourneyLabScreen> {
       var eventQueries = 0;
       LatLng? searchedAt;
       var failed = false;
-      for (final gap in path.gaps([
+      final gaps = path.gaps([
         for (final stop in stops)
           if (verified(stop) != null) path.project(_point(stop)).along,
         for (final place in (plan?['coverage']?['passing'] as List? ?? []))
           (place['metres'] as num).toDouble(),
-      ])) {
+      ])..sort((a, b) => (b.end - b.start).compareTo(a.end - a.start));
+      for (final gap in gaps) {
         if (gap.end - gap.start < 100) continue;
         final metres = (gap.start + gap.end) / 2;
         final point = path.at(metres);
@@ -712,7 +732,7 @@ class _JourneyLabState extends State<JourneyLabScreen> {
                   storyCount: 1,
                   availableNarrationSeconds: 45,
                   question: profileQuestion(
-                      'Find one sourced story along this stretch of the walk.$landmark Identify what is actually here. Look for an interesting local feature, how the landscape formed, who used this place or how it changed. Tie the detail to its exact site. Include a current activity only with dated local evidence.', selectedInterests),
+                      'Research this block or landscape in local-language archives. What used to be here, who used it, or what shaped it? Find one sourced detail tied to this exact stretch and look for a cited illustrated record of its subject. Attribute recollections. Skip unrelated landmarks. $landmark', selectedInterests),
                 ),
               );
               if (!mounted) return;
@@ -763,7 +783,7 @@ class _JourneyLabState extends State<JourneyLabScreen> {
           }
         }
         if (!mounted) return;
-        final story = nearby
+        final candidates = nearby
             .where(
               (s) =>
                   s.canAutoplay &&
@@ -782,7 +802,10 @@ class _JourneyLabState extends State<JourneyLabScreen> {
                       ) <=
                       1000,
             )
-            .firstOrNull;
+            .toList();
+        final story = candidates.where((candidate) => !needsDeeperResearch(
+          candidate.variants.firstWhere((v) => v.narration.trim().isNotEmpty).narration,
+        )).firstOrNull ?? candidates.firstOrNull;
         if (story == null) continue;
         covered.add(story.title);
         cues.add({
@@ -799,6 +822,25 @@ class _JourneyLabState extends State<JourneyLabScreen> {
       if (failed)
         issues.add('Some neighbourhood stories could not be prepared.');
       if (cues.isNotEmpty || !failed) plan = {...plan!, 'between': cues};
+    }
+    if (mounted && plan != null) {
+      setState(() => working = 'Finding story pictures');
+      final jobs = <Future<void> Function()>[];
+      for (final place in [...stops, ..._rows(plan?['coverage'] ?? {'passing': []}, 'passing')]) {
+        final record = stories[place['id']];
+        if (record is _Json && verified(place) != null) {
+          jobs.add(() => preparePictures(record, pictureSources(place), _point(place)));
+        }
+      }
+      final path = JourneyCoverage(geometry);
+      for (final cue in (plan?['between'] as List? ?? []).whereType<_Json>()) {
+        final urls = (cue['sources'] as List? ?? []).whereType<Map>()
+            .map((s) => s['url']).whereType<String>().toList();
+        jobs.add(() => preparePictures(cue, urls, path.at((cue['metres'] as num).toDouble())));
+      }
+      for (var i = 0; mounted && i < jobs.length; i += 3) {
+        await Future.wait(jobs.skip(i).take(3).map((job) => job()));
+      }
     }
     if (mounted) {
       setState(
@@ -1071,7 +1113,7 @@ class _JourneyLabState extends State<JourneyLabScreen> {
         },
       );
     }
-    final result = await api.createDriveStopStory(
+    final result = verified(stop) ?? await api.createDriveStopStory(
       id: place.id,
       interests: selectedInterests,
       journeyStart: _coordinates(start!),
@@ -1088,10 +1130,10 @@ class _JourneyLabState extends State<JourneyLabScreen> {
     ).hasMatch(place.name);
     if (usable && verified(stop) == null)
       setState(() => stories[place.id] = result.toJson());
-    if (usable && !organisation) return;
+    if (usable && !organisation && !needsDeeperResearch(result.shortSpokenNarration)) return;
     final prompt = organisation
         ? "Research the ${place.name} itself. Find a named work, artist or historic first in its official archives or programmes. Tell us what happened, when, and at which named venue. Identify its regular performance venue and distinguish that venue from its office and any historic venue. Mention the organisation by name. Cite the primary source and omit anything unverified."
-        : "Research ${place.name} at its mapped location (listed type: ${stop['category'] ?? 'unknown'}). Verify what it is. Choose a detail that fits: landforms, ecology or local traditions for natural sites; exhibits for museums; named performances for theatres; people or changing uses for other places. Check dated sources for current activity. Cite evidence specific to this place.";
+        : "Look up ${place.name} at this site under former or local names. Follow one person, visible feature, natural process or event into a local archive or primary source. What happened here that a passerby would miss? Name the place and tell the sourced detail. Seek a cited illustrated collection record or Wikimedia article about the subject. Omit unverified details.";
     final response = await api.researchStoryQuestion(
       StoryQuestionRequest(
         location: place.location,
@@ -1106,6 +1148,7 @@ class _JourneyLabState extends State<JourneyLabScreen> {
     for (final answer in response.answers) {
       final story = answer.story, variant = answer.variant;
       final expiry = story.expiresUtc;
+      if (usable && !organisation && needsDeeperResearch(variant.narration)) continue;
       if (!story.canAutoplay ||
           expiry == null ||
           !expiry.isAfter(DateTime.now()) ||
@@ -1369,6 +1412,27 @@ class _JourneyLabState extends State<JourneyLabScreen> {
         ),
   ];
 
+  List<StoryPicture>? parsePictures(dynamic raw) => raw is List
+      ? raw.whereType<_Json>().map(StoryPicture.parse).whereType<StoryPicture>().take(3).toList()
+      : null;
+
+  Future<void> preparePictures(_Json record, List<String> urls, LatLng point) async {
+    if (record['pictures'] is List) return;
+    try {
+      final result = await api.getStoryImages(
+        urls.where(supportedPictureSource).toSet().take(6).toList(),
+        latitude: point.latitude, longitude: point.longitude,
+      );
+      if (!mounted || result['status'] == 'unavailable') return;
+      record['pictures'] = (result['images'] as List? ?? []).whereType<_Json>()
+          .where((row) => StoryPicture.parse(row) != null).take(3).toList();
+    } on Exception {
+      // A missing illustration must never prevent the chapter from playing.
+    }
+  }
+
+  List<String> pictureSources(_Json stop) => verified(stop)?.sourceReferences.map((s) => s.sourceUrl).whereType<String>().toList() ?? const [];
+
   void showStop(_Json stop) {
     final story = verified(stop);
     showModalBottomSheet<void>(
@@ -1387,6 +1451,12 @@ class _JourneyLabState extends State<JourneyLabScreen> {
               SelectableText(story.shortSpokenNarration),
               if (story.tellMeMore case final more?) SelectableText(more),
               const Divider(),
+              if (parsePictures(stories[stop['id']]?['pictures']) case final pictures? when pictures.isNotEmpty)
+                PictureCarousel(pictures: pictures)
+              else StoryImages(
+                sourceUrls: story.sourceReferences.map((s) => s.sourceUrl).whereType<String>().toList(),
+                nearbyLocation: subject(stop).location,
+              ),
               const Text('Sources'),
               for (final source in story.sourceReferences)
                 ListTile(
@@ -1437,7 +1507,17 @@ class _JourneyLabState extends State<JourneyLabScreen> {
                 title: Text(playingTitle!),
                 subtitle: ConstrainedBox(
                   constraints: const BoxConstraints(maxHeight: 135),
-                  child: SingleChildScrollView(child: Text(playingText)),
+                  child: SingleChildScrollView(child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Text(playingText),
+                      if (playingText.isNotEmpty && playingPictures?.isNotEmpty == true)
+                        PictureCarousel(pictures: playingPictures!, compact: true)
+                      else if (playingText.isNotEmpty && playingPictures == null && playingSources.isNotEmpty)
+                        StoryImages(sourceUrls: playingSources, compact: true,
+                          nearbyLocation: playingLocation),
+                    ],
+                  )),
                 ),
                 trailing: IconButton(
                   tooltip: 'Stop preview',

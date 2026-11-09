@@ -139,3 +139,15 @@ typedef QuietStretch = ({double start, double end});
     secondsPerMetre: secondsPerMetre,
   );
 }
+
+// Narration returned by the Lab API is English. A date alone can be a listing detail.
+bool needsDeeperResearch(String words) {
+  final specific = RegExp(
+    r'\b(formerly|once housed|originally|renamed|rebuilt|remembered|recalled|rescued|carved|designed by|built by|named after|transformed|discovered|excavated|eroded|deposited|performed|premiered|inscribed|commemorates)\b',
+    caseSensitive: false,
+  ).hasMatch(words);
+  if (specific) return false;
+  return words.trim().split(RegExp(r'\s+')).length < 55 ||
+      RegExp(r'\b(rich history|hidden gem|must.see|popular destination|nestled|vibrant atmosphere|something for everyone|visitors can enjoy|unique blend)\b',
+        caseSensitive: false).hasMatch(words);
+}
