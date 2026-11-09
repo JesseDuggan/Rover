@@ -146,12 +146,12 @@ class AdaptiveRouteStoryController extends ChangeNotifier {
       _freshStories.where((story) => !_isExcluded(story)).length;
 
   String listeningStatus(RoamSession session) {
+    if (session.storyTimeExpired(_nowUtc())) return 'Walk time is up';
     if (pack != null &&
         _freshStories.isEmpty &&
         !_usingOfflinePack &&
         !_timeoutRetryUsed &&
-        session.status == RoamSessionStatus.active &&
-        !session.isOffRoute) {
+        session.status == RoamSessionStatus.active) {
       return isRefreshing
           ? 'Still researching stories...'
           : 'No verified stories yet. An automatic retry will follow shortly.';
@@ -193,7 +193,7 @@ class AdaptiveRouteStoryController extends ChangeNotifier {
             ),
           )
           ? '${unheard.length} unplayed stories available'
-          : 'No unplayed stories nearby; saved stories remain available';
+          : 'Unplayed stories from your planned walk are available';
     }
     final progress = _routeProgressMeters(session);
     if (unheard.every((story) => story.playbackWindowStart > progress)) {
@@ -332,6 +332,7 @@ class AdaptiveRouteStoryController extends ChangeNotifier {
     _latestSession = session;
     _walkingGap.observe(session, _nowUtc());
     if (_disposed ||
+        session.storyTimeExpired(_nowUtc()) ||
         !enabled ||
         session.apiWalkSessionId == null ||
         session.roam.stops.isEmpty ||
@@ -388,15 +389,16 @@ class AdaptiveRouteStoryController extends ChangeNotifier {
                 const Duration(seconds: 5));
     final interruptedStory = _currentSelection;
     if (interruptedStory != null &&
-        voiceController.hasInterruptedAdaptiveStory(interruptedStory.story.storyId)) {
+        voiceController.hasInterruptedAdaptiveStory(
+          interruptedStory.story.storyId,
+        )) {
       if (!voiceController.hasAutomaticallyResumableAdaptiveStory(
         interruptedStory.story.storyId,
       )) {
         return; // The walker explicitly paused this story.
       }
       final story = interruptedStory.story;
-      final stillRelevant = !session.isOffRoute ||
-          session.isNearStoryAnchor(story.relevanceLatitude, story.relevanceLongitude);
+      final stillRelevant = !session.isOffRoute || session.hasReliableStoryFix;
       if (!_isExcluded(story) &&
           (pack?.expiresUtc.isAfter(now) ?? false) &&
           (story.expiresUtc?.isAfter(now) ?? true) &&
@@ -620,7 +622,9 @@ class AdaptiveRouteStoryController extends ChangeNotifier {
             story.relevanceLongitude,
           )
           ? 'Nearby while exploring'
-          : 'Waiting until nearby with reliable GPS';
+          : session.hasReliableStoryFix
+          ? 'Story from your planned walk'
+          : 'Waiting for reliable GPS';
     }
     final progress = _routeProgressMeters(session);
     if (progress < story.playbackWindowStart) return 'Ahead on route';
@@ -688,6 +692,17 @@ class AdaptiveRouteStoryController extends ChangeNotifier {
     bool userRequested = true,
   }) async {
     final selection = _currentSelection;
+    if (!userRequested) {
+      final latest = _latestSession;
+      if (latest == null ||
+          latest.apiWalkSessionId != session.apiWalkSessionId ||
+          latest.routeRevision != session.routeRevision ||
+          latest.status != RoamSessionStatus.active ||
+          latest.storyTimeExpired(_nowUtc())) {
+        return;
+      }
+      session = latest;
+    }
     final walkSessionId = session.apiWalkSessionId;
     if (selection == null || walkSessionId == null || _playbackInFlight) {
       return;
@@ -909,7 +924,7 @@ class AdaptiveRouteStoryController extends ChangeNotifier {
     if (_manualSelection && _currentSelection != null) return;
     _rememberDeferredStories(progressMeters);
     if (session.isOffRoute) {
-      _lastSelectionProgressMeters = null;
+      _lastSelectionProgressMeters = progressMeters;
       _lastSelectionCheckUtc = _nowUtc();
       await _playNearbyStory(session, voiceController);
       return;
@@ -1077,16 +1092,23 @@ class AdaptiveRouteStoryController extends ChangeNotifier {
     final currentPack = pack;
     final now = _nowUtc();
     if (currentPack == null || !currentPack.expiresUtc.isAfter(now)) return;
-    for (final story in currentPack.stories) {
+    if (!session.hasReliableStoryFix) return;
+    bool nearby(AdaptiveRouteStory s) =>
+        session.isNearStoryAnchor(s.relevanceLatitude, s.relevanceLongitude);
+    final ordered = currentPack.stories.toList()
+      ..sort((a, b) {
+        final proximity = (nearby(a) ? 0 : 1).compareTo(nearby(b) ? 0 : 1);
+        return proximity != 0
+            ? proximity
+            : a.opensAtRouteMeters.compareTo(b.opensAtRouteMeters);
+      });
+    for (final story in ordered) {
       if (_isExcluded(story) ||
           !_availableForOfflinePlayback(story) ||
           story.sources.isEmpty ||
           story.claims.isEmpty ||
-          !(story.expiresUtc?.isAfter(now) ?? true) ||
-          !session.isNearStoryAnchor(
-            story.relevanceLatitude,
-            story.relevanceLongitude,
-          )) {
+          !story.canAutoplay ||
+          !(story.expiresUtc?.isAfter(now) ?? true)) {
         continue;
       }
       final variants =
@@ -1102,7 +1124,10 @@ class AdaptiveRouteStoryController extends ChangeNotifier {
         final selection = AdaptiveRouteStorySelection(
           story: story,
           variant: variant,
-          reason: 'Verified story near your current location.',
+          fromPlannedWalk: !nearby(story),
+          reason: nearby(story)
+              ? 'Verified story nearby.'
+              : 'Story from your planned walk.',
         );
         if (!voice.canPlayAdaptiveRouteStory(
           selection,
@@ -1119,7 +1144,7 @@ class AdaptiveRouteStoryController extends ChangeNotifier {
     }
     FieldDiagnostics.instance.record(
       'route-story',
-      'Off-route: no fresh unplayed story within 225 m with reliable GPS',
+      'Off-route: no playable unheard story available',
     );
   }
 
@@ -1143,9 +1168,10 @@ class AdaptiveRouteStoryController extends ChangeNotifier {
   void _maybeReplenish(RoamSession session, double progress) {
     if (_replenishing ||
         _usingOfflinePack ||
-        _replenishAttempts >= 6 ||
+        (_replenishAttempts >= 6 &&
+            (!session.isOffRoute || session.storyDeadlineUtc == null)) ||
         session.status != RoamSessionStatus.active ||
-        session.isOffRoute ||
+        session.storyTimeExpired(_nowUtc()) ||
         pack == null ||
         _packState?.status == 'Generating') {
       return;
@@ -1170,9 +1196,11 @@ class AdaptiveRouteStoryController extends ChangeNotifier {
               .where(
                 (story) =>
                     !_isExcluded(story) &&
+                    story.canAutoplay &&
                     (story.expiresUtc?.isAfter(now) ?? true) &&
-                    story.playbackWindowEnd >= progress &&
-                    story.playbackWindowStart <= progress + 800,
+                    (session.isOffRoute ||
+                        (story.playbackWindowEnd >= progress &&
+                            story.playbackWindowStart <= progress + 800)),
               )
               .fold<int>(
                 0,

@@ -551,8 +551,10 @@ class AdaptiveRouteStorySelection {
     required this.story,
     required this.variant,
     required this.reason,
+    this.fromPlannedWalk = false,
   });
 
+  final bool fromPlannedWalk;
   final AdaptiveRouteStory story;
   final RouteStoryNarrationVariant variant;
   final String reason;

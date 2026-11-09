@@ -128,8 +128,12 @@ class RoverVoiceController extends ChangeNotifier {
     }
     return session == null ||
         (session.status == RoamSessionStatus.active &&
-            canPlayAdaptiveRouteStory(answer, session,
-                userRequested: true, interruptNavigation: false));
+            canPlayAdaptiveRouteStory(
+              answer,
+              session,
+              userRequested: true,
+              interruptNavigation: false,
+            ));
   }
 
   Future<bool> playQuestionAnswer(
@@ -175,10 +179,15 @@ class RoverVoiceController extends ChangeNotifier {
     final generation = _playbackGeneration + 1;
     _questionPlaybackGeneration = generation;
     try {
-      return await _speakAnswer(text, priority: _userRequestedPriority,
-          purpose: 'TellMeAboutHere', audioCacheEligible: false);
+      return await _speakAnswer(
+        text,
+        priority: _userRequestedPriority,
+        purpose: 'TellMeAboutHere',
+        audioCacheEligible: false,
+      );
     } finally {
-      if (_questionPlaybackGeneration == generation) _questionPlaybackGeneration = null;
+      if (_questionPlaybackGeneration == generation)
+        _questionPlaybackGeneration = null;
     }
   }
 
@@ -271,6 +280,10 @@ class RoverVoiceController extends ChangeNotifier {
     }
     if (session.status != RoamSessionStatus.active) return;
 
+    if (session.storyTimeExpired(DateTime.now().toUtc()) &&
+        _activeAdaptiveStory?.userRequested == false) {
+      await _interruptAdaptiveStory('walk time expired');
+    }
     // An explicit Play owns narration until it finishes or the user stops it.
     // Safety announcements retain their higher priority.
     if (_activeAdaptiveStory != null &&
@@ -1084,9 +1097,7 @@ class RoverVoiceController extends ChangeNotifier {
     )) {
       return AdaptiveStoryPlaybackResult.blocked;
     }
-    final priority = userRequested
-        ? _manualStoryPriority
-        : _contextualPriority;
+    final priority = userRequested ? _manualStoryPriority : _contextualPriority;
     if (!_canStartPriority(priority) || _activeAdaptiveStory != null) {
       return AdaptiveStoryPlaybackResult.blocked;
     }
@@ -1102,13 +1113,18 @@ class RoverVoiceController extends ChangeNotifier {
             walkSessionId: session.apiWalkSessionId ?? '',
             routeRevision: session.routeRevision,
             userRequested: userRequested,
-            segments: _storySegments(
-              selection.story.spokenNarration(selection.variant),
-            ),
+            segments: [
+              if (!userRequested && selection.fromPlannedWalk)
+                'On your planned walk, ${selection.story.title}.',
+              ..._storySegments(
+                selection.story.spokenNarration(selection.variant),
+              ),
+            ],
           );
     _interruptedAdaptiveStory = null;
     playback.userPaused = false;
     if (playback.segments.isEmpty) return AdaptiveStoryPlaybackResult.blocked;
+    final cacheSuffix = playback.selection.fromPlannedWalk ? "-planned" : "";
     final cancelled = playback.startAttempt();
     _activeAdaptiveStory = playback;
     _errorMessage = null;
@@ -1145,7 +1161,7 @@ class RoverVoiceController extends ChangeNotifier {
               cacheExpiresUtc: selection.story.expiresUtc,
               storyId: selection.story.storyId,
               variantId:
-                  '${selection.story.storyId}:${selection.variant.length.toLowerCase()}:$nextIndex',
+                  '${selection.story.storyId}:${selection.variant.length.toLowerCase()}:$nextIndex$cacheSuffix',
             ),
           );
         }
@@ -1158,7 +1174,7 @@ class RoverVoiceController extends ChangeNotifier {
             cacheExpiresUtc: selection.story.expiresUtc,
             storyId: selection.story.storyId,
             variantId:
-                '${selection.story.storyId}:${selection.variant.length.toLowerCase()}:${playback.segmentIndex}',
+                '${selection.story.storyId}:${selection.variant.length.toLowerCase()}:${playback.segmentIndex}$cacheSuffix',
           ),
           cancelled,
         ]);
@@ -1218,6 +1234,8 @@ class RoverVoiceController extends ChangeNotifier {
         interrupted.selection.variant.length == selection.variant.length &&
         interrupted.walkSessionId == session.apiWalkSessionId &&
         interrupted.routeRevision == session.routeRevision;
+    if (!userRequested && session.storyTimeExpired(DateTime.now().toUtc()))
+      return false;
     if (!userRequested && _questionInteractionActive) return false;
     if (!userRequested && storiesAreQuiet) return false;
     if (!userRequested && resuming && interrupted.userPaused) return false;
@@ -1251,10 +1269,13 @@ class RoverVoiceController extends ChangeNotifier {
     return userRequested ||
         !session.isOffRoute ||
         (_adaptiveRouteStoriesEnabled &&
-            session.isNearStoryAnchor(
-              selection.story.relevanceLatitude,
-              selection.story.relevanceLongitude,
-            ));
+            session.hasReliableStoryFix &&
+            (resuming ||
+                selection.fromPlannedWalk ||
+                session.isNearStoryAnchor(
+                  selection.story.relevanceLatitude,
+                  selection.story.relevanceLongitude,
+                )));
   }
 
   static int storyStartSeconds(

@@ -38,6 +38,7 @@ class RoamSession {
     this.apiWalkSessionId,
     this.apiStatus,
     this.timeRemainingMinutes,
+    this.storyDeadlineUtc,
     this.progressPercentage,
     this.routeProgressPercentage,
     this.distanceToNextStopMeters,
@@ -73,6 +74,14 @@ class RoamSession {
   final String? apiWalkSessionId;
   final String? apiStatus;
   final int? timeRemainingMinutes;
+  final DateTime? storyDeadlineUtc;
+  bool storyTimeExpired(DateTime now) =>
+      storyDeadlineUtc != null && !now.isBefore(storyDeadlineUtc!);
+  bool get hasReliableStoryFix =>
+      currentGpsAccuracyMeters != null &&
+      currentGpsAccuracyMeters!.isFinite &&
+      currentGpsAccuracyMeters! >= 0 &&
+      currentGpsAccuracyMeters! <= 40;
   final double? progressPercentage;
   final double? routeProgressPercentage;
   final double? distanceToNextStopMeters;
@@ -269,6 +278,7 @@ class RoamSession {
     String? apiWalkSessionId,
     String? apiStatus,
     int? timeRemainingMinutes,
+    DateTime? storyDeadlineUtc,
     double? progressPercentage,
     double? routeProgressPercentage,
     double? distanceToNextStopMeters,
@@ -307,6 +317,7 @@ class RoamSession {
       apiWalkSessionId: apiWalkSessionId ?? this.apiWalkSessionId,
       apiStatus: apiStatus ?? this.apiStatus,
       timeRemainingMinutes: timeRemainingMinutes ?? this.timeRemainingMinutes,
+      storyDeadlineUtc: storyDeadlineUtc ?? this.storyDeadlineUtc,
       progressPercentage: progressPercentage ?? this.progressPercentage,
       routeProgressPercentage:
           routeProgressPercentage ?? this.routeProgressPercentage,
@@ -362,6 +373,7 @@ class RoamSession {
       'apiWalkSessionId': apiWalkSessionId,
       'apiStatus': apiStatus,
       'timeRemainingMinutes': timeRemainingMinutes,
+      'storyDeadlineUtc': storyDeadlineUtc?.toIso8601String(),
       'progressPercentage': progressPercentage,
       'routeProgressPercentage': routeProgressPercentage,
       'distanceToNextStopMeters': distanceToNextStopMeters,
@@ -406,6 +418,9 @@ class RoamSession {
       apiWalkSessionId: data['apiWalkSessionId'] as String?,
       apiStatus: data['apiStatus'] as String?,
       timeRemainingMinutes: data['timeRemainingMinutes'] as int?,
+      storyDeadlineUtc: DateTime.tryParse(
+        data['storyDeadlineUtc'] as String? ?? '',
+      ),
       progressPercentage: (data['progressPercentage'] as num?)?.toDouble(),
       routeProgressPercentage: (data['routeProgressPercentage'] as num?)
           ?.toDouble(),

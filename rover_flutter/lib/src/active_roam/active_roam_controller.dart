@@ -1327,6 +1327,9 @@ class ActiveRoamController extends ChangeNotifier {
       apiWalkSessionId: walk.walkSessionId,
       apiStatus: walk.status.name,
       timeRemainingMinutes: walk.timeRemainingMinutes,
+      storyDeadlineUtc: walk.startedAtUtc?.add(
+        Duration(minutes: walk.availableMinutes),
+      ),
       progressPercentage: math.max(
         walk.walkProgressPercentage,
         walk.routeProgressPercentage,

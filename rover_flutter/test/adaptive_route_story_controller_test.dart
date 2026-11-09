@@ -493,12 +493,19 @@ void main() {
       }
     },
   );
-  for (final scenario in ['nearby', 'distant', 'poor-gps', 'expired']) {
+  for (final scenario in [
+    'nearby',
+    'distant',
+    'poor-gps',
+    'expired',
+    'time-up',
+  ]) {
     test('off-route stories use actual location: $scenario', () async {
       final directory = await Directory.systemTemp.createTemp(
         'story-wandering',
       );
       final session = demoSession().copyWith(
+        storyDeadlineUtc: scenario == 'time-up' ? DateTime.now().toUtc() : null,
         apiWalkSessionId: 'walk-test',
         status: RoamSessionStatus.active,
         isOffRoute: true,
@@ -506,6 +513,7 @@ void main() {
       );
       final story = AdaptiveRouteStory.fromJson({
         'storyId': 'nearby',
+        'audienceSuitability': 'family',
         'placeId': 'nearby',
         'anchor': {
           'latitude':
@@ -549,7 +557,7 @@ void main() {
       final voice = _PlaybackVoice();
       try {
         await controller.syncWithSession(session, voice);
-        expect(voice.plays, scenario == 'nearby' ? 1 : 0);
+        expect(voice.plays, ['nearby', 'distant'].contains(scenario) ? 1 : 0);
         expect(repository.selections, 0);
       } finally {
         controller.dispose();
