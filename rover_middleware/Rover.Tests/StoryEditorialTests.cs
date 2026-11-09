@@ -26,11 +26,12 @@ internal static class StoryEditorialTests
     public static async Task QuestionEvidence()
     {
         await Verify(true);
+        await Verify(true, gap: true);
         await Verify(true, false);
         await Verify(true, rejectedDraft: "What I searched and why it fell short: I searched the archive.");
         await Verify(true, rejectedDraft: "This plaque marks the exact spot of the historic photograph.");
     }
-    private static async Task Verify(bool question, bool relevant = true, bool recovery = false, bool foodOnly = false, string? scope = null, bool areaRecovery = false, string? coordinateCase = null, string? rejectedDraft = null)
+    private static async Task Verify(bool question, bool relevant = true, bool recovery = false, bool foodOnly = false, string? scope = null, bool areaRecovery = false, string? coordinateCase = null, string? rejectedDraft = null, bool gap = false)
     {
         var anchor = new GeoLocation(52.2946778, 4.7108732);
         var segment = new RouteStorySegment("area", 0, anchor, anchor, anchor, 0, 0, 0, 0, false, []);
@@ -43,8 +44,13 @@ internal static class StoryEditorialTests
             var calls = 0;
             using var client = new HttpClient(new RoutingHttpMessageHandler(request =>
             {
-                calls++;
+
                 using var body = JsonDocument.Parse(request.Content!.ReadAsStringAsync().GetAwaiter().GetResult());
+                if (body.RootElement.GetProperty("instructions").GetString()!.Contains("local reference librarian"))
+                    return new HttpResponseMessage(HttpStatusCode.OK) {
+                        Content = new StringContent("""{"status":"completed","output":[{"content":[{"annotations":[{"type":"url_citation","url":"https://archive.example/record-16"},{"type":"url_citation","url":"http://localhost/private"}]}]}]}""")
+                    };
+                calls++;
                 string output;
                 if (calls % 2 == 1)
                 {
@@ -54,6 +60,8 @@ internal static class StoryEditorialTests
                         && instructions.Contains("political movements") && instructions.Contains("source disagreements"),
                         "Editorial instructions must reach route-free research.");
                     Check(!input.Contains("Frankfurt"), "Location research must not depend on an old city.");
+                    if (gap) Check(input.Contains("https://archive.example/record-16") && !input.Contains("localhost"),
+                        "Gap research should receive the cited public record and discard invalid links.");
                     if (!question)
                     {
                         Check(!input.Contains("All subjects must relate to the area within maximumStoryDistanceMeters")
@@ -123,7 +131,7 @@ internal static class StoryEditorialTests
             var result = await researcher.ResearchAsync(new([segment],
                 new ApproximateLiveLocation(null, null, null, null), [], foodOnly ? ["food"] : ["history"], "en") {
                     AreaFirst = !recovery || areaRecovery,
-                    Question = question ? new("How did the workshop change?", StoryQuestionScope.Neighbourhood,
+                    Question = question ? new(gap ? "Research this block or landscape and its workshop." : "How did the workshop change?", StoryQuestionScope.Neighbourhood,
                         StoryQuestionFormat.ThenAndNow, 1, 180) : null
                 }, default);
             if (rejectedDraft is not null)

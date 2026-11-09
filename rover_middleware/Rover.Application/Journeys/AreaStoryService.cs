@@ -1,5 +1,6 @@
 using Microsoft.Extensions.Logging;
 using Rover.Application.LiveContext;
+using Rover.Application.Drives;
 using Rover.Application.Walks;
 using Rover.Domain.Walks;
 
@@ -10,7 +11,7 @@ public sealed record AreaStoryRequest(double Latitude, double Longitude,
 public sealed record AreaStoryCollection(string Status, IReadOnlyList<AdaptiveRouteStory> Stories, int SearchRadiusMeters = 1000);
 
 public sealed class AreaStoryService(ILocalRouteResearcher researcher, TimeProvider clock,
-    ILogger<AreaStoryService> logger)
+    ILogger<AreaStoryService> logger, ScenicDriveService? places = null)
 {
     public async Task<AreaStoryCollection> ResearchAsync(AreaStoryRequest request, CancellationToken cancellationToken)
     {
@@ -27,8 +28,15 @@ public sealed class AreaStoryService(ILocalRouteResearcher researcher, TimeProvi
         var center = new GeoLocation(request.Latitude, request.Longitude);
         // Adapter to the citation researcher: this is a search anchor, not a saved route.
         var anchor = new RouteStorySegment("area", 0, center, center, center, 0, 0, 0, 0, false, []);
+        List<LocalResearchPublicPlace> leads = [];
+        if (request is { SearchRadiusMeters: 1000, ExcludedTitles.Count: > 0 } && places is not null)
+        {
+            var nearby = await places.SearchWithinAsync("Local landmarks and places of interest", center, 1000, cancellationToken);
+            leads.AddRange(nearby.Places.OrderBy(p => RouteMath.DistanceMeters(center, p.Location))
+                .Take(6).Select(p => new LocalResearchPublicPlace(p.Name, p.Address, p.Location)));
+        }
         var query = new LocalRouteResearchQuery([anchor], new ApproximateLiveLocation(null, null, null, null),
-            [], (request.Interests ?? []).Distinct(StringComparer.OrdinalIgnoreCase).ToArray(), "en")
+            leads.Select(p => p.Name).ToArray(), (request.Interests ?? []).Distinct(StringComparer.OrdinalIgnoreCase).ToArray(), "en", leads)
         {
             AreaFirst = true, MaximumStories = 3,
             SearchRadiusMeters = request.SearchRadiusMeters,
