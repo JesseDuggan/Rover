@@ -63,7 +63,13 @@ public sealed class GooglePlacesLocalDiscoveryProvider : ILocalDiscoveryProvider
             places = places.Concat(nonFood.Places);
             warnings = warnings.Concat(nonFood.Warnings);
         }
-        if (command.LimitLabDetours && other.Length > 0)
+        if (command.LimitLabDetours && command.SearchProminentPlaces && other.Length > 0 && result.Enabled && !warnings.Any())
+        {
+            // Include prominent places regardless of how a map provider classifies their primary business.
+            var landmarks = await _placesProvider.GetContextAsync(query with { RadiusMeters = 500, SearchProminentPlaces = true }, cancellationToken);
+            places = landmarks.Places.Concat(places);
+        }
+        else if (command.LimitLabDetours && other.Length > 0)
         {
             var queryText = other.Any(i => WalkInterestPolicy.Group(i) == "architecture")
                 ? $"Landmark buildings and distinctive local architecture, including historic and modern buildings, {string.Join(", ", other)}"

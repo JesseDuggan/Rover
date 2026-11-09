@@ -265,10 +265,11 @@ public sealed class MockWalkPlanner : IWalkPlanner
             var centers = CorridorCenters(geometry, 450, 12).ToList();
             if (!command.LimitLabDetours && spareMinutes >= 20 && centers.Count <= 6)
                 centers.AddRange(ExploreEitherSide(centers[centers.Count / 2], command.StartingLocation, requested.Location, detourRadius * 0.75));
+            var probeIndex = 0;
             foreach (var center in centers.Distinct())
             {
                 var found = await _localDiscoveryProvider.DiscoverForPlanningAsync(
-                    command with { StartingLocation = center, SelectedPlace = null }, ct, 30);
+                    command with { StartingLocation = center, SelectedPlace = null, SearchProminentPlaces = probeIndex++ % 2 == 0 }, ct, 30);
                 if (command.RecordLabDecision is { } record)
                     foreach (var stop in found.Stops)
                         record(stop, WalkInterestPolicy.IsTicketOffice(stop.Name, stop.Category)

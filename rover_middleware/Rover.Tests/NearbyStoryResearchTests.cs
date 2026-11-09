@@ -28,6 +28,7 @@ internal static class NearbyStoryResearchTests
         foreach (var invalid in new[] {
             story with { Anchor = new GeoLocation(51, 8) },
             story with { Claims = [new("claim", "Another business has history.", ["source"], .9)] },
+            story with { Variants = [new(AdaptiveStoryLength.Standard, 30, "I could not verify a place called Coffee Club here.", ["claim"])] },
             story with { Sources = [] },
             story with { ExpiresUtc = now.AddMinutes(-1) }
         })

@@ -129,6 +129,6 @@ public sealed class StoryQuestionService(ILocalRouteResearcher researcher, TimeP
         && story.Claims.All(c => !string.IsNullOrWhiteSpace(c.Text) && c.SourceIds.Count > 0
             && c.SourceIds.All(id => story.Sources.Any(s => s.SourceId == id
                 && Uri.TryCreate(s.Url, UriKind.Absolute, out var uri) && uri.Scheme is "https" or "http")))
-        && story.Variants.All(v => !string.IsNullOrWhiteSpace(v.Narration) && v.ClaimIds.Count > 0
+        && story.Variants.All(v => !Rover.Application.LocationIntelligence.NearbyStoryResearch.ReportsMissingEvidence(v.Narration) && !string.IsNullOrWhiteSpace(v.Narration) && v.ClaimIds.Count > 0
             && v.ClaimIds.All(id => story.Claims.Any(c => c.ClaimId == id)));
 }

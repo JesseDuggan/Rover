@@ -13,6 +13,7 @@ public sealed record LocationContextQuery(
     public string? RouteSegmentId { get; init; }
     public string? DirectionalContext { get; init; }
     public bool IncludeGooglePlaces { get; init; } = true;
+    public bool SearchProminentPlaces { get; init; }
 }
 
 public sealed record LocationSource(

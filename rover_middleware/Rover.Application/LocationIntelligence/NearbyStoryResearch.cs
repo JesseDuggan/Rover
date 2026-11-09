@@ -60,7 +60,7 @@ public static class NearbyStoryResearch
             if (selectedDriveStop && !story.CanAutoplay) continue;
             var variant = story.Variants.FirstOrDefault(v => v.Length == AdaptiveStoryLength.Standard)
                 ?? story.Variants.OrderByDescending(v => v.EstimatedDurationSeconds).FirstOrDefault();
-            if (variant is null || string.IsNullOrWhiteSpace(variant.Narration)
+            if (variant is null || string.IsNullOrWhiteSpace(variant.Narration) || ReportsMissingEvidence(variant.Narration)
                 || variant.ClaimIds.Count == 0 || story.ExpiresUtc <= now
                 || !double.IsFinite(story.Anchor.Latitude) || !double.IsFinite(story.Anchor.Longitude)
                 || RouteMath.DistanceMeters(place.Coordinates, story.Anchor) > 150
@@ -86,4 +86,9 @@ public static class NearbyStoryResearch
         }
         return Empty(result.Failed ? "failed" : "empty");
     }
+
+    internal static bool ReportsMissingEvidence(string text) =>
+        System.Text.RegularExpressions.Regex.IsMatch(text,
+            @"\b(?:I|we) (?:could not|couldn['’]t|cannot|can['’]t|were unable to|was unable to) (?:verify|find|confirm|identify|establish)\b|\b(?:I|we) found no (?:evidence|record|source)\b",
+            System.Text.RegularExpressions.RegexOptions.IgnoreCase | System.Text.RegularExpressions.RegexOptions.CultureInvariant);
 }

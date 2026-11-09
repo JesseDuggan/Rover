@@ -34,9 +34,9 @@ public sealed class GooglePlacesLocationContextProvider : LocationContextProvide
 
         var body = new
         {
-            includedTypes = MapTypes(query.Interests),
+            includedTypes = query.SearchProminentPlaces ? Array.Empty<string>() : MapTypes(query.Interests),
             maxResultCount = Math.Clamp(Options.MaximumResults, 1, 20),
-            rankPreference = "DISTANCE",
+            rankPreference = query.SearchProminentPlaces ? "POPULARITY" : "DISTANCE",
             languageCode = "en",
             locationRestriction = new
             {
