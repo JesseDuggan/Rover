@@ -1,6 +1,7 @@
 using System.Text.Json.Serialization;
 using System.Text.RegularExpressions;
 using Microsoft.Extensions.Logging;
+using Rover.Application.Drives;
 using Rover.Application.LiveContext;
 using Rover.Application.Walks;
 using Rover.Domain.Walks;
@@ -31,7 +32,7 @@ public sealed record StoryQuestionResponse(string Status, StoryQuestionScope Sco
 
 // Explicit question research never changes the walk, arrival queue or autoplay collection.
 public sealed class StoryQuestionService(ILocalRouteResearcher researcher, TimeProvider clock,
-    ILogger<StoryQuestionService> logger)
+    ILogger<StoryQuestionService> logger, ScenicDriveService? places = null)
 {
     public async Task<StoryQuestionResponse> AskAsync(StoryQuestionRequest request, CancellationToken token)
     {
@@ -82,10 +83,26 @@ public sealed class StoryQuestionService(ILocalRouteResearcher researcher, TimeP
         {
             segments = [new RouteStorySegment("question-area", 0, center, center, center, 0, 0, 0, 0, false, [])];
         }
-        var query = new LocalRouteResearchQuery(segments, new ApproximateLiveLocation(null, null, null, null),
-            [], [], request.Language)
+        // Existing app builds send the selected chapter in this follow-up envelope.
+        // Only use its pin after a unique same-name map match near the chapter.
+        List<LocalResearchPublicPlace> subjects = [];
+        if (scope == StoryQuestionScope.Street && places is not null)
         {
-            AreaFirst = scope != StoryQuestionScope.Route, SearchRadiusMeters = radius, MaximumStories = count,
+            var selected = Regex.Match(text, @"^At (.{1,256}?), the walker asks: ", RegexOptions.CultureInvariant);
+            if (selected.Success)
+            {
+                var name = selected.Groups[1].Value;
+                var found = await places.SearchAsync(name, center, token);
+                var matches = found.Places.Where(p => string.Equals(p.Name, name, StringComparison.OrdinalIgnoreCase)
+                    && RouteMath.DistanceMeters(p.Location, center) <= 150).ToArray();
+                if (matches.Length == 1)
+                    subjects.Add(new(name, matches[0].Address, matches[0].Location));
+            }
+        }
+        var query = new LocalRouteResearchQuery(segments, new ApproximateLiveLocation(null, null, null, null),
+            subjects.Select(s => s.Name).ToArray(), [], request.Language, subjects)
+        {
+            AreaFirst = subjects.Count == 0 && scope != StoryQuestionScope.Route, SearchRadiusMeters = radius, MaximumStories = count,
             Question = new(text, scope, format, count, request.AvailableNarrationSeconds)
         };
         using var budget = CancellationTokenSource.CreateLinkedTokenSource(token);
