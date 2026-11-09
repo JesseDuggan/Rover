@@ -41,50 +41,74 @@ public static class NearbyStoryResearch
 
         using var timeout = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
         timeout.CancelAfter(TimeSpan.FromSeconds(selectedDriveStop ? 90 : 35));
-        LocalRouteResearchResult result;
-        try
+        // Reserve part of the existing request budget for a genuinely different search.
+        var subjectTypes = string.Join(" ", place.Categories.Append(place.Name)).Replace('_', ' ');
+        var commemorative = System.Text.RegularExpressions.Regex.IsMatch(subjectTypes,
+            @"\b(plaque|marker|memorial|monument|stolperstein|mémorial|denkmal|placa|targa)\b",
+            System.Text.RegularExpressions.RegexOptions.IgnoreCase | System.Text.RegularExpressions.RegexOptions.CultureInvariant);
+        var landmark = System.Text.RegularExpressions.Regex.IsMatch(subjectTypes,
+            @"\b(landmark|tourist attraction|museum|national park|palace|cathedral|heritage site|historic site|archaeological site|castle|aquarium|stadium|concert hall|performing arts theater)\b",
+            System.Text.RegularExpressions.RegexOptions.IgnoreCase | System.Text.RegularExpressions.RegexOptions.CultureInvariant);
+        var retry = commemorative || landmark;
+        using var first = CancellationTokenSource.CreateLinkedTokenSource(timeout.Token);
+        if (retry) first.CancelAfter(TimeSpan.FromSeconds(selectedDriveStop ? 45 : 17));
+        var initial = await Search(query, first.Token);
+        if (!retry || initial.ResearchStatus == "ready" || timeout.IsCancellationRequested) return initial;
+        var focus = commemorative
+            ? "Look for an inscription, marker inventory or photograph identifying what is commemorated. Follow that person, object, image or event into archives. Explain one visible detail, distinguishing later replicas or approximate positions when evidence supports it."
+            : "Search local-language archives, collections and primary histories under alternate or former names. Trace one specific person, event, natural feature or change documented at this exact attraction.";
+        var followUp = new StoryResearchQuestion(
+            $"At {place.Name}, {place.Address}, what can the walker notice? {focus} Connect the subject back to the named stop using cited evidence. Identify the stop by its supplied name in a supported claim. Do not relocate events or infer a connection from proximity.",
+            StoryQuestionScope.Street, StoryQuestionFormat.Single, 1, 90);
+        return await Search(query with { Question = followUp }, timeout.Token);
+
+        async Task<LocationStoryResult> Search(LocalRouteResearchQuery searchQuery, CancellationToken token)
         {
-            result = await researcher.ResearchAsync(query, timeout.Token).WaitAsync(timeout.Token);
+            LocalRouteResearchResult result;
+            try
+            {
+                result = await researcher.ResearchAsync(searchQuery, token).WaitAsync(token);
+            }
+            catch (OperationCanceledException) when (!cancellationToken.IsCancellationRequested)
+            {
+                return Empty("failed");
+            }
+            catch (Exception) when (!cancellationToken.IsCancellationRequested)
+            {
+                return Empty("failed");
+            }
+            cancellationToken.ThrowIfCancellationRequested();
+            foreach (var story in result.Stories)
+            {
+                if (selectedDriveStop && !story.CanAutoplay) continue;
+                var variant = story.Variants.FirstOrDefault(v => v.Length == AdaptiveStoryLength.Standard)
+                    ?? story.Variants.OrderByDescending(v => v.EstimatedDurationSeconds).FirstOrDefault();
+                if (variant is null || string.IsNullOrWhiteSpace(variant.Narration) || ReportsMissingEvidence(variant.Narration)
+                    || variant.ClaimIds.Count == 0 || story.ExpiresUtc <= now
+                    || !double.IsFinite(story.Anchor.Latitude) || !double.IsFinite(story.Anchor.Longitude)
+                    || RouteMath.DistanceMeters(place.Coordinates, story.Anchor) > 150
+                    || !string.Join(" ", story.Claims.Select(c => c.Text)).Contains(place.Name, StringComparison.OrdinalIgnoreCase))
+                    continue;
+                var claims = story.Claims.Where(c => variant.ClaimIds.Contains(c.ClaimId)).ToArray();
+                var sources = story.Sources.Where(s => claims.Any(c => c.SourceIds.Contains(s.SourceId))
+                    && Uri.TryCreate(s.Url, UriKind.Absolute, out var uri)
+                    && (uri.Scheme == "https" || uri.Scheme == "http")).ToArray();
+                if (claims.Length != variant.ClaimIds.Distinct().Count()
+                    || claims.Any(c => c.SourceIds.Count == 0
+                        || c.SourceIds.Any(id => !sources.Any(s => s.SourceId == id))))
+                    continue;
+                // Research does not confer permission to persist third-party content.
+                return new LocationStoryResult(
+                    story.Title, variant.Narration, null, place.CanonicalId,
+                    claims.Select(c => c.ClaimId).ToArray(),
+                    sources.Select(s => new LocationSource(s.ProviderName, s.SourceId, s.Url,
+                        s.Attribution, s.Reuse?.LicenseId, s.RetrievedUtc, s.Confidence)
+                        { SourceTitle = s.Title, ExpiresUtc = story.ExpiresUtc }).ToArray(),
+                    story.EvidenceScore, sources.Select(s => s.Attribution).Distinct().ToArray(), [])
+                    { ResearchStatus = "ready" };
+            }
+            return Empty(result.Failed ? "failed" : "empty");
         }
-        catch (OperationCanceledException) when (!cancellationToken.IsCancellationRequested)
-        {
-            return Empty("failed");
-        }
-        catch (Exception) when (!cancellationToken.IsCancellationRequested)
-        {
-            return Empty("failed");
-        }
-        cancellationToken.ThrowIfCancellationRequested();
-        foreach (var story in result.Stories)
-        {
-            if (selectedDriveStop && !story.CanAutoplay) continue;
-            var variant = story.Variants.FirstOrDefault(v => v.Length == AdaptiveStoryLength.Standard)
-                ?? story.Variants.OrderByDescending(v => v.EstimatedDurationSeconds).FirstOrDefault();
-            if (variant is null || string.IsNullOrWhiteSpace(variant.Narration) || ReportsMissingEvidence(variant.Narration)
-                || variant.ClaimIds.Count == 0 || story.ExpiresUtc <= now
-                || !double.IsFinite(story.Anchor.Latitude) || !double.IsFinite(story.Anchor.Longitude)
-                || RouteMath.DistanceMeters(place.Coordinates, story.Anchor) > 150
-                || !string.Join(" ", story.Claims.Select(c => c.Text)).Contains(place.Name, StringComparison.OrdinalIgnoreCase))
-                continue;
-            var claims = story.Claims.Where(c => variant.ClaimIds.Contains(c.ClaimId)).ToArray();
-            var sources = story.Sources.Where(s => claims.Any(c => c.SourceIds.Contains(s.SourceId))
-                && Uri.TryCreate(s.Url, UriKind.Absolute, out var uri)
-                && (uri.Scheme == "https" || uri.Scheme == "http")).ToArray();
-            if (claims.Length != variant.ClaimIds.Distinct().Count()
-                || claims.Any(c => c.SourceIds.Count == 0
-                    || c.SourceIds.Any(id => !sources.Any(s => s.SourceId == id))))
-                continue;
-            // Research does not confer permission to persist third-party content.
-            return new LocationStoryResult(
-                story.Title, variant.Narration, null, place.CanonicalId,
-                claims.Select(c => c.ClaimId).ToArray(),
-                sources.Select(s => new LocationSource(s.ProviderName, s.SourceId, s.Url,
-                    s.Attribution, s.Reuse?.LicenseId, s.RetrievedUtc, s.Confidence)
-                    { SourceTitle = s.Title, ExpiresUtc = story.ExpiresUtc }).ToArray(),
-                story.EvidenceScore, sources.Select(s => s.Attribution).Distinct().ToArray(), [])
-                { ResearchStatus = "ready" };
-        }
-        return Empty(result.Failed ? "failed" : "empty");
     }
 
     internal static bool ReportsMissingEvidence(string text) =>

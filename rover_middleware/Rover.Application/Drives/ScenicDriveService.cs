@@ -13,7 +13,10 @@ public sealed record DriveRequest(GeoLocation Origin, WalkPlaceSelection Destina
 }
 public sealed record DrivePreferences(bool PreferLocalRoads = false, bool AvoidTolls = false,
     int MaxDetourMinutes = 15, bool IncludeRestStops = false, bool IncludeChargingStops = false);
-public sealed record DrivePlace(string PlaceId, string Name, string? Address, GeoLocation Location, string Attribution);
+public sealed record DrivePlace(string PlaceId, string Name, string? Address, GeoLocation Location, string Attribution)
+{
+    public IReadOnlyList<string> Categories { get; init; } = [];
+}
 public sealed record DrivePlaceResults(IReadOnlyList<DrivePlace> Places, IReadOnlyList<string> Warnings);
 public sealed record DrivingRoute(int DrivingMinutes, int DistanceMeters, IReadOnlyList<GeoLocation> Geometry);
 public sealed record DrivePlan(GeoLocation Origin, DrivePlace Destination, bool ReturnToStart,
@@ -61,7 +64,7 @@ public sealed class ScenicDriveService(
                 places.AddRange(found.Places.Where(p => p.SourceReferences.Count > 0 &&
                     ValidLocation(p.Coordinates) && RouteMath.DistanceMeters(origin, p.Coordinates) <= radius)
                     .Select(p => new DrivePlace(p.CanonicalId, p.Name, p.Address, p.Coordinates,
-                        string.Join(", ", p.SourceReferences.Select(s => s.Attribution).Distinct()))));
+                        string.Join(", ", p.SourceReferences.Select(s => s.Attribution).Distinct())) { Categories = p.Categories }));
             }
             catch (Exception e) when (e is HttpRequestException or JsonException ||
                 e is OperationCanceledException && !ct.IsCancellationRequested)

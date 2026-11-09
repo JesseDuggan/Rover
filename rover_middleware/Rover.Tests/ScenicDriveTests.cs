@@ -36,6 +36,20 @@ internal static class ScenicDriveTests
             try { await service.CreateAsync(invalid, default); throw new Exception("Invalid stop accepted."); }
             catch (ArgumentException) { }
         }
+        foreach (var category in new[] { "historical_marker", "tourist_attraction", "coffee_shop" })
+        {
+            var calls = 0;
+            var later = new CapturingRouteResearcher(q => {
+                calls++;
+                if (calls == 1) return new([], null);
+                Check(q.Question!.Text.Contains(category == "historical_marker" ? "inscription" : "local-language archives"), "Second pass must change its research angle.");
+                return new([story], null);
+            });
+            var research = new DriveStopStoryService(new ScenicDriveService([new Places(category)], new Routes()), later, TimeProvider.System);
+            var recovered = await research.CreateAsync(request, default);
+            var eligible = category != "coffee_shop";
+            Check(calls == (eligible ? 2 : 1) && (recovered.ResearchStatus == "ready") == eligible, "Retry only eligible stops and validate the result.");
+        }
         var empty = new DriveStopStoryService(new ScenicDriveService([new Places()], new Routes()),
             new CapturingRouteResearcher(_ => new([], null)), TimeProvider.System);
         Check((await empty.CreateAsync(request, default)).ShortSpokenNarration == "", "No research must remain silent.");
@@ -149,7 +163,7 @@ internal static class ScenicDriveTests
         try { await provider.RouteAsync(Origin, [End], default); throw new Exception("Driving provider silently fell back."); }
         catch (DrivingUnavailableException) { }
     }
-    sealed class Places : ICandidateObservationSearchProvider
+    sealed class Places(string category = "place") : ICandidateObservationSearchProvider
     {
         public List<CandidateObservationQuery> Queries { get; } = [];
         public Task<CandidateObservationSearchResult> SearchAsync(CandidateObservationQuery query, CancellationToken ct)
@@ -159,7 +173,7 @@ internal static class ScenicDriveTests
             var id = isDestination ? "end" : query.RecognizedText;
             var point = isDestination ? End : query.UserLocation;
             var source = new LocationSource("Test", id, "https://example.com", "Test source", null, DateTimeOffset.UtcNow, 1);
-            var place = new LocationPlace(id, id, point, "Address", [], null, [], [source],
+            var place = new LocationPlace(id, id, point, "Address", [category], null, [], [source],
                 new Dictionary<string, string>(), null, null, null, null, 1, 1, [], [], null, null, DateTimeOffset.UtcNow);
             return Task.FromResult(new CandidateObservationSearchResult("Test", [place], ["Mapbox business search is not configured."]));
         }

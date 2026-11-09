@@ -28,7 +28,7 @@ public sealed class DriveStopStoryService(ScenicDriveService places, ILocalRoute
             ?? throw new ArgumentException("The selected stop could not be verified.");
         var now = clock.GetUtcNow();
         var place = new LocationPlace(stop.PlaceId, stop.Name, stop.Location, stop.Address,
-            [], null, [], [], new Dictionary<string, string>(), 0, null, null, null,
+            stop.Categories, null, [], [], new Dictionary<string, string>(), 0, null, null, null,
             1, 1, [], [], null, null, now);
         var result = await NearbyStoryResearch.CreateAsync(researcher, place,
             new LocationStoryRequest(stop.Location, 300, null, null, new[] { request.JourneyStart, request.JourneyEnd }.OfType<GeoLocation>().ToArray(), request.Interests ?? [], [stop.PlaceId], "just-walking"),
