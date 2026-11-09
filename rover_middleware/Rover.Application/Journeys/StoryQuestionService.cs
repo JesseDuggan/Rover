@@ -117,12 +117,9 @@ public sealed class StoryQuestionService(ILocalRouteResearcher researcher, TimeP
             var landmark = Regex.Match(text, @"The nearest planned stop is (.{1,256}?)\.?$", RegexOptions.CultureInvariant);
             var name = landmark.Groups[1].Value;
             var interests = Regex.Match(text, @"^Walker interests: ([^.]{1,160})\.", RegexOptions.CultureInvariant);
-            var search = interests.Success ? $"Local landmarks and places of interest: {interests.Groups[1].Value}"
-                : "Local landmarks and places of interest";
-            var candidates = await places.SearchWithinAsync(search, center, 250, token);
-            subjects.AddRange(candidates.Places.Where(p => !string.Equals(p.Name, name, StringComparison.OrdinalIgnoreCase))
-                .OrderBy(p => RouteMath.DistanceMeters(center, p.Location)).Take(3)
-                .Select(p => new LocalResearchPublicPlace(p.Name, p.Address, p.Location)));
+            var topics = interests.Groups[1].Value.Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries);
+            var candidates = await places.NearbyStoryPlacesAsync(center, 250, topics, token);
+            subjects.AddRange(candidates.Where(p => !string.Equals(p.Name, name, StringComparison.OrdinalIgnoreCase)));
             if (subjects.Count > 0)
                 text += " Check these nearby named sites for a distinctive documented former use, public work, or local tradition. Match evidence to the correct site and address.";
             else if (landmark.Success)

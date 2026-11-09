@@ -1,3 +1,4 @@
+using Rover.Application.Journeys;
 using System.Text.Json;
 using Rover.Application.LocationIntelligence;
 using Rover.Application.Walks;
@@ -48,6 +49,31 @@ public sealed class ScenicDriveService(
 
     public Task<DrivePlaceResults> SearchAsync(string query, GeoLocation origin, CancellationToken ct) =>
         SearchWithinAsync(query, origin, 1_000_000, ct);
+
+    internal async Task<IReadOnlyList<LocalResearchPublicPlace>> NearbyStoryPlacesAsync(
+        GeoLocation center, int radius, IReadOnlyList<string> interests, CancellationToken token)
+    {
+        var query = new LocationContextQuery(center, radius, null, null, [], interests);
+        var leads = new List<LocalResearchPublicPlace>();
+        foreach (var provider in providers.OfType<ILocationContextProvider>())
+        {
+            try
+            {
+                var result = await provider.GetContextAsync(query, token);
+                if (result.Enabled && result.Places.Count == 0 && result.Warnings.Count == 0)
+                    result = await provider.GetContextAsync(query with { SearchProminentPlaces = true }, token);
+                leads.AddRange(result.Places.Where(p => p.SourceReferences.Count > 0 && ValidLocation(p.Coordinates)
+                        && RouteMath.DistanceMeters(center, p.Coordinates) <= radius)
+                    .Select(p => new LocalResearchPublicPlace(p.Name, p.Address, p.Coordinates)));
+            }
+            catch (Exception e) when (e is HttpRequestException or JsonException)
+            {
+                // An unavailable directory must not prevent historical research.
+            }
+        }
+        return leads.DistinctBy(p => (p.Name, p.Location))
+            .OrderBy(p => RouteMath.DistanceMeters(center, p.Location)).Take(12).ToArray();
+    }
 
     internal async Task<DrivePlaceResults> SearchWithinAsync(string query, GeoLocation origin, int radius, CancellationToken ct)
     {

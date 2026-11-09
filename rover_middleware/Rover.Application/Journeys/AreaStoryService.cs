@@ -31,9 +31,7 @@ public sealed class AreaStoryService(ILocalRouteResearcher researcher, TimeProvi
         List<LocalResearchPublicPlace> leads = [];
         if (request is { SearchRadiusMeters: 1000, ExcludedTitles.Count: > 0 } && places is not null)
         {
-            var nearby = await places.SearchWithinAsync("Local landmarks and places of interest", center, 1000, cancellationToken);
-            leads.AddRange(nearby.Places.OrderBy(p => RouteMath.DistanceMeters(center, p.Location))
-                .Take(6).Select(p => new LocalResearchPublicPlace(p.Name, p.Address, p.Location)));
+            leads.AddRange(await places.NearbyStoryPlacesAsync(center, 1000, request.Interests ?? [], cancellationToken));
         }
         var query = new LocalRouteResearchQuery([anchor], new ApproximateLiveLocation(null, null, null, null),
             leads.Select(p => p.Name).ToArray(), (request.Interests ?? []).Distinct(StringComparer.OrdinalIgnoreCase).ToArray(), "en", leads)
