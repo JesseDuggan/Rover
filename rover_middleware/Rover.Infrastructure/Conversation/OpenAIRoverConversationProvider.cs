@@ -110,6 +110,7 @@ public sealed class OpenAIRoverConversationProvider : IRoverConversationProvider
 
         await using var stream = await response.Content.ReadAsStreamAsync(timeout.Token);
         using var document = await JsonDocument.ParseAsync(stream, cancellationToken: timeout.Token);
+            Rover.Infrastructure.Usage.ModelReceipt.Report(request, document.RootElement);
         var text = ExtractOutputText(document.RootElement);
         return new RoverConversationProviderResult(
             string.IsNullOrWhiteSpace(text)

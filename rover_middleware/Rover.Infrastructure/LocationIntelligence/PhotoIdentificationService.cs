@@ -78,6 +78,7 @@ public sealed class PhotoIdentificationService(
             using var response = await client.SendAsync(request, timeout.Token);
             if (!response.IsSuccessStatusCode) return Unresolved("photo_provider_unavailable");
             using var document = JsonDocument.Parse(await response.Content.ReadAsStringAsync(timeout.Token));
+            Rover.Infrastructure.Usage.ModelReceipt.Report(request, document.RootElement);
             if (!document.RootElement.TryGetProperty("status", out var status) || status.GetString() != "completed")
                 return Unresolved("photo_unresolved");
             var output = document.RootElement.GetProperty("output");

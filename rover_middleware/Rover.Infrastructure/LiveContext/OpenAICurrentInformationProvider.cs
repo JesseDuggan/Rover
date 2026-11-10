@@ -78,6 +78,7 @@ public sealed class OpenAICurrentInformationProvider : ILiveCurrentInformationPr
 
             await using var stream = await response.Content.ReadAsStreamAsync(timeout.Token);
             using var document = await JsonDocument.ParseAsync(stream, cancellationToken: timeout.Token);
+            Rover.Infrastructure.Usage.ModelReceipt.Report(request, document.RootElement);
             var (text, citations) = Parse(document.RootElement, now);
             var items = string.IsNullOrWhiteSpace(text) || citations.Count == 0
                 ? Array.Empty<LiveCurrentInformation>()

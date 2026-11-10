@@ -1,3 +1,4 @@
+using Rover.Api.Usage;
 using System.Diagnostics;
 using System.Net;
 using System.Threading.RateLimiting;
@@ -89,6 +90,7 @@ builder.Services.AddSingleton(new LocationTrackingOptions
     ManualArrivalExtraDistanceMeters = builder.Configuration.GetValue("Rover:Location:ManualArrivalExtraDistanceMeters", 65d)
 });
 
+builder.Services.AddUsage();
 builder.Services.AddApplication();
 builder.Services.AddInfrastructure(builder.Configuration);
 
@@ -172,6 +174,8 @@ app.Use(async (context, next) =>
 });
 
 app.UseRateLimiter();
+app.UseUsage();
+UsagePage.Map(app);
 
 if (app.Environment.IsDevelopment())
 {
@@ -370,27 +374,33 @@ locationIntelligence.MapPost("/location-observations/resolve", async (
 
 locationIntelligence.MapPost("/story-images", async (
     Rover.Infrastructure.Journeys.StoryImageRequest request,
-    Rover.Infrastructure.Journeys.StoryImageService service, CancellationToken cancellationToken) =>
+    Rover.Infrastructure.Journeys.StoryImageService service, UsageStore usage, CancellationToken cancellationToken) =>
 {
-    try { return Results.Ok(await service.FindAsync(request, cancellationToken)); }
+    try { var result = await service.FindAsync(request, cancellationToken);
+        if (UsageScope.Current.Value is {} scope) usage.Record(scope.Event("Research","Walkabout","Find story pictures",result.Status) with { Units=result.Images.Count });
+        return Results.Ok(result); }
     catch (ArgumentException exception) {
         return Results.ValidationProblem(new Dictionary<string, string[]> { ["sources"] = [exception.Message] });
     }
 });
 
 locationIntelligence.MapPost("/story-questions", async (
-    StoryQuestionRequest request, StoryQuestionService service, CancellationToken cancellationToken) =>
+    StoryQuestionRequest request, StoryQuestionService service, UsageStore usage, CancellationToken cancellationToken) =>
 {
-    try { return Results.Ok(await service.AskAsync(request, cancellationToken)); }
+    try { var result = await service.AskAsync(request, cancellationToken);
+        if (UsageScope.Current.Value is {} scope) usage.Record(scope.Event("Research","Walkabout","Research story question",result.Status) with { Units=result.Answers.Count });
+        return Results.Ok(result); }
     catch (ArgumentException exception) {
         return Results.ValidationProblem(new Dictionary<string, string[]> { ["question"] = [exception.Message] });
     }
 }).RequireRateLimiting("story-questions");
 
 locationIntelligence.MapPost("/area-stories", async (
-    AreaStoryRequest request, AreaStoryService service, CancellationToken cancellationToken) =>
+    AreaStoryRequest request, AreaStoryService service, UsageStore usage, CancellationToken cancellationToken) =>
 {
-    try { return Results.Ok(await service.ResearchAsync(request, cancellationToken)); }
+    try { var result = await service.ResearchAsync(request, cancellationToken);
+        if (UsageScope.Current.Value is {} scope) usage.Record(scope.Event("Research","Walkabout","Research neighbourhood",result.Status) with { Units=result.Stories.Count });
+        return Results.Ok(result); }
     catch (ArgumentException exception) {
         return Results.ValidationProblem(new Dictionary<string, string[]> { ["area"] = [exception.Message] });
     }
@@ -614,6 +624,7 @@ speech.MapPost("/render", async (
         var correlationId = httpContext.Response.Headers.TryGetValue("X-Correlation-ID", out var value)
             ? value.ToString()
             : Guid.NewGuid().ToString("n");
+        UsageScope.Current.Value?.Link(request.WalkSessionId);
         var rendered = await speechService.RenderAsync(
             new RenderSpeechCommand(user?.AccountId ?? BetaSpeechQuota.AccountId, request.Text, purpose, request.Locale, request.WalkSessionId, request.StopId, request.IdempotencyKey)
             {
@@ -625,6 +636,8 @@ speech.MapPost("/render", async (
             correlationId,
             cancellationToken);
         httpContext.RequestServices.GetService<IBetaDiagnosticsService>()?.RecordAudioDownload(rendered.Audio.Length, rendered.CacheHit);
+        if (UsageScope.Current.Value is {} scope)
+            httpContext.RequestServices.GetRequiredService<UsageStore>().Record(scope.Event("Speech", rendered.Provider, purpose.ToString(), rendered.CacheHit ? "Cache hit" : rendered.UsedFallback ? "Fallback" : "Rendered") with { Units = request.Text.Length });
         httpContext.Response.Headers["X-Rover-Speech-Provider"] = rendered.Provider;
         httpContext.Response.Headers["X-Rover-Speech-Cache"] = rendered.CacheHit ? "hit" : "miss";
         httpContext.Response.Headers["X-Rover-Speech-Fallback"] = rendered.UsedFallback ? "true" : "false";
@@ -1159,6 +1172,7 @@ walks.MapPost("/", async (
         if (command!.ProfileId is { } profileId && await EnforceProfileAccessAsync(profileId,
             httpContext, accountService, environment, cancellationToken) is { } denied) return denied;
         var session = await walkService.CreateAsync(command!, cancellationToken);
+        UsageScope.Current.Value?.Link(session.WalkSessionId);
         QueueWalkWarmup(prefetchService, session, "created");
         return Results.Created($"/api/walks/{session.WalkSessionId}", session.ToResponse());
     }
@@ -1369,7 +1383,7 @@ walks.MapGet("/{walkSessionId}/route-story-pack/stories/{storyId}", async (
 
 walks.MapPost("/{walkSessionId}/route-story-pack/playback-events", async (
     string walkSessionId,
-    AdaptiveStoryPlaybackEventRequest? request,
+    AdaptiveStoryPlaybackEventRequest? request, UsageStore usage,
     IAdaptiveRouteStoryPackService routeStories,
     TimeProvider timeProvider,
     CancellationToken cancellationToken) =>
@@ -1386,6 +1400,8 @@ walks.MapPost("/{walkSessionId}/route-story-pack/playback-events", async (
             walkSessionId,
             new AdaptiveStoryPlaybackEvent(request.StoryId, kind, request.OccurredUtc ?? timeProvider.GetUtcNow(), request.PositionSeconds),
             cancellationToken);
+        if (UsageScope.Current.Value is {} scope)
+            usage.Record(scope.Event("Story playback","Walkabout","Route story",kind.ToString()));
         return Results.NoContent();
     }
     catch (KeyNotFoundException exception)

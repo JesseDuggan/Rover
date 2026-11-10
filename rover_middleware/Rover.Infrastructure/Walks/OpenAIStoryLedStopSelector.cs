@@ -116,6 +116,7 @@ public sealed class OpenAIStoryLedStopSelector(HttpClient client, StoryLedPlanni
             using var response = await client.SendAsync(request, budget.Token);
             if (!response.IsSuccessStatusCode) return new([], $"provider HTTP {(int)response.StatusCode}");
             using var body = JsonDocument.Parse(await response.Content.ReadAsStringAsync(budget.Token));
+            Rover.Infrastructure.Usage.ModelReceipt.Report(request, body.RootElement);
             if (!body.RootElement.TryGetProperty("status", out var status) || status.GetString() != "completed")
                 return new([], "incomplete provider response");
             var text = string.Concat(body.RootElement.GetProperty("output").EnumerateArray()

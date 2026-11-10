@@ -171,7 +171,7 @@ public sealed class OpenAILocalRouteResearcher(HttpClient client, LocalRouteRese
                 input = query.Question is not null ? context : context + EditorialInstructions + (query.AreaFirst ? AreaInstructions : LocalityInstructions) + " When researching a theatre or music district, look for venues along the supplied route in official theatre archives and municipal heritage records. Include a documented venue story when it fits the interests and geography. Distinguish venues on this street from similarly named venues elsewhere. When interests include current events or local events, actively search official neighbourhood, municipal, library, park and venue calendars for ongoing or upcoming events within seven days of nowUtc. Reserve part of the existing search budget for these searches rather than including events only by chance. Retain citation requirements and identify broader geographic context explicitly; do not substitute historical events for current events. In rural areas, first establish the named community and municipality from the approximate route areas using sources, then search local heritage, landscape and community history. Generic waypoint labels are not real place names. Do not substitute a nearby town's landmark for a subject on this route. Keep each subject and its citations together in a paragraph, using blank lines only between subjects. For events, write explicit start and end dates and times with timezone offsets in the cited paragraph, as well as their UTC dates as YYYY-MM-DD; omit events whose dates cannot be established. For a subject at a listed public place, use its exact public-place name as locationEvidence during classification.",
                 // This allowance includes reasoning as well as the short visible passages.
                 max_output_tokens = Math.Clamp(options.SearchMaxOutputTokens, 1024, 16384)
-            }, budget.Token);
+            }, budget.Token, neighbourhoodRetry ? "Retry neighbourhood research" : "Research local evidence");
             stage = "citation extraction";
             var passages = ReadPassages(research.RootElement, clock.GetUtcNow(), maximumStories, 220, out var extractionDetails);
             if (passages.Count == 0)
@@ -197,7 +197,7 @@ public sealed class OpenAILocalRouteResearcher(HttpClient client, LocalRouteRese
                     + " Coordinates must be the subject's actual location, never borrowed from the route or a nearby POI.",
                 text = new { format = new { type = "json_schema", name = "route_research", strict = true, schema = Schema() } },
                 max_output_tokens = Math.Clamp(options.ClassificationMaxOutputTokens, 1024, 8192)
-            }, classificationBudget.Token);
+            }, classificationBudget.Token, "Classify story evidence");
             stage = "classification parsing";
             var classificationText = OutputText(organized.RootElement);
             if (string.IsNullOrWhiteSpace(classificationText))
@@ -415,7 +415,7 @@ public sealed class OpenAILocalRouteResearcher(HttpClient client, LocalRouteRese
                     places = query.PublicPlaces?.Select(p => new { p.Name, p.Address }).Take(12),
                     query.Interests, question = query.Question?.Text, covered = query.ExcludedStoryTitles.Take(120)
                 }),
-            }, deadline.Token);
+            }, deadline.Token, "Find local archive sources");
             // Only forward URLs that were actually returned as search citations.
             if (!result.RootElement.TryGetProperty("output", out var output) || output.ValueKind != JsonValueKind.Array) return [];
             return output.EnumerateArray()
@@ -433,9 +433,10 @@ public sealed class OpenAILocalRouteResearcher(HttpClient client, LocalRouteRese
         }
     }
 
-    private async Task<JsonDocument> SendAsync(object body, CancellationToken token)
+    private async Task<JsonDocument> SendAsync(object body, CancellationToken token, string purpose)
     {
         using var request = new HttpRequestMessage(HttpMethod.Post, "https://api.openai.com/v1/responses");
+        request.Options.Set(new HttpRequestOptionsKey<string>("Walkabout.Usage.Purpose"), purpose);
         request.Headers.Authorization = new AuthenticationHeaderValue("Bearer", options.ApiKey);
         var payload = JsonSerializer.SerializeToNode(body)!.AsObject();
         // Only attach model-specific parameters to the supported model family.
@@ -446,6 +447,7 @@ public sealed class OpenAILocalRouteResearcher(HttpClient client, LocalRouteRese
         response.EnsureSuccessStatusCode();
         await using var stream = await response.Content.ReadAsStreamAsync(token);
         var document = await JsonDocument.ParseAsync(stream, cancellationToken: token);
+            Rover.Infrastructure.Usage.ModelReceipt.Report(request, document.RootElement);
         try
         {
             var root = document.RootElement;

@@ -47,6 +47,7 @@ public static class JourneyLabEndpoints
         });
         group.MapPost("/plan", async (LabPlanRequest request, IWalkPlanner planner, IWalkRouteProvider routes, CancellationToken ct) =>
         {
+            if (Rover.Api.Usage.UsageScope.Current.Value is {} scope) scope.Action = request.Suggest ? "Journey Lab - suggest stops" : "Journey Lab - build walking route";
             if (!ValidPlan(request))
                 return Results.Problem("Choose a start and valid stops or a destination, and 15 to 240 minutes.", statusCode: 400);
             try { return Results.Ok(await BuildAsync(request, planner, routes, ct)); }

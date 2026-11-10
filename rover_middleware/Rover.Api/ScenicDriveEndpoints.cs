@@ -7,9 +7,12 @@ public static class ScenicDriveEndpoints
 {
     public static void MapScenicDrives(this WebApplication app)
     {
-        app.MapPost("/api/drive-stop-story", async (DriveStopStoryRequest request, DriveStopStoryService service, CancellationToken ct) =>
+        app.MapPost("/api/drive-stop-story", async (DriveStopStoryRequest request, DriveStopStoryService service, Usage.UsageStore usage, CancellationToken ct) =>
         {
-            try { return Results.Ok(await service.CreateAsync(request, ct)); }
+            try { var result=await service.CreateAsync(request, ct);
+                var prepared=result.FactIdsUsed.Count>0 && !string.IsNullOrWhiteSpace(result.ShortSpokenNarration);
+                if (Usage.UsageScope.Current.Value is {} scope) usage.Record(scope.Event("Research","Walkabout","Research a stop",prepared ? "Prepared" : "No verified story") with { Units=prepared ? 1 : 0 });
+                return Results.Ok(result); }
             catch (ArgumentException e) { return Results.Problem(e.Message, statusCode: 400); }
         }).RequireRateLimiting("scenic-drive");
         app.MapGet("/api/drive-places", async (string query, double lat, double lng, ScenicDriveService service, CancellationToken ct) =>
