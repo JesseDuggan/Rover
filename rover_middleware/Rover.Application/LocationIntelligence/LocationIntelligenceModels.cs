@@ -130,6 +130,7 @@ public sealed record LocationStoryRequest(
 {
     public string? RouteSegmentId { get; init; }
     public string? DirectionalContext { get; init; }
+    public string? ContentDepth { get; init; }
 }
 
 public sealed record LocationStoryResult(

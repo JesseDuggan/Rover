@@ -7,6 +7,11 @@ public static class ScenicDriveEndpoints
 {
     public static void MapScenicDrives(this WebApplication app)
     {
+        app.MapPost("/api/place-story", async (DriveStopStoryRequest request, DriveStopStoryService service, CancellationToken ct) =>
+        {
+            try { return Results.Ok(await service.CreateAsync(request, ct)); }
+            catch (ArgumentException e) { return Results.Problem(e.Message, statusCode: 400); }
+        }).RequireRateLimiting("scenic-drive");
         app.MapPost("/api/drive-stop-story", async (DriveStopStoryRequest request, DriveStopStoryService service, Usage.UsageStore usage, CancellationToken ct) =>
         {
             try { var result=await service.CreateAsync(request, ct);

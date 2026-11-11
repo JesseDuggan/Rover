@@ -4,6 +4,44 @@ using Rover.Domain.Walks;
 
 internal static class NearbyStoryResearchTests
 {
+    public static async Task SharedPreparation()
+    {
+        // Synthetic evidence isolates orchestration; this is not a historical claim.
+        var now = DateTimeOffset.UtcNow;
+        var point = new GeoLocation(44.9008, -76.2493);
+        var place = new LocationPlace("perth-test", "Perth test site", point, "Perth, Ontario",
+            ["museum"], null, [], [], new Dictionary<string, string>(), 0, null, null,
+            null, 1, 1, [], [], null, null, now);
+        var story = new AdaptiveRouteStory("perth-story", "nearby", place.CanonicalId, "Test evidence",
+            RouteStoryIntent.HiddenHistory, "history", point, 0, 0,
+            [new(AdaptiveStoryLength.Standard, 30, "Perth test site short fixture.", ["claim"]),
+             new(AdaptiveStoryLength.Deep, 90, "Perth test site deeper fixture with additional context.", ["claim"])],
+            [new("claim", "Perth test site fixture evidence.", ["source"], .9)],
+            [new("source", "Test archive", "Fixture", "https://example.org/fixture", "Test", now, .9)],
+            .9, now.AddHours(1)) { AudienceSuitability = "family" };
+        var request = new LocationStoryRequest(point, 300, null, null, [], ["history", "architecture"],
+            [place.CanonicalId], "just-walking") { ContentDepth = "Deeper stories" };
+        var regular = new FakeResearcher(new([story], null));
+        var lab = new FakeResearcher(new([story], null));
+        var a = await NearbyStoryResearch.CreateAsync(regular, place, request, now, default);
+        var b = await NearbyStoryResearch.CreateAsync(lab, place, request, now, default, selectedDriveStop: true);
+        Check(a.ShortSpokenNarration == b.ShortSpokenNarration && a.ShortSpokenNarration.Contains("deeper"),
+            "Regular and prepared/Lab paths select the same requested depth.");
+        Check(regular.Query!.ContentDepth == "deep" && lab.Query!.ContentDepth == "deep"
+            && regular.Query.Interests.SequenceEqual(request.Interests)
+            && regular.Query.Question == lab.Query.Question,
+            "Both paths send the same place research question, interests and normalized depth.");
+        var brief = await NearbyStoryResearch.CreateAsync(regular, place, request with { ContentDepth = "standard" }, now, default);
+        Check(brief.ShortSpokenNarration.Contains("short fixture"), "Standard preparation selects standard narration.");
+        var calls = 0;
+        var recovery = new CapturingRouteResearcher(_ => ++calls == 1
+            ? new([story with { Variants = [new(AdaptiveStoryLength.Deep, 40, "Perth test site is rich in history.", ["claim"])] }], null)
+            : new([story], null));
+        var richer = await NearbyStoryResearch.CreateAsync(recovery, place, request, now, default);
+        Check(calls == 2 && richer.ShortSpokenNarration.Contains("deeper fixture"),
+            "Generic narration receives one bounded targeted recovery pass.");
+    }
+
     public static async Task Validation()
     {
         var now = DateTimeOffset.UtcNow;
@@ -17,7 +55,7 @@ internal static class NearbyStoryResearchTests
             [new(AdaptiveStoryLength.Standard, 60, "Coffee Club has documented history.", ["claim"])],
             [new("claim", "Coffee Club has documented history.", ["source"], .9)],
             [new("source", "Archive", "History", "https://example.org/history", "Archive", now, .9)],
-            .9, now.AddDays(1));
+            .9, now.AddDays(1)) { AudienceSuitability = "family" };
         var researcher = new FakeResearcher(new([story], null));
         var result = await NearbyStoryResearch.CreateAsync(researcher, place, request, now, default);
         Check(result.ResearchStatus == "ready" && result.PlaceId == "cafe"

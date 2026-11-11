@@ -94,6 +94,8 @@ var tests = new List<(string Name, Func<Task> Run)>
     ("Europeana timeouts and malformed replies preserve other images", EuropeanaTests.TimeoutsAndMalformedResponses),
     ("Europeana leads require independent cited research before narration", EuropeanaTests.ResearchPipeline),
     ("Nearby stories research selected places and retain verified evidence", NearbyStoryResearchTests.Validation),
+    ("Shared preparation matches regular and Lab depth and recovery", NearbyStoryResearchTests.SharedPreparation),
+    ("Shared preparation cache separates deeper research", SharedStoryLibraryTests.PreparationDepth),
     ("Shared stories persist and rebase across visitors", SharedStoryLibraryTests.ReuseAndPersistence),
     ("Shared stories enforce freshness and reuse permissions", SharedStoryLibraryTests.FreshnessAndPermissions),
     ("Shared stories match language, geography and missing coverage", SharedStoryLibraryTests.MatchingAndTopUp),
@@ -214,6 +216,7 @@ var tests = new List<(string Name, Func<Task> Run)>
     ("location intelligence same-name businesses do not merge without identity evidence", LocationIntelligenceSameNameBusinessCollisionDoesNotMerge),
     ("location intelligence shared Wikidata identity records verified resolution", LocationIntelligenceSharedWikidataIdentityResolution),
     ("Google Places provider parses nearby evidence and attribution", GooglePlacesProviderParsesNearbyEvidenceAndAttribution),
+    ("Google Places selected identity bypasses nearby ranking", GooglePlacesSelectedIdentity),
     ("Google Places provider searches OCR business text", GooglePlacesProviderSearchesOcrBusinessText),
     ("Google Places provider is safe without API key", GooglePlacesProviderIsSafeWithoutApiKey),
     ("Google Places provider is safe on network failure", GooglePlacesProviderIsSafeOnNetworkFailure),
@@ -925,7 +928,7 @@ static async Task RouteStoryContinuity()
         [new(AdaptiveStoryLength.Standard, 20, "A sourced local story.", ["claim"])],
         [new("claim", "A sourced local story.", ["source"], 0.9)],
         [new("source", "archive", "Archive", "https://example.org/history", "Archive", now, 0.9)], 0.9, now.AddHours(1));
-    var oldPack = new AdaptiveRouteStoryPack("3.0", "old", "old", session.WalkSessionId, "old", 1, new Phase16Options().PromptVersion + "-journey-v1", now,
+    var oldPack = new AdaptiveRouteStoryPack("3.0", "old", "old", session.WalkSessionId, "old", 1, new Phase16Options().PromptVersion + "-" + StoryPreparationPolicy.Version + "-standard-journey-v1", now,
         now.AddHours(2), [story, story with { StoryId = "expired", ExpiresUtc = now.AddMinutes(-1) },
             story with { StoryId = "distant", Anchor = new GeoLocation(0, 0) }], []);
     await packs.StoreAsync(new(session.WalkSessionId, 1, AdaptiveRouteStoryPackStatus.Ready, now, oldPack, null,
@@ -1404,11 +1407,11 @@ static async Task Phase16RoutePacksSelectCompleteAndSaveStories()
         researcher: new CapturingRouteResearcher(query =>
         {
             researchCalls++;
-            AssertEqual(1, query.PublicPlaces!.Count);
-            AssertEqual(place.Name, query.PublicPlaces[0].Name);
-            AssertEqual(place.Coordinates, query.PublicPlaces[0].Location);
-            AssertTrue(query.PublicPlaces.All(candidate => candidate.Address is null), "Do not send street addresses for route discovery.");
-            AssertEqual(place.Name, query.PublicPlaceNames.Single());
+            AssertTrue(query.PublicPlaces!.Any(candidate => candidate.Name == place.Name && candidate.Location == place.Coordinates),
+                "Route discovery retains the verified nearby subject.");
+            AssertTrue(session.Stops.All(stop => query.PublicPlaces!.Any(candidate => candidate.Name == stop.Name)),
+                "Shared preparation also receives the selected route stops, not only incidental discoveries.");
+            AssertTrue(query.PublicPlaceNames.Contains(place.Name), "Research names match supplied public subjects.");
             AssertTrue(query.Interests.SequenceEqual(session.Interests), "Route research must preserve listener interests.");
             AssertEqual(1000, query.SearchRadiusMeters);
             return new LocalRouteResearchResult([], null);
@@ -1443,8 +1446,8 @@ static async Task Phase16RoutePacksSelectCompleteAndSaveStories()
         researcher: new CapturingRouteResearcher(query =>
         {
             AssertTrue(query.Segments.All(segment => segment.EndRouteMeters >= progress), "Refill must research the remaining route.");
-            AssertEqual(0, query.PublicPlaceNames.Count);
-            AssertEqual(0, query.PublicPlaces!.Count);
+            AssertTrue(query.PublicPlaceNames.All(name => session.Stops.Any(stop => stop.Name == name)),
+                "Refill research uses known public route stops when no other candidates are found.");
             AssertTrue(query.Journey!.CoveredTopics.Contains(story.Title), "Refill must avoid existing chapters.");
             var segment = query.Segments.First();
             return new LocalRouteResearchResult(new[] { story with { StoryId = "refill-story", Title = "Another sourced chapter",
@@ -3050,6 +3053,28 @@ static async Task GooglePlacesProviderParsesNearbyEvidenceAndAttribution()
     AssertTrue(!result.CacheHit, "Google Places responses must not be served from provider cache.");
     await provider.GetContextAsync(new LocationContextQuery(new GeoLocation(44.678, -76.395), 1000, null, null, Array.Empty<GeoLocation>(), new[] { "history" }), CancellationToken.None);
     AssertEqual(2, requestCount);
+}
+
+static async Task GooglePlacesSelectedIdentity()
+{
+    var count = 0;
+    using var client = new HttpClient(new RoutingHttpMessageHandler(request => {
+        count++;
+        AssertEqual(HttpMethod.Get, request.Method);
+        AssertTrue(request.RequestUri!.AbsolutePath.EndsWith("/places/ChIJ123"), "Selected identity uses Place Details, not nearby ranking.");
+        AssertTrue(!request.Headers.GetValues("X-Goog-FieldMask").Single().Contains("places."), "Details mask must address a single place.");
+        return JsonResponse(HttpStatusCode.OK, """
+        {"id":"ChIJ123","displayName":{"text":"Test Museum"},"location":{"latitude":44.9,"longitude":-76.25},"types":["museum"]}
+        """);
+    }));
+    var clock = TimeProvider.System;
+    var provider = new GooglePlacesLocationContextProvider(new SingleHttpClientFactory(client),
+        new InMemoryLocationContextCache(clock), clock, new LocationProviderOptions { Enabled = true, AccessToken = "test-key" });
+    var place = await provider.FindSelectedAsync("google-ChIJ123", default);
+    AssertEqual("Test Museum", place!.Name);
+    AssertEqual("google-ChIJ123", place.CanonicalId);
+    AssertTrue(await provider.FindSelectedAsync("google-../other", default) is null, "Invalid IDs never become URLs.");
+    AssertEqual(1, count);
 }
 
 static async Task GooglePlacesProviderSearchesOcrBusinessText()

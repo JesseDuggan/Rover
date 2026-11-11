@@ -15,6 +15,8 @@ public enum StoryQuestionFormat { Auto, Single, ThenAndNow, Collection }
 
 public sealed record StoryQuestionRequest(string Question, double Latitude, double Longitude)
 {
+    public string? ContentDepth { get; init; }
+    public IReadOnlyList<string>? Interests { get; init; }
     public StoryQuestionScope Scope { get; init; } = StoryQuestionScope.Auto;
     public StoryQuestionFormat Format { get; init; } = StoryQuestionFormat.Auto;
     public int? StoryCount { get; init; }
@@ -37,6 +39,8 @@ public sealed class StoryQuestionService(ILocalRouteResearcher researcher, TimeP
     public async Task<StoryQuestionResponse> AskAsync(StoryQuestionRequest request, CancellationToken token)
     {
         token.ThrowIfCancellationRequested();
+        if (request.Interests?.Count > 20 || request.Interests?.Any(i => string.IsNullOrWhiteSpace(i) || i.Length > 120) == true)
+            throw new ArgumentException("Story interests exceed the allowed size.");
         if (string.IsNullOrWhiteSpace(request.Question) || request.Question.Length > 1200
             || request.Question.Any(c => char.IsControl(c) && !char.IsWhiteSpace(c)))
             throw new ArgumentException("A question of 1 to 1200 characters is required.");
@@ -131,8 +135,9 @@ public sealed class StoryQuestionService(ILocalRouteResearcher researcher, TimeP
             }
         }
         var query = new LocalRouteResearchQuery(segments, new ApproximateLiveLocation(null, null, null, null),
-            subjects.Select(s => s.Name).ToArray(), [], request.Language, subjects)
+            subjects.Select(s => s.Name).ToArray(), request.Interests ?? [], request.Language, subjects)
         {
+            ContentDepth = StoryPreparationPolicy.Depth(request.ContentDepth),
             AreaFirst = subjects.Count == 0 && scope != StoryQuestionScope.Route, SearchRadiusMeters = radius, MaximumStories = count,
             Question = new(text, scope, format, count, request.AvailableNarrationSeconds)
         };
@@ -155,8 +160,8 @@ public sealed class StoryQuestionService(ILocalRouteResearcher researcher, TimeP
         {
             // Whole variants only; never cut a spoken story off to meet the budget.
             var variant = story.Variants.Where(v => v.EstimatedDurationSeconds > 0
-                    && v.EstimatedDurationSeconds <= remaining && v.Length != AdaptiveStoryLength.Deep)
-                .OrderBy(v => Math.Abs((int)v.Length - (int)AdaptiveStoryLength.Standard)).FirstOrDefault();
+                    && v.EstimatedDurationSeconds <= remaining)
+                .OrderBy(v => Math.Abs((int)v.Length - (int)StoryPreparationPolicy.Length(request.ContentDepth))).FirstOrDefault();
             if (variant is null) continue;
             answers.Add(new(story, variant, "Explicitly requested, source-grounded answer."));
             remaining -= variant.EstimatedDurationSeconds;

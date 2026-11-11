@@ -6,7 +6,7 @@ using Rover.Domain.Walks;
 
 namespace Rover.Infrastructure.LocationIntelligence;
 
-public sealed class GooglePlacesLocationContextProvider : LocationContextProviderBase, ICandidateObservationSearchProvider, ILocationContextCachePolicy
+public sealed class GooglePlacesLocationContextProvider : LocationContextProviderBase, ICandidateObservationSearchProvider, ILocationContextCachePolicy, ISelectedLocationProvider
 {
     private const string SearchFieldMask = "places.id,places.displayName.text,places.location,places.formattedAddress,places.addressComponents,places.primaryType,places.primaryTypeDisplayName.text,places.types,places.googleMapsUri,places.businessStatus,places.currentOpeningHours.openNow,places.accessibilityOptions,places.attributions";
     private readonly IHttpClientFactory _httpClientFactory;
@@ -24,6 +24,31 @@ public sealed class GooglePlacesLocationContextProvider : LocationContextProvide
     public override string Name => "GooglePlaces";
     public bool AllowsAggregateCaching => !Options.Enabled;
     protected override bool AllowResultCaching => false;
+
+    public async Task<LocationPlace?> FindSelectedAsync(string canonicalId, CancellationToken cancellationToken)
+    {
+        if (!Options.Enabled || string.IsNullOrWhiteSpace(Options.AccessToken)
+            || !canonicalId.StartsWith("google-", StringComparison.Ordinal)) return null;
+        var id = canonicalId[7..];
+        if (id.Length is 0 or > 256 || id != NormalizeId(id)) return null;
+        using var timeout = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
+        timeout.CancelAfter(TimeSpan.FromSeconds(Math.Clamp(Options.TimeoutSeconds, 2, 30)));
+        try
+        {
+            var endpoint = (Options.Endpoint ?? "https://places.googleapis.com/v1").TrimEnd('/');
+            using var request = new HttpRequestMessage(HttpMethod.Get, $"{endpoint}/places/{Uri.EscapeDataString(id)}");
+            request.Headers.TryAddWithoutValidation("X-Goog-Api-Key", Options.AccessToken);
+            request.Headers.TryAddWithoutValidation("X-Goog-FieldMask", SearchFieldMask.Replace("places.", ""));
+            using var response = await _httpClientFactory.CreateClient("GooglePlaces").SendAsync(request, timeout.Token);
+            if (!response.IsSuccessStatusCode) return null;
+            using var document = JsonDocument.Parse(await response.Content.ReadAsStringAsync(timeout.Token));
+            var place = ParsePlace(document.RootElement);
+            return place?.CanonicalId == canonicalId ? place : null;
+        }
+        catch (HttpRequestException) { return null; }
+        catch (JsonException) { return null; }
+        catch (OperationCanceledException) when (!cancellationToken.IsCancellationRequested) { return null; }
+    }
 
     protected override async Task<LocationContextProviderResult> FetchAsync(LocationContextQuery query, CancellationToken cancellationToken)
     {

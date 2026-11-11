@@ -4,7 +4,7 @@ public sealed record GenerateAdaptiveRouteStoryPackRequest(
     Guid? ProfileId,
     string? Audience,
     string? Language,
-    bool? ForceRefresh);
+    bool? ForceRefresh, string? ContentDepth = null);
 
 public sealed record NextAdaptiveRouteStoryRequest(
     double? RouteProgressMeters,

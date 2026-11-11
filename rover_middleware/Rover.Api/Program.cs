@@ -436,7 +436,8 @@ locationIntelligence.MapPost("/location-story", async (
                 request.NarrationStyle)
             {
                 RouteSegmentId = request.RouteSegmentId,
-                DirectionalContext = request.DirectionalContext
+                DirectionalContext = request.DirectionalContext,
+                ContentDepth = request.ContentDepth
             },
             cancellationToken);
         return Results.Ok(story.ToResponse());
@@ -1239,7 +1240,7 @@ walks.MapPost("/{walkSessionId}/route-story-pack/generate", async (
                 request.ProfileId,
                 request.Audience,
                 request.Language,
-                request.ForceRefresh ?? false),
+                request.ForceRefresh ?? false, request.ContentDepth),
             cancellationToken);
         return Results.Accepted($"/api/walks/{walkSessionId}/route-story-pack/status", state);
     }

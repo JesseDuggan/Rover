@@ -31,7 +31,9 @@ public sealed class LibraryLocalRouteResearcher(
         var questionKey = query.Question is null ? null : Convert.ToHexString(SHA256.HashData(
             Encoding.UTF8.GetBytes(JsonSerializer.Serialize(new
             {
-                policy = "question-v1", query.Question, language, query.SearchRadiusMeters,
+                policy = StoryPreparationPolicy.Version, depth = StoryPreparationPolicy.Depth(query.ContentDepth),
+                interests = query.Interests.Select(Normalize).Distinct().Order().ToArray(),
+                query.Question, language, query.SearchRadiusMeters,
                 areas = query.Segments.Select(s => new {
                     startLat = Math.Round(s.Start.Latitude, 4), startLon = Math.Round(s.Start.Longitude, 4),
                     endLat = Math.Round(s.End.Latitude, 4), endLon = Math.Round(s.End.Longitude, 4)
@@ -61,6 +63,7 @@ public sealed class LibraryLocalRouteResearcher(
             .Concat(query.LibraryCandidates.Select(story => story.Title))
             .Select(Normalize).ToHashSet(StringComparer.Ordinal);
         var reused = stored.Where(entry => entry.Language == language && entry.QuestionKey == questionKey
+                && (StoryPreparationPolicy.Depth(query.ContentDepth) != "deep" || entry.Story.ResearchDepth == "deep")
                 && !excluded.Contains(Normalize(entry.Story.Title)))
             .Select(entry => Rebase(entry.Story, query))
             .Where(story => story is not null).Cast<AdaptiveRouteStory>()
@@ -69,7 +72,7 @@ public sealed class LibraryLocalRouteResearcher(
             .ThenBy(story => story.OpensAtRouteMeters)
             .DistinctBy(story => Normalize(story.Title)).Take(target).ToArray();
         // A partially cached collection is not a new answer to a multi-part question.
-        if (questionKey is not null && reused.Length < target) reused = [];
+        if (query.Question is not null && reused.Length < target) reused = [];
         if (reused.Length > 0) metrics.Record("reused", reused.Length);
         if (reused.Length >= target && CoversRequestedLiveTopics(reused, query.Interests))
         {

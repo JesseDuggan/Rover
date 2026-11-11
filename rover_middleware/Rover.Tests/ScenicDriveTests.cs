@@ -47,8 +47,7 @@ internal static class ScenicDriveTests
             });
             var research = new DriveStopStoryService(new ScenicDriveService([new Places(category)], new Routes()), later, TimeProvider.System);
             var recovered = await research.CreateAsync(request, default);
-            var eligible = category != "coffee_shop";
-            Check(calls == (eligible ? 2 : 1) && (recovered.ResearchStatus == "ready") == eligible, "Retry only eligible stops and validate the result.");
+            Check(calls == 2 && recovered.ResearchStatus == "ready", "All place types receive bounded recovery and validated evidence.");
         }
         var empty = new DriveStopStoryService(new ScenicDriveService([new Places()], new Routes()),
             new CapturingRouteResearcher(_ => new([], null)), TimeProvider.System);

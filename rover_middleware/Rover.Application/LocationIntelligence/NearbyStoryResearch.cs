@@ -30,37 +30,36 @@ public static class NearbyStoryResearch
             [place.Name], request.Interests.ToArray(), "en",
             [new LocalResearchPublicPlace(place.Name, place.Address, place.Coordinates)])
         {
+            ContentDepth = StoryPreparationPolicy.Depth(request.ContentDepth),
             MaximumStories = 1,
-            Question = selectedDriveStop ? new StoryResearchQuestion(
+            Question = new StoryResearchQuestion(
                 $"What is distinctive about {place.Name} at {place.Address}? Listed place types: {string.Join(", ", place.Categories)}. Verify its identity and choose a research angle appropriate to this exact site. " +
-                (request.RouteGeometry.Count == 2 ? FormattableString.Invariant($"This walking journey starts at {request.RouteGeometry[0].Latitude:F4},{request.RouteGeometry[0].Longitude:F4} and ends at {request.RouteGeometry[1].Latitude:F4},{request.RouteGeometry[1].Longitude:F4}. ") : "") +
+                (request.RouteGeometry.Count >= 2 ? FormattableString.Invariant($"This walking journey starts at {request.RouteGeometry[0].Latitude:F4},{request.RouteGeometry[0].Longitude:F4} and ends at {request.RouteGeometry[^1].Latitude:F4},{request.RouteGeometry[^1].Longitude:F4}. ") : "") +
                 "For natural sites investigate landscape formation, ecology, local stewardship or cultural history. For museums consult collection and exhibition records. For performance venues check named productions in official programmes. For other places investigate their original purpose, people, or changes over time. Choose one specific, sourced detail that fits the walker’s interests. If the stop is part of a larger landmark, verify that relationship and explain its relevance when supported. Mention current activity only when a dated source confirms it is current. If no site-specific evidence is available, return no story. " +
                 "Do not substitute nearby attractions or invent access, parking, opening hours or safety advice.",
-                StoryQuestionScope.Street, StoryQuestionFormat.Single, 1, 90) : null
+                StoryQuestionScope.Street, StoryQuestionFormat.Single, 1, 90)
         };
 
         using var timeout = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
-        timeout.CancelAfter(TimeSpan.FromSeconds(selectedDriveStop ? 90 : 35));
+        timeout.CancelAfter(TimeSpan.FromSeconds(90));
         // Reserve part of the existing request budget for a genuinely different search.
         var subjectTypes = string.Join(" ", place.Categories.Append(place.Name)).Replace('_', ' ');
         var commemorative = System.Text.RegularExpressions.Regex.IsMatch(subjectTypes,
             @"\b(plaque|marker|memorial|monument|stolperstein|mémorial|denkmal|placa|targa)\b",
             System.Text.RegularExpressions.RegexOptions.IgnoreCase | System.Text.RegularExpressions.RegexOptions.CultureInvariant);
-        var landmark = System.Text.RegularExpressions.Regex.IsMatch(subjectTypes,
-            @"\b(landmark|tourist attraction|museum|national park|palace|cathedral|heritage site|historic site|archaeological site|castle|aquarium|stadium|concert hall|performing arts theater)\b",
-            System.Text.RegularExpressions.RegexOptions.IgnoreCase | System.Text.RegularExpressions.RegexOptions.CultureInvariant);
-        var retry = commemorative || landmark;
+        var retry = true; // Every kind of place gets the same bounded recovery opportunity.
         using var first = CancellationTokenSource.CreateLinkedTokenSource(timeout.Token);
-        if (retry) first.CancelAfter(TimeSpan.FromSeconds(selectedDriveStop ? 45 : 17));
+        if (retry) first.CancelAfter(TimeSpan.FromSeconds(45));
         var initial = await Search(query, first.Token);
-        if (!retry || initial.ResearchStatus == "ready" || timeout.IsCancellationRequested) return initial;
+        if (!retry || (initial.ResearchStatus == "ready" && !IsGeneric(initial.ShortSpokenNarration) && (StoryPreparationPolicy.Depth(request.ContentDepth) != "deep" || initial.ShortSpokenNarration.Split(' ', StringSplitOptions.RemoveEmptyEntries).Length >= 80)) || timeout.IsCancellationRequested) return initial;
         var focus = commemorative
             ? "Look for an inscription, marker inventory or photograph identifying what is commemorated. Follow that person, object, image or event into archives. Explain one visible detail, distinguishing later replicas or approximate positions when evidence supports it."
             : "Search local-language archives, collections and primary histories under alternate or former names. Trace one specific person, event, natural feature or change documented at this exact attraction.";
         var followUp = new StoryResearchQuestion(
-            $"At {place.Name}, {place.Address}, what can the walker notice? {focus} Connect the subject back to the named stop using cited evidence. Identify the stop by its supplied name in a supported claim. Do not relocate events or infer a connection from proximity.",
+            $"At {place.Name}, {place.Address}, what can the walker notice? {focus} Connect the subject back to the named stop using cited evidence. Develop the evidence into a complete, connected story at the requested content depth, not a directory summary. Keep the entire single story in one cited paragraph. Identify the stop by its supplied name in a supported claim. Do not relocate events or infer a connection from proximity.",
             StoryQuestionScope.Street, StoryQuestionFormat.Single, 1, 90);
-        return await Search(query with { Question = followUp }, timeout.Token);
+        var recovered = await Search(query with { Question = followUp }, timeout.Token);
+        return recovered.ResearchStatus == "ready" ? recovered : initial;
 
         async Task<LocationStoryResult> Search(LocalRouteResearchQuery searchQuery, CancellationToken token)
         {
@@ -80,8 +79,8 @@ public static class NearbyStoryResearch
             cancellationToken.ThrowIfCancellationRequested();
             foreach (var story in result.Stories)
             {
-                if (selectedDriveStop && !story.CanAutoplay) continue;
-                var variant = story.Variants.FirstOrDefault(v => v.Length == AdaptiveStoryLength.Standard)
+                if (!story.CanAutoplay) continue;
+                var variant = story.Variants.FirstOrDefault(v => v.Length == StoryPreparationPolicy.Length(request.ContentDepth))
                     ?? story.Variants.OrderByDescending(v => v.EstimatedDurationSeconds).FirstOrDefault();
                 if (variant is null || string.IsNullOrWhiteSpace(variant.Narration) || ReportsMissingEvidence(variant.Narration)
                     || variant.ClaimIds.Count == 0 || story.ExpiresUtc <= now
@@ -110,6 +109,9 @@ public static class NearbyStoryResearch
             return Empty(result.Failed ? "failed" : "empty");
         }
     }
+
+    private static bool IsGeneric(string text) =>
+        System.Text.RegularExpressions.Regex.IsMatch(text, @"\b(rich in history|nestled in the heart|something for everyone)\b", System.Text.RegularExpressions.RegexOptions.IgnoreCase);
 
     internal static bool ReportsMissingEvidence(string text) =>
         System.Text.RegularExpressions.Regex.IsMatch(text,

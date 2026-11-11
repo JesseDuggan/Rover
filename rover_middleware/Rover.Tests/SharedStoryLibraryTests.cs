@@ -6,6 +6,20 @@ using Rover.Infrastructure.Journeys;
 
 internal static class SharedStoryLibraryTests
 {
+    public static async Task PreparationDepth()
+    {
+        await WithLibrary(async (options, clock) =>
+        {
+            var fake = new Researcher(clock);
+            var service = Service(fake, options, clock, new());
+            var query = Query("perth-profile");
+            await service.ResearchAsync(query, default);
+            await service.ResearchAsync(query with { ContentDepth = "deeper stories" }, default);
+            Check(fake.Calls == 2, "A standard cached story cannot satisfy deeper preparation.");
+            await service.ResearchAsync(query with { ContentDepth = "deep" }, default);
+            Check(fake.Calls == 2, "Equivalent depth labels reuse prepared evidence.");
+        });
+    }
     public static async Task QuestionIsolation()
     {
         await WithLibrary(async (options, clock) =>
@@ -224,7 +238,7 @@ internal static class SharedStoryLibraryTests
             if (Delay) await Task.Delay(150, token);
             if (Fail) throw new HttpRequestException("Unavailable");
             return new(Enumerable.Range(0, query.MaximumStories ?? 3)
-                .Select(index => Story($"batch-{call}-{index}", clock.Now)).ToArray(), null);
+                .Select(index => Story($"batch-{call}-{index}", clock.Now) with { ResearchDepth = StoryPreparationPolicy.Depth(query.ContentDepth) }).ToArray(), null);
         }
     }
 }

@@ -110,6 +110,7 @@ public sealed record AdaptiveRouteStory(
     public string? SensitivityNotice { get; init; }
     public IReadOnlyList<string> UncertainClaims { get; init; } = [];
     public string TemporalClassification { get; init; } = "evergreen";
+    public string ResearchDepth { get; init; } = "standard";
     public string GeographicScope { get; init; } = "local";
     public string? GeographicArea { get; init; }
     public GeoLocation? ContextOrigin { get; init; }
@@ -148,7 +149,7 @@ public sealed record AdaptiveRouteStoryPackState(
     public AdaptiveStoryPlaybackOutcomes PlaybackOutcomes { get; init; } = new();
 }
 
-public sealed record GenerateAdaptiveRouteStoryPackCommand(Guid? ProfileId, string? Audience, string? Language, bool ForceRefresh);
+public sealed record GenerateAdaptiveRouteStoryPackCommand(Guid? ProfileId, string? Audience, string? Language, bool ForceRefresh, string? ContentDepth = null);
 
 public sealed record NextAdaptiveRouteStoryQuery(
     double RouteProgressMeters,
@@ -389,7 +390,7 @@ public sealed class AdaptiveRouteStoryPackService : IAdaptiveRouteStoryPackServi
         EnsureEnabled();
         var session = await GetSessionAsync(walkSessionId, cancellationToken);
         var existing = await _packs.GetAsync(walkSessionId, session.RouteRevision, cancellationToken);
-        var promptVersion = _options.PromptVersion + (_options.JourneyCollectionsEnabled ? "-journey-v1" : "");
+        var promptVersion = _options.PromptVersion + "-" + StoryPreparationPolicy.Version + "-" + StoryPreparationPolicy.Depth(command.ContentDepth) + (_options.JourneyCollectionsEnabled ? "-journey-v1" : "");
         var key = IdempotencyKey(session, command, promptVersion);
         if (existing?.Pack is { } cached && (!command.ForceRefresh || cached.GeneratedUtc >= requestedAt)
             && cached.ExpiresUtc > _timeProvider.GetUtcNow()
@@ -458,7 +459,7 @@ public sealed class AdaptiveRouteStoryPackService : IAdaptiveRouteStoryPackServi
                 researchPlan = plan with { Segments = plan.Segments.Where(segment => segment.EndRouteMeters >= progress).ToArray() };
             }
             var stories = await BuildStoriesAsync(session, researchPlan, command.ProfileId, command.Language ?? "en", warnings, generationToken,
-                _options.JourneyCollectionsEnabled ? retainedStories : [], command.Audience ?? "GeneralTraveller").WaitAsync(generationToken);
+                _options.JourneyCollectionsEnabled ? retainedStories : [], command.Audience ?? "GeneralTraveller", command.ContentDepth).WaitAsync(generationToken);
             if (stories.Count == 0) warnings.Add("No sufficiently grounded route stories were found.");
             if (_options.JourneyCollectionsEnabled && retainedStories.Length > 0)
             {
@@ -676,7 +677,7 @@ public sealed class AdaptiveRouteStoryPackService : IAdaptiveRouteStoryPackServi
         string language,
         List<string> warnings,
         CancellationToken cancellationToken,
-        IReadOnlyList<AdaptiveRouteStory> existingStories, string audience)
+        IReadOnlyList<AdaptiveRouteStory> existingStories, string audience, string? contentDepth)
     {
         var stories = new List<AdaptiveRouteStory>();
         var usedPlaces = existingStories.Select(story => story.PlaceId).ToHashSet(StringComparer.OrdinalIgnoreCase);
@@ -766,12 +767,14 @@ public sealed class AdaptiveRouteStoryPackService : IAdaptiveRouteStoryPackServi
         }
         if (_researcher is not null)
         {
-            var publicPlaces = researchPlaces.DistinctBy(place => place.Name, StringComparer.OrdinalIgnoreCase).Take(12).ToArray();
+            var publicPlaces = session.Stops.OrderBy(stop => stop.SequenceNumber)
+                .Select(stop => new LocalResearchPublicPlace(stop.Name, stop.Address, stop.Location))
+                .Concat(researchPlaces).DistinctBy(place => place.Name, StringComparer.OrdinalIgnoreCase).Take(12).ToArray();
             var research = await _researcher.ResearchAsync(new LocalRouteResearchQuery(plan.Segments,
                 new ApproximateLiveLocation(areaPlace?.City, areaPlace?.Region, areaPlace?.CountryCode, null),
                 publicPlaces.Select(place => place.Name).ToArray(), session.Interests.ToArray(), language, publicPlaces,
                 _options.JourneyCollectionsEnabled ? JourneyCollectionBuilder.Brief(session, plan, existingStories.Concat(stories).ToArray()) : null)
-                { LibraryCandidates = stories.ToArray(), Audience = audience }, cancellationToken);
+                { ContentDepth = StoryPreparationPolicy.Depth(contentDepth), LibraryCandidates = stories.ToArray(), Audience = audience }, cancellationToken);
             var known = stories.SelectMany(story => story.Claims).Select(claim => claim.Text.Trim())
                 .ToHashSet(StringComparer.OrdinalIgnoreCase);
             stories.AddRange(research.Stories.Where(story => !story.Claims.Any(claim => known.Contains(claim.Text.Trim()))));

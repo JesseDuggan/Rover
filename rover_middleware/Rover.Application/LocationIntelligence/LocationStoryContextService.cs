@@ -150,6 +150,17 @@ public sealed class LocationStoryContextService : ILocationStoryContextService
 
     public async Task<LocationStoryResult> CreateStoryAsync(LocationStoryRequest request, CancellationToken cancellationToken)
     {
+        // A selected place must not disappear because nearby search ranked other places first.
+        if (_nearbyResearcher is not null && request.SelectedPlaceIds.Count == 1)
+        {
+            foreach (var provider in _providers.OfType<ISelectedLocationProvider>())
+            {
+                var exact = await provider.FindSelectedAsync(request.SelectedPlaceIds.First(), cancellationToken);
+                if (exact is not null)
+                    return await NearbyStoryResearch.CreateAsync(_nearbyResearcher, exact, request,
+                        _timeProvider.GetUtcNow(), cancellationToken);
+            }
+        }
         var context = await GetContextAsync(
             new LocationContextQuery(
                 request.UserCoordinates,
@@ -165,7 +176,7 @@ public sealed class LocationStoryContextService : ILocationStoryContextService
             cancellationToken);
 
         var selectedPlace = SelectPlace(context, request.SelectedPlaceIds);
-        if (request.NarrationStyle == "just-walking")
+        if (request.NarrationStyle == "just-walking" || (_nearbyResearcher is not null && selectedPlace is not null && request.SelectedPlaceIds.Count == 1))
         {
             var researched = await NearbyStoryResearch.CreateAsync(
                 _nearbyResearcher, selectedPlace, request, _timeProvider.GetUtcNow(), cancellationToken);

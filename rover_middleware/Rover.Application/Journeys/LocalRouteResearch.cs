@@ -12,6 +12,7 @@ public sealed record LocalRouteResearchQuery(
     IReadOnlyList<LocalResearchPublicPlace>? PublicPlaces = null,
     JourneyBrief? Journey = null)
 {
+    public string ContentDepth { get; init; } = "standard";
     public int? MaximumStories { get; init; }
     public string Audience { get; init; } = "GeneralTraveller";
     public StoryResearchQuestion? Question { get; init; }

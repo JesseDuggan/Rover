@@ -7,7 +7,7 @@ using Rover.Domain.Walks;
 namespace Rover.Application.Journeys;
 
 public sealed record AreaStoryRequest(double Latitude, double Longitude,
-    IReadOnlyList<string>? Interests, IReadOnlyList<string>? ExcludedTitles, int SearchRadiusMeters = 1000);
+    IReadOnlyList<string>? Interests, IReadOnlyList<string>? ExcludedTitles, int SearchRadiusMeters = 1000, string? ContentDepth = null);
 public sealed record AreaStoryCollection(string Status, IReadOnlyList<AdaptiveRouteStory> Stories, int SearchRadiusMeters = 1000);
 
 public sealed class AreaStoryService(ILocalRouteResearcher researcher, TimeProvider clock,
@@ -36,6 +36,7 @@ public sealed class AreaStoryService(ILocalRouteResearcher researcher, TimeProvi
         var query = new LocalRouteResearchQuery([anchor], new ApproximateLiveLocation(null, null, null, null),
             leads.Select(p => p.Name).ToArray(), (request.Interests ?? []).Distinct(StringComparer.OrdinalIgnoreCase).ToArray(), "en", leads)
         {
+            ContentDepth = StoryPreparationPolicy.Depth(request.ContentDepth),
             AreaFirst = true, MaximumStories = 3,
             SearchRadiusMeters = request.SearchRadiusMeters,
             ExcludedStoryTitles = request.ExcludedTitles ?? []
