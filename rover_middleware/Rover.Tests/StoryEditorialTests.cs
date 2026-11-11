@@ -12,6 +12,7 @@ internal static class StoryEditorialTests
     {
         await Verify(false);
         await Verify(false, crossSentenceQualifier: true);
+        await Verify(false, briefEvidence: true);
         await EmptyClassificationRecovery(false);
         await EmptyClassificationRecovery(true);
         await MissingCitationsRemainRejected();
@@ -102,7 +103,7 @@ internal static class StoryEditorialTests
         finally { StoryInspection.Listener.Value = previous; }
     }
 
-    private static async Task Verify(bool question, bool relevant = true, bool recovery = false, bool foodOnly = false, string? scope = null, bool areaRecovery = false, string? coordinateCase = null, string? rejectedDraft = null, bool gap = false, bool mismatchedVenue = false, bool crossSentenceQualifier = false)
+    private static async Task Verify(bool question, bool relevant = true, bool recovery = false, bool foodOnly = false, string? scope = null, bool areaRecovery = false, string? coordinateCase = null, string? rejectedDraft = null, bool gap = false, bool mismatchedVenue = false, bool crossSentenceQualifier = false, bool briefEvidence = false)
     {
         var anchor = new GeoLocation(52.2946778, 4.7108732);
         var segment = new RouteStorySegment("area", 0, anchor, anchor, anchor, 0, 0, 0, 0, false, []);
@@ -111,6 +112,7 @@ internal static class StoryEditorialTests
             "Those records explain how the workshop changed over time. The archive also documents the surrounding community. " +
             "Apprentices learned to repair the tools here. The upper room stored finished work. " +
             "Location: test archive; latitude 52.295; longitude 4.711.";
+        if (briefEvidence) passage = passage.Replace("Apprentices learned to repair the tools here. The upper room stored finished work. ", "");
         if (mismatchedVenue) passage = passage.Replace("test archive", "North Perth Town Hall");
         foreach (var audience in new string?[] { "family", "sensitive", "mature", null })
         {
