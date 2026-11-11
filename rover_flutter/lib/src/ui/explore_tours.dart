@@ -14,6 +14,7 @@ import 'prepared_walk_screen.dart';
 import 'tour_question.dart';
 import 'tour_route_preview.dart';
 import 'prepare_tour_stories.dart';
+import 'tour_details.dart';
 
 class CityTour {
   const CityTour(
@@ -117,6 +118,16 @@ class _ExploreToursState extends State<ExploreToursScreen> {
         depth: prefs.contentDepth,
       );
       if (!mounted) return;
+      if (tour.savedNarration) {
+        final data = jsonDecode(
+          await rootBundle.loadString('assets/tours/${tour.asset}.json'),
+        ) as Map<String, dynamic>;
+        if (!mounted) return;
+        final proceed = await navigator.push<bool>(
+          MaterialPageRoute(builder: (_) => TourDetailsScreen(data: data)),
+        );
+        if (proceed != true || !mounted) return;
+      }
       Future<void> play(PreparedWalk walk) async {
         if (preparing) return;
         preparing = true;

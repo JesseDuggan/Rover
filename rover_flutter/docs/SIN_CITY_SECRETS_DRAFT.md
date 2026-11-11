@@ -36,3 +36,6 @@ Live existing Railway route endpoint returned all four stops successfully. No ba
 - https://burlesquehall.com/about/frequently-asked-questions-faq/
 - https://themobmuseum.org/digital-archive/this-building-of-ours/
 - https://themobmuseum.org/underground/
+
+## Story details update
+The catalogue now opens a details page with all eight individually readable/playable chapters before route preview. Geographic routing still uses four unique anchors. Optional cultural visit cards cover the Burlesque Hall of Fame, the historic Moulin Rouge site, and the Underground; none changes the core route. Moulin Rouge has a separately playable sourced bonus story. No current adult-club directory or booking flow is included. Chapter audio is stopped when navigating away.
