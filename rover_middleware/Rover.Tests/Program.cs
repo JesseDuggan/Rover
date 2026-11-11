@@ -43,6 +43,7 @@ if (args.Contains("--ontario-source-audit"))
 
 var tests = new List<(string Name, Func<Task> Run)>
 {
+    ("Narration omits routine addresses and preserves historical facts", NarrationAddressTests.PresentationOnly),
     ("API usage persists provider calls, private walk links and priced model receipts", UsageTests.TracksProviderAndPrice),
     ("Story inspector migrates usage history, bounds data and links walk traces", UsageTests.InspectionMigration),
     ("Scenic Drive budgets include stops and return travel", ScenicDriveTests.BudgetAndReturn),

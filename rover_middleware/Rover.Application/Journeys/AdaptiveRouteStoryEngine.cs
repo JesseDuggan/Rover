@@ -862,7 +862,7 @@ public sealed class AdaptiveRouteStoryPackService : IAdaptiveRouteStoryPackServi
     private static AdaptiveNarrationVariant Variant(AdaptiveStoryLength length, IEnumerable<AdaptiveStoryClaim> selected)
     {
         var claims = selected.ToArray();
-        var narration = string.Join(" ", claims.Select(claim => claim.Text));
+        var narration = NarrationAddressPolicy.ForStory(string.Join(" ", claims.Select(claim => claim.Text)));
         var words = narration.Split(' ', StringSplitOptions.RemoveEmptyEntries).Length;
         return new AdaptiveNarrationVariant(length, Math.Max(1, (int)Math.Ceiling(words / 2.5d)), narration, claims.Select(claim => claim.ClaimId).ToArray());
     }

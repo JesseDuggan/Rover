@@ -36,7 +36,7 @@ internal static class StoryEditorialTests
         var anchor = new GeoLocation(52.2946778, 4.7108732);
         var segment = new RouteStorySegment("area", 0, anchor, anchor, anchor, 0, 0, 0, 0, false, []);
         var passage = (rejectedDraft ?? "") + " This test archive describes a local workshop and the people who worked there. " +
-            "Accounts disagree about its opening date. The collection preserves their tools and written records. " +
+            "Accounts disagree about its opening date. The workshop at 12 King Street preserves their tools and written records. " +
             "Those records explain how the workshop changed over time. The archive also documents the surrounding community. " +
             "Location: test archive; latitude 52.295; longitude 4.711.";
         foreach (var audience in new string?[] { "family", "sensitive", "mature", null })
@@ -54,6 +54,8 @@ internal static class StoryEditorialTests
                 string output;
                 if (calls % 2 == 1)
                 {
+                    Check(body.RootElement.GetProperty("instructions").GetString()!.Contains(NarrationAddressPolicy.Instructions),
+                        "Every research path receives the shared narration address rule.");
                     var input = body.RootElement.GetProperty("input").GetString()!;
                     var instructions = body.RootElement.GetProperty("instructions").GetString()!;
                     Check(instructions.Contains("warm, conversational") && instructions.Contains("family-safe")
@@ -151,6 +153,8 @@ internal static class StoryEditorialTests
             }
             Check(result.Stories.Count == 1 && calls == (recovery ? 4 : 2), "Research uses at most one recovery attempt.");
             var story = result.Stories.Single();
+            Check(story.Claims.Any(c => c.Text.Contains("12 King Street")), "Original address evidence must remain intact.");
+            Check(story.Variants.All(v => !v.Narration.Contains("12 King Street")), "All spoken variants omit address numbers.");
             Check(story.Variants.All(v => !v.Narration.Contains("Location:") && !v.Narration.Contains("latitude")),
                 "Coordinate metadata must never become spoken narration.");
             if (scope is not null)

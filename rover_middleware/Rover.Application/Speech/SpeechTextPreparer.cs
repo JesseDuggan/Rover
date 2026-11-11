@@ -7,7 +7,10 @@ public static partial class SpeechTextPreparer
 {
     public static PreparedSpeechText Prepare(RenderSpeechCommand command, int maximumCharacters)
     {
-        var text = Normalize(command.Text);
+        var source = command.Purpose == SpeechPurpose.AskRoverAnswer
+            ? command.Text // An explicit question may legitimately ask for an address.
+            : Rover.Application.Journeys.NarrationAddressPolicy.ForStory(command.Text);
+        var text = Normalize(source);
         if (string.IsNullOrWhiteSpace(text))
         {
             throw new ArgumentException("Speech text is required.");
@@ -22,7 +25,7 @@ public static partial class SpeechTextPreparer
             text,
             command.Purpose,
             string.IsNullOrWhiteSpace(command.Locale) ? "en-US" : command.Locale.Trim(),
-            $"{command.Purpose}:v1");
+            $"{command.Purpose}:v2-address-free");
     }
 
     private static string Normalize(string value)

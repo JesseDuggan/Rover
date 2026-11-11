@@ -310,7 +310,7 @@ public sealed class OpenAILocalRouteResearcher(HttpClient client, LocalRouteRese
                     .Select(length =>
                     {
                         var selected = claims.Take(preserveContext ? claims.Length : length.Item2).ToArray();
-                        var narration = string.Join(' ', selected.Select(claim => claim.Text));
+                        var narration = NarrationAddressPolicy.ForStory(string.Join(' ', selected.Select(claim => claim.Text)));
                         if (scope != "local")
                             narration = $"For broader {scope} context in {card.GeographicArea}: " + narration;
                         return new AdaptiveNarrationVariant(length.Item1, (int)Math.Ceiling(

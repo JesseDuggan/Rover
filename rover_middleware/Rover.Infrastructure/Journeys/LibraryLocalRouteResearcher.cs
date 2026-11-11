@@ -127,6 +127,7 @@ public sealed class LibraryLocalRouteResearcher(
         var radius = query.Question is not null ? query.SearchRadiusMeters : 225;
         if (RouteMath.DistanceToSegmentMeters(relevanceAnchor, segment.Start, segment.End) > radius) return null;
         return story with { SegmentId = segment.SegmentId,
+            Variants = story.Variants.Select(v => v with { Narration = NarrationAddressPolicy.ForStory(v.Narration) }).ToArray(),
             OpensAtRouteMeters = segment.StartRouteMeters, ClosesAtRouteMeters = segment.EndRouteMeters };
     }
 
