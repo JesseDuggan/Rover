@@ -87,7 +87,7 @@ public sealed class UsageStore(IConfiguration config, ILogger<UsageStore> logger
         }
     }
 
-    public List<string[]> Rows(string sql, int days, string journey)
+    public List<string[]> Rows(string sql, int days, string journey, string search = "")
     {
         if (!initialized) return [];
         using var db = Open();
@@ -95,6 +95,7 @@ public sealed class UsageStore(IConfiguration config, ILogger<UsageStore> logger
         query.CommandText = sql;
         query.Parameters.AddWithValue("$since",new DateTimeOffset(DateTime.UtcNow.Date.AddDays(1-days)).ToUnixTimeSeconds());
         query.Parameters.AddWithValue("$journey",journey);
+        query.Parameters.AddWithValue("$search",search);
         using var reader = query.ExecuteReader();
         var data = new List<string[]>();
         while(reader.Read()) data.Add(Enumerable.Range(0,reader.FieldCount)
