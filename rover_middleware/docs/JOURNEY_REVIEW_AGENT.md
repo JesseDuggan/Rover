@@ -1,6 +1,6 @@
 # Read-only journey review
 
-Open the protected [journey inspector](https://rover-production-d220.up.railway.app/admin/journeys) with the administrator login. On the newer page, use **Find a place or story**, for example [Perth](https://rover-production-d220.up.railway.app/admin/journeys?q=Perth). Search matches recorded titles across the full request, preserving its other events. A missing title match does not prove there was no activity. Open a request to inspect its decisions and timeline. The browser displays local times; hover for UTC.
+Open the protected [journey inspector](https://rover-production-d220.up.railway.app/admin/journeys) with the administrator login. On the newer page, use **Find a place or story**, for example [Perth](https://rover-production-d220.up.railway.app/admin/journeys?q=Perth). Search matches recorded titles across the full linked journey, preserving its other stories and requests. Unlinked legacy requests are matched individually. A missing title match does not prove there was no activity. Open a request to inspect its decisions and timeline. The browser displays local times; hover for UTC.
 
 ## Capture a bounded report
 
@@ -37,3 +37,9 @@ Run focused offline tests:
 ```powershell
 python -m unittest discover -s tools -p test_inspect_journeys.py -v
 ```
+
+## Journey identity
+
+Journey Lab sends an opaque 32-character identity in `X-Walkabout-Journey` for planning, research, images and follow-up questions. It persists in saved/copied test routes; choosing a new start creates a new identity. Older saved routes receive an identity on reopening and retain it when saved again. Requests capture the identity before network I/O. The API validates and hashes it before storage, and preserves it if an endpoint later links a server session. Existing session-based requests without a header continue working.
+
+This is diagnostic grouping, not authorization or proof of ownership. The inspector remains administrator-only. Old unlinked requests are not retroactively assigned by geographic or time guesses. Device-cached stories may not create new API events; missing events do not mean missing playback. Lab playback using device speech is not yet a complete playback audit.

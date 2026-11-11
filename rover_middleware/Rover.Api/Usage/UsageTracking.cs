@@ -13,9 +13,15 @@ public sealed class UsageScope(string action)
     public string Action { get; set; } = action;
     public string Trace { get; } = Guid.NewGuid().ToString("N")[..16];
     public string Journey { get; private set; } = "";
+    // A client journey joins planning, research and playback across separate requests.
+    // It is telemetry only, never an authorization or ownership key.
+    public void LinkClientJourney(string? id)
+    {
+        if (Guid.TryParseExact(id, "N", out var value)) Link(value.ToString("N"));
+    }
     public void Link(string? id)
     {
-        if (!string.IsNullOrWhiteSpace(id) && id.Length <= 128)
+        if (Journey.Length == 0 && !string.IsNullOrWhiteSpace(id) && id.Length <= 128)
             Journey = Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes(id)))[..16].ToLowerInvariant();
     }
     public UsageEvent Event(string kind,string provider,string purpose,string outcome,long ms=0) =>
@@ -71,6 +77,7 @@ public static class UsageTracking
             var route=(http.GetEndpoint() as RouteEndpoint)?.RoutePattern.RawText;
             if (route == null || !route.StartsWith("/api/",StringComparison.OrdinalIgnoreCase)) { await next(); return; }
             var scope = new UsageScope(http.Request.Method+" "+route);
+            scope.LinkClientJourney(http.Request.Headers["X-Walkabout-Journey"].ToString());
             scope.Link(http.Request.RouteValues["walkSessionId"]?.ToString());
             var previous=UsageScope.Current.Value;
             UsageScope.Current.Value=scope;

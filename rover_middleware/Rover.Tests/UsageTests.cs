@@ -7,6 +7,25 @@ using Rover.Infrastructure.Usage;
 
 internal static class UsageTests
 {
+    public static Task ClientJourneyLinkage()
+    {
+        const string id = "1234567890abcdef1234567890abcdef";
+        var plan = new UsageScope("Plan"); plan.LinkClientJourney(id);
+        var story = new UsageScope("Research"); story.LinkClientJourney(id);
+        story.Link("server-session-id");
+        if (plan.Journey.Length != 16 || plan.Journey != story.Journey || plan.Trace == story.Trace)
+            throw new Exception("Journey must span requests and survive later session attribution");
+        var other = new UsageScope("Other walk"); other.LinkClientJourney(Guid.NewGuid().ToString("N"));
+        if (other.Journey == plan.Journey) throw new Exception("Separate journeys merged");
+        foreach (var invalid in new[] { "", "Perth", new string('a', 129), id + "," + id }) {
+            var scope = new UsageScope("Invalid header"); scope.LinkClientJourney(invalid);
+            if (scope.Journey != "") throw new Exception("Invalid client identity accepted");
+            scope.Link("legacy-walk");
+            if (scope.Journey.Length != 16) throw new Exception("Legacy session linkage lost");
+        }
+        return Task.CompletedTask;
+    }
+
     public static async Task InspectionMigration()
     {
         var dir=Path.Combine(Path.GetTempPath(),"walkabout-inspector-"+Guid.NewGuid().ToString("N"));
