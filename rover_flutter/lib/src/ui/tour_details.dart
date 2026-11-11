@@ -4,6 +4,7 @@ import 'package:flutter/material.dart';
 import 'package:url_launcher/url_launcher.dart';
 
 import '../voice/rover_audio_services.dart';
+import 'tour_locations.dart';
 
 /// Chapter browsing is separate from geographic stops: demolished places and
 /// regional stories must not acquire invented entrances or duplicate geofences.
@@ -60,8 +61,9 @@ class _TourDetailsState extends State<TourDetailsScreen> {
         throw StateError('Could not open link');
       }
     } catch (_) {
-      if (mounted)
+      if (mounted) {
         setState(() => message = 'Could not open the link. Please try again.');
+      }
     }
   }
 
@@ -76,121 +78,156 @@ class _TourDetailsState extends State<TourDetailsScreen> {
   Widget build(BuildContext context) {
     final chapters = (widget.data['storyChapters'] as List).cast<Map>();
     final visits = (widget.data['optionalVisits'] as List).cast<Map>();
-    return Scaffold(
-      appBar: AppBar(title: const Text('Tour stories and visits')),
-      body: ListView(
-        padding: const EdgeInsets.all(20),
-        children: [
-          Text(
-            widget.data['title'] as String,
-            style: Theme.of(context).textTheme.headlineSmall,
-          ),
-          const SizedBox(height: 12),
-          Text(
-            '${chapters.length} stories · ${(widget.data['chapters'] as List).length} outdoor stops · 21+ · Draft',
-          ),
-          const Text(
-            'Several stories share a location. Listen to each here, or preview the walking route to hear them together as you arrive. Optional visits below are separate outings.',
-          ),
-          const SizedBox(height: 12),
-          FilledButton(
-            onPressed: () async {
-              await stop();
-              if (context.mounted) Navigator.pop(context, true);
-            },
-            child: const Text('Preview walking route'),
-          ),
-          if (playing != null)
-            ListTile(
-              title: Text('Playing: $playing'),
-              trailing: IconButton(
-                tooltip: 'Stop story',
-                onPressed: stop,
-                icon: const Icon(Icons.stop),
-              ),
+    return DefaultTabController(
+      length: 2,
+      child: Scaffold(
+        appBar: AppBar(
+          title: const Text('Tour stories and visits'),
+          actions: [
+            IconButton(
+              tooltip: 'Preview core walking route',
+              icon: const Icon(Icons.route),
+              onPressed: () async {
+                await stop();
+                if (context.mounted) Navigator.pop(context, true);
+              },
             ),
-          if (message.isNotEmpty) Text(message),
-          for (final chapter in chapters)
-            Card(
-              child: ExpansionTile(
-                key: ValueKey('chapter-${chapter['id']}'),
-                title: Text('${chapter['id']}. ${chapter['title']}'),
-                subtitle: Text(chapter['location'] as String),
-                childrenPadding: const EdgeInsets.all(16),
-                children: [
-                  Text(chapter['locationNote'] as String),
-                  TextButton.icon(
-                    onPressed: () => play(
-                      chapter['title'] as String,
-                      chapter['text'] as String,
+          ],
+          bottom: const TabBar(
+            tabs: [
+              Tab(text: 'Locations (16)'),
+              Tab(text: 'Stories (8)'),
+            ],
+          ),
+        ),
+        body: TabBarView(
+          children: [
+            TourLocations(
+              data: widget.data,
+              openLink: openLink,
+              play: play,
+              stop: stop,
+            ),
+            ListView(
+              padding: const EdgeInsets.all(20),
+              children: [
+                Text(
+                  widget.data['title'] as String,
+                  style: Theme.of(context).textTheme.headlineSmall,
+                ),
+                const SizedBox(height: 12),
+                Text(
+                  '${chapters.length} stories · ${(widget.data['chapters'] as List).length} outdoor stops · 21+ · Draft',
+                ),
+                const Text(
+                  'Several stories share a location. Listen to each here, or preview the walking route to hear them together as you arrive. Optional visits below are separate outings.',
+                ),
+                const SizedBox(height: 12),
+                FilledButton(
+                  onPressed: () async {
+                    await stop();
+                    if (context.mounted) Navigator.pop(context, true);
+                  },
+                  child: const Text('Preview walking route'),
+                ),
+                if (playing != null)
+                  ListTile(
+                    title: Text('Playing: $playing'),
+                    trailing: IconButton(
+                      tooltip: 'Stop story',
+                      onPressed: stop,
+                      icon: const Icon(Icons.stop),
                     ),
-                    icon: const Icon(Icons.volume_up),
-                    label: const Text('Play this story'),
                   ),
-                  SelectableText(chapter['text'] as String),
-                  for (final source in (chapter['sources'] as Map).entries)
-                    TextButton(
-                      onPressed: () => openLink(source.value as String),
-                      child: Text(source.key as String),
-                    ),
-                ],
-              ),
-            ),
-          const SizedBox(height: 20),
-          Text(
-            'Optional cultural visits',
-            style: Theme.of(context).textTheme.titleLarge,
-          ),
-          const Text(
-            'These are not added to your walking route. Museum admission, travel and visiting time are extra. Confirm current access with the venue.',
-          ),
-          for (final visit in visits)
-            Card(
-              child: Padding(
-                padding: const EdgeInsets.all(16),
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    Text(
-                      visit['name'] as String,
-                      style: Theme.of(context).textTheme.titleMedium,
-                    ),
-                    Text(visit['kind'] as String),
-                    Text(visit['address'] as String),
-                    Text(visit['text'] as String),
-                    if (visit['story'] case final String story) ...[
-                      TextButton.icon(
-                        onPressed: () => play(visit['name'] as String, story),
-                        icon: const Icon(Icons.volume_up),
-                        label: const Text('Play bonus story'),
-                      ),
-                      ExpansionTile(
-                        title: const Text('Read bonus story'),
-                        children: [SelectableText(story)],
-                      ),
-                    ],
-                    Wrap(
+                if (message.isNotEmpty) Text(message),
+                for (final chapter in chapters)
+                  Card(
+                    child: ExpansionTile(
+                      key: ValueKey('chapter-${chapter['id']}'),
+                      title: Text('${chapter['id']}. ${chapter['title']}'),
+                      subtitle: Text(chapter['location'] as String),
+                      childrenPadding: const EdgeInsets.all(16),
                       children: [
-                        TextButton(
-                          onPressed: () => openLink(visit['url'] as String),
-                          child: const Text('Official information'),
-                        ),
-                        TextButton(
-                          onPressed: () => openLink(
-                            Uri.https('www.google.com', '/maps/search/', {
-                              'api': '1',
-                              'query': '${visit['name']}, ${visit['address']}',
-                            }).toString(),
+                        Text(chapter['locationNote'] as String),
+                        TextButton.icon(
+                          onPressed: () => play(
+                            chapter['title'] as String,
+                            chapter['text'] as String,
                           ),
-                          child: const Text('View on Google Maps'),
+                          icon: const Icon(Icons.volume_up),
+                          label: const Text('Play this story'),
                         ),
+                        SelectableText(chapter['text'] as String),
+                        for (final source
+                            in (chapter['sources'] as Map).entries)
+                          TextButton(
+                            onPressed: () => openLink(source.value as String),
+                            child: Text(source.key as String),
+                          ),
                       ],
                     ),
-                  ],
+                  ),
+                const SizedBox(height: 20),
+                Text(
+                  'Optional cultural visits',
+                  style: Theme.of(context).textTheme.titleLarge,
                 ),
-              ),
+                const Text(
+                  'These are not added to your walking route. Museum admission, travel and visiting time are extra. Confirm current access with the venue.',
+                ),
+                for (final visit in visits)
+                  Card(
+                    child: Padding(
+                      padding: const EdgeInsets.all(16),
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          Text(
+                            visit['name'] as String,
+                            style: Theme.of(context).textTheme.titleMedium,
+                          ),
+                          Text(visit['kind'] as String),
+                          Text(visit['address'] as String),
+                          Text(visit['text'] as String),
+                          if (visit['story'] case final String story) ...[
+                            TextButton.icon(
+                              onPressed: () =>
+                                  play(visit['name'] as String, story),
+                              icon: const Icon(Icons.volume_up),
+                              label: const Text('Play bonus story'),
+                            ),
+                            ExpansionTile(
+                              title: const Text('Read bonus story'),
+                              children: [SelectableText(story)],
+                            ),
+                          ],
+                          Wrap(
+                            children: [
+                              TextButton(
+                                onPressed: () =>
+                                    openLink(visit['url'] as String),
+                                child: const Text('Official information'),
+                              ),
+                              TextButton(
+                                onPressed: () => openLink(
+                                  Uri.https('www.google.com', '/maps/search/', {
+                                    'api': '1',
+                                    'query':
+                                        '${visit['name']}, ${visit['address']}',
+                                  }).toString(),
+                                ),
+                                child: const Text('View on Google Maps'),
+                              ),
+                            ],
+                          ),
+                        ],
+                      ),
+                    ),
+                  ),
+              ],
             ),
-        ],
+          ],
+        ),
       ),
     );
   }

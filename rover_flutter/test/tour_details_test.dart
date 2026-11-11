@@ -59,6 +59,8 @@ void main() {
           home: TourDetailsScreen(data: d, voice: voice),
         ),
       );
+      await tester.tap(find.text('Stories (8)'));
+      await tester.pumpAndSettle();
       await tester.tap(find.byKey(const ValueKey('chapter-1')));
       await tester.pumpAndSettle();
       await tester.ensureVisible(find.text('Play this story').first);

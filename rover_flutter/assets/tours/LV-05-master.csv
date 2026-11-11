@@ -1,0 +1,17 @@
+id,name,address,latitude,longitude,type,group,story_id,visit_mode
+LVAD001,Golden Gate Hotel & Casino,"1 Fremont St, Las Vegas, NV 89101, USA",,,current_venue,core,chapter_01,walk
+LVAD002,Binion's Gambling Hall,"128 E Fremont St, Las Vegas, NV 89101, USA",,,current_venue,core,chapter_04,walk
+LVAD003,Block 16 Historic Marker,"N 1st St & E Ogden Ave, Las Vegas, NV 89101, USA",36.1724167,-115.14425,historic_marker,core,chapter_02,walk
+LVAD004,Arizona Club Historic Site,,36.1724167,-115.14425,historic_demolished,story_only,chapter_03,shared_geofence_LVAD003
+LVAD005,The Mob Museum,"300 Stewart Ave, Las Vegas, NV 89101, USA",,,current_museum,core,chapter_07,walk
+LVAD006,The Underground Speakeasy,"300 Stewart Ave, Las Vegas, NV 89101, USA",,,current_bar,optional,chapter_08,inside_LVAD005
+LVAD007,Roxie's Historic Brothel,,,,historic_area,story_only,chapter_05,audio_only_no_map_pin
+LVAD008,Burlesque Hall of Fame,"1027 S Main St Suite 110, Las Vegas, NV 89101, USA",,,current_museum,optional,,rideshare
+LVAD009,Historic Moulin Rouge Site,"900 W Bonanza Rd, Las Vegas, NV 89106, USA",,,historic_demolished,optional,,public_view_only
+LVAD010,Erotic Heritage Museum,"3275 Sammy Davis Jr Dr, Las Vegas, NV 89109, USA",,,current_museum,optional,,rideshare
+LVAD011,Absinthe at Caesars Palace,"3570 S Las Vegas Blvd, Las Vegas, NV 89109, USA",,,current_show,optional,,rideshare
+LVAD012,Sapphire Las Vegas,"3025 Sammy Davis Jr Dr, Las Vegas, NV 89109, USA",,,adult_club,nightlife,,rideshare
+LVAD013,Spearmint Rhino Las Vegas,"3340 S Highland Dr, Las Vegas, NV 89109, USA",,,adult_club,nightlife,,rideshare
+LVAD014,Palomino Club,"1848 Las Vegas Blvd N, North Las Vegas, NV 89030, USA",,,adult_club,nightlife,,rideshare
+LVAD015,Larry Flynt's Hustler Club,"6007 Dean Martin Dr, Las Vegas, NV 89118, USA",,,adult_club,nightlife,,rideshare
+LVAD016,Peppermint Hippo Las Vegas,"1531 S Las Vegas Blvd, Las Vegas, NV 89104, USA",,,adult_club,nightlife,,rideshare

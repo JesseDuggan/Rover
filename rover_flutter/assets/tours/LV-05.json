@@ -9,8 +9,8 @@
     {
       "name": "Golden Gate — Where the night begins",
       "point": [
-        36.17157422,
-        -115.14606118
+        36.1711982,
+        -115.1462426
       ],
       "opening": "Welcome to Sin City Secrets. Our first secret is rather modest: before the neon spectacle, a comfortable room was a selling point. The Golden Gate began as Hotel Nevada in 1906. Its history records room and board at a dollar a day, with electric lighting and steam heat. In 1907, the hotel received the town’s first telephone. Its number was one. Imagine being so early to the party that your phone number needs just a single digit. Look at the frontage and think about the travellers who arrived in a railroad town, long before today’s casino skyline. This walk follows the changing bargains behind the city’s reputation: who could make money, who did the work, and who made the rules.",
       "angles": [],
@@ -26,13 +26,14 @@
       "photo": {
         "asset": "LV-02",
         "caption": "the Golden Gate frontage"
-      }
+      },
+      "locationId": "LVAD001"
     },
     {
       "name": "Binion’s — The gamble and the performers",
       "point": [
-        36.171396,
-        -115.144024
+        36.1713278,
+        -115.14396389999999
       ],
       "opening": "Benny Binion bought this property in 1951. The casino’s own history remembers an approach built around player comfort, including carpet and air conditioning. Those details sound ordinary now; they help explain how hospitality became part of the gamble. In 1970, a small poker gathering here became the beginning of the World Series of Poker. The tournament later moved elsewhere. You are looking at a starting point, not its present home.\n\nNow consider another kind of work behind the Las Vegas spectacle: performance. This is a citywide story, not a claim that these performers worked in this building. The Burlesque Hall of Fame preserves costumes, props and personal objects, including Sally Rand’s fans and Jennie Lee’s typewriter. A stage costume draws the eye, but a typewriter hints at the organising and record-keeping behind a career. Jennie Lee helped build the collection; Dixie Evans later carried it forward. Their work preserved performers’ lives as well as their glamour. The museum is a separate visit in the Arts District, outside this walking route.",
       "angles": [],
@@ -46,12 +47,13 @@
         6
       ],
       "reviewedOn": "2026-11-11",
-      "confidence": "source-supported; field check pending"
+      "confidence": "source-supported; field check pending",
+      "locationId": "LVAD002"
     },
     {
       "name": "Block 16 — A vanished district",
       "point": [
-        36.1724166667,
+        36.1724167,
         -115.14425
       ],
       "opening": "This marker recalls Block 16, the old district along First Street. The marker describes a place where liquor, gambling and prostitution became concentrated. In 1942, pressure from the Army helped bring prostitution here to an end. The buildings have gone; this is a historical district, not an invitation to find an operating brothel.\n\nThe Arizona Club was one of its best-known saloons. Archive photographs show an imposing bar. They tell us less about many of the women who worked nearby. UNLV’s account records Pilar Santa Cruz, who ran the Red Front Saloon and converted it into a rooming house after the district closed. Her story is a reminder that the people behind a notorious reputation also had businesses and livelihoods.\n\nOne final chapter happened elsewhere, not on this block. Roxie’s opened in the Four Mile area in 1946. A federal raid in 1954 and newspaper reporting exposed corruption surrounding the business. Closing one district had not ended the wider story. As we continue, notice how a small marker can hold a much larger argument about money and power.",
@@ -67,13 +69,14 @@
         5
       ],
       "reviewedOn": "2026-11-11",
-      "confidence": "source-supported; field check pending"
+      "confidence": "source-supported; field check pending",
+      "locationId": "LVAD003"
     },
     {
       "name": "The Mob Museum — Follow the money",
       "point": [
-        36.172607,
-        -115.1412656
+        36.1728198,
+        -115.1412395
       ],
       "opening": "Our final building once served as a federal courthouse and post office. A Senate investigation into organized crime held a hearing here. That makes the museum more than a place displaying evidence: the building itself belongs to the story. Think back to the hotel, the casino and the vanished district. Their histories raised the same question in different ways: who benefits, and who gets to set the rules?\n\nFor an optional final chapter, the museum’s Underground presents Prohibition history through a speakeasy and distillery experience in the basement. It is a modern museum experience, not a surviving secret bar from the twenties. Check the museum’s current admission and opening information if you want to go inside. Our outdoor walk ends here. You can finish without buying a ticket or a drink. The most interesting souvenir may be the next question you ask when a city offers you a glamorous version of its past.",
       "angles": [],
@@ -91,7 +94,8 @@
       "photo": {
         "asset": "mob",
         "caption": "the Mob Museum building"
-      }
+      },
+      "locationId": "LVAD005"
     }
   ],
   "starts": {
@@ -104,20 +108,20 @@
       ],
       "path": [
         [
-          36.17157422,
-          -115.14606118
+          36.1711982,
+          -115.1462426
         ],
         [
-          36.171396,
-          -115.144024
+          36.1713278,
+          -115.14396389999999
         ],
         [
-          36.1724166667,
+          36.1724167,
           -115.14425
         ],
         [
-          36.172607,
-          -115.1412656
+          36.1728198,
+          -115.1412395
         ]
       ]
     }
@@ -126,8 +130,8 @@
   "editorialNotes": [
     "Eight supplied chapters grouped into four distinct outdoor triggers. Binion’s precedes Block 16 to avoid backtracking.",
     "Roxie’s and burlesque are regional context, not invented local entrances.",
-    "No operating adult-club recommendations included until current details are reviewed.",
-    "Saved narration contains no live prices or hours."
+    "Saved narration contains no live prices or hours.",
+    "All 16 master records retained. 13 unique physical destinations; optional and nightlife destinations do not change the core walk. Google matches are not field-verified entrances."
   ],
   "storyChapters": [
     {
@@ -138,7 +142,8 @@
       "locationNote": "Shared outdoor stop; no extra walk required.",
       "sources": {
         "Golden Gate history": "https://www.goldengatecasino.com/our-story/"
-      }
+      },
+      "storyId": "chapter_01"
     },
     {
       "id": 2,
@@ -149,7 +154,8 @@
       "sources": {
         "Centennial marker": "https://www.hmdb.org/m.asp?m=47859",
         "UNLV historical research": "https://www.unlv.edu/news/article/my-nevada-5-prostitution-las-vegas"
-      }
+      },
+      "storyId": "chapter_02"
     },
     {
       "id": 3,
@@ -160,7 +166,8 @@
       "sources": {
         "Centennial marker": "https://www.hmdb.org/m.asp?m=47859",
         "UNLV historical research": "https://www.unlv.edu/news/article/my-nevada-5-prostitution-las-vegas"
-      }
+      },
+      "storyId": "chapter_03"
     },
     {
       "id": 4,
@@ -171,7 +178,8 @@
       "sources": {
         "Binion’s history": "https://www.binions.com/history.php",
         "Burlesque Hall of Fame collection": "https://burlesquehall.com/about/frequently-asked-questions-faq/"
-      }
+      },
+      "storyId": "chapter_04"
     },
     {
       "id": 5,
@@ -182,7 +190,8 @@
       "sources": {
         "Centennial marker": "https://www.hmdb.org/m.asp?m=47859",
         "UNLV historical research": "https://www.unlv.edu/news/article/my-nevada-5-prostitution-las-vegas"
-      }
+      },
+      "storyId": "chapter_05"
     },
     {
       "id": 6,
@@ -193,7 +202,8 @@
       "sources": {
         "Binion’s history": "https://www.binions.com/history.php",
         "Burlesque Hall of Fame collection": "https://burlesquehall.com/about/frequently-asked-questions-faq/"
-      }
+      },
+      "storyId": "chapter_06"
     },
     {
       "id": 7,
@@ -204,7 +214,8 @@
       "sources": {
         "Museum building archive": "https://themobmuseum.org/digital-archive/this-building-of-ours/",
         "The Underground": "https://themobmuseum.org/underground/"
-      }
+      },
+      "storyId": "chapter_07"
     },
     {
       "id": 8,
@@ -215,7 +226,8 @@
       "sources": {
         "Museum building archive": "https://themobmuseum.org/digital-archive/this-building-of-ours/",
         "The Underground": "https://themobmuseum.org/underground/"
-      }
+      },
+      "storyId": "chapter_08"
     }
   ],
   "optionalVisits": [
@@ -240,6 +252,485 @@
       "address": "300 Stewart Avenue, Las Vegas, NV",
       "text": "A separate Prohibition-history experience at the final stop. Check current admission and opening information. Indoor time is additional to the walking estimate.",
       "url": "https://themobmuseum.org/underground/"
+    }
+  ],
+  "locations": [
+    {
+      "id": "LVAD001",
+      "name": "Golden Gate Hotel & Casino",
+      "address": "1 Fremont St, Las Vegas, NV 89101, USA",
+      "latitude": 36.1711982,
+      "longitude": -115.1462426,
+      "type": "current_venue",
+      "group": "core",
+      "story_id": "chapter_01",
+      "visit_mode": "walk",
+      "storyIds": [
+        "chapter_01"
+      ],
+      "destinationId": "LVAD001",
+      "parentId": null,
+      "geofenceId": "LVAD001",
+      "resolvedOn": "2026-11-11",
+      "googleResolution": {
+        "id": "google-ChIJP_e37KHDyIAR972mwUmavqE",
+        "name": "Golden Gate Hotel & Casino",
+        "latitude": 36.1711982,
+        "longitude": -115.1462426,
+        "category": "Casino",
+        "attribution": "Google Maps",
+        "sourceUrl": "https://maps.google.com/?cid=11654922527253642743&g_mp=Cidnb29nbGUubWFwcy5wbGFjZXMudjEuUGxhY2VzLlNlYXJjaFRleHQQAhgEIAA",
+        "address": "1 Fremont St, Las Vegas, NV 89101, USA"
+      },
+      "placeId": "ChIJP_e37KHDyIAR972mwUmavqE",
+      "resolvedAddress": "1 Fremont St, Las Vegas, NV 89101, USA",
+      "sourceUrl": "https://maps.google.com/?cid=11654922527253642743&g_mp=Cidnb29nbGUubWFwcy5wbGFjZXMudjEuUGxhY2VzLlNlYXJjaFRleHQQAhgEIAA",
+      "resolutionStatus": "google_resolved"
+    },
+    {
+      "id": "LVAD002",
+      "name": "Binion's Gambling Hall",
+      "address": "128 E Fremont St, Las Vegas, NV 89101, USA",
+      "latitude": 36.1713278,
+      "longitude": -115.14396389999999,
+      "type": "current_venue",
+      "group": "core",
+      "story_id": "chapter_04",
+      "visit_mode": "walk",
+      "storyIds": [
+        "chapter_04"
+      ],
+      "destinationId": "LVAD002",
+      "parentId": null,
+      "geofenceId": "LVAD002",
+      "resolvedOn": "2026-11-11",
+      "googleResolution": {
+        "id": "google-ChIJ0xi2Y6DDyIARKxjXLpR-jjI",
+        "name": "Binion's Gambling Hall & Hotel",
+        "latitude": 36.1713278,
+        "longitude": -115.14396389999999,
+        "category": "Casino",
+        "attribution": "Google Maps",
+        "sourceUrl": "https://maps.google.com/?cid=3642988323495417899&g_mp=Cidnb29nbGUubWFwcy5wbGFjZXMudjEuUGxhY2VzLlNlYXJjaFRleHQQAhgEIAA",
+        "address": "128 Fremont St, Las Vegas, NV 89101, USA"
+      },
+      "placeId": "ChIJ0xi2Y6DDyIARKxjXLpR-jjI",
+      "resolvedAddress": "128 Fremont St, Las Vegas, NV 89101, USA",
+      "sourceUrl": "https://maps.google.com/?cid=3642988323495417899&g_mp=Cidnb29nbGUubWFwcy5wbGFjZXMudjEuUGxhY2VzLlNlYXJjaFRleHQQAhgEIAA",
+      "resolutionStatus": "google_resolved"
+    },
+    {
+      "id": "LVAD003",
+      "name": "Block 16 Historic Marker",
+      "address": "N 1st St & E Ogden Ave, Las Vegas, NV 89101, USA",
+      "latitude": 36.1724167,
+      "longitude": -115.14425,
+      "type": "historic_marker",
+      "group": "core",
+      "story_id": "chapter_02",
+      "visit_mode": "walk",
+      "storyIds": [
+        "chapter_02"
+      ],
+      "destinationId": "LVAD003",
+      "parentId": null,
+      "geofenceId": "LVAD003",
+      "resolvedOn": "2026-11-11",
+      "googleResolution": {
+        "id": "google-ChIJScKxQtzDyIAR8e7hXROaClY",
+        "name": "Site of the historic Block 16",
+        "latitude": 36.172644,
+        "longitude": -115.14398849999999,
+        "category": "Historical landmark",
+        "attribution": "Google Maps",
+        "sourceUrl": "https://maps.google.com/?cid=6199937244999053041&g_mp=Cidnb29nbGUubWFwcy5wbGFjZXMudjEuUGxhY2VzLlNlYXJjaFRleHQQAhgEIAA",
+        "address": "206 N 1st St, Las Vegas, NV 89101, USA"
+      },
+      "placeId": "ChIJScKxQtzDyIAR8e7hXROaClY",
+      "resolvedAddress": "206 N 1st St, Las Vegas, NV 89101, USA",
+      "sourceUrl": "https://maps.google.com/?cid=6199937244999053041&g_mp=Cidnb29nbGUubWFwcy5wbGFjZXMudjEuUGxhY2VzLlNlYXJjaFRleHQQAhgEIAA",
+      "resolutionStatus": "historical_marker_with_google_site_match"
+    },
+    {
+      "id": "LVAD004",
+      "name": "Arizona Club Historic Site",
+      "address": "",
+      "latitude": 36.1724167,
+      "longitude": -115.14425,
+      "type": "historic_demolished",
+      "group": "story_only",
+      "story_id": "chapter_03",
+      "visit_mode": "shared_geofence_LVAD003",
+      "storyIds": [
+        "chapter_03"
+      ],
+      "destinationId": "LVAD003",
+      "parentId": null,
+      "geofenceId": "LVAD003",
+      "resolvedOn": "2026-11-11",
+      "resolutionStatus": "shared_historical_geofence",
+      "note": "Separate historical story at Block 16; no duplicate waypoint."
+    },
+    {
+      "id": "LVAD005",
+      "name": "The Mob Museum",
+      "address": "300 Stewart Ave, Las Vegas, NV 89101, USA",
+      "latitude": 36.1728198,
+      "longitude": -115.1412395,
+      "type": "current_museum",
+      "group": "core",
+      "story_id": "chapter_07",
+      "visit_mode": "walk",
+      "storyIds": [
+        "chapter_07"
+      ],
+      "destinationId": "LVAD005",
+      "parentId": null,
+      "geofenceId": "LVAD005",
+      "resolvedOn": "2026-11-11",
+      "googleResolution": {
+        "id": "google-ChIJ6dSwgwrDyIARnTLnwBzbNVU",
+        "name": "The Mob Museum",
+        "latitude": 36.1728198,
+        "longitude": -115.1412395,
+        "category": "Museum",
+        "attribution": "Google Maps",
+        "sourceUrl": "https://maps.google.com/?cid=6140054583531483805&g_mp=Cidnb29nbGUubWFwcy5wbGFjZXMudjEuUGxhY2VzLlNlYXJjaFRleHQQAhgEIAA",
+        "address": "300 Stewart Ave, Las Vegas, NV 89101, USA"
+      },
+      "placeId": "ChIJ6dSwgwrDyIARnTLnwBzbNVU",
+      "resolvedAddress": "300 Stewart Ave, Las Vegas, NV 89101, USA",
+      "sourceUrl": "https://maps.google.com/?cid=6140054583531483805&g_mp=Cidnb29nbGUubWFwcy5wbGFjZXMudjEuUGxhY2VzLlNlYXJjaFRleHQQAhgEIAA",
+      "resolutionStatus": "google_resolved"
+    },
+    {
+      "id": "LVAD006",
+      "name": "The Underground Speakeasy",
+      "address": "300 Stewart Ave, Las Vegas, NV 89101, USA",
+      "latitude": 36.1728228,
+      "longitude": -115.1412524,
+      "type": "current_bar",
+      "group": "optional",
+      "story_id": "chapter_08",
+      "visit_mode": "inside_LVAD005",
+      "storyIds": [
+        "chapter_08"
+      ],
+      "destinationId": "LVAD005",
+      "parentId": "LVAD005",
+      "geofenceId": "LVAD005",
+      "resolvedOn": "2026-11-11",
+      "googleResolution": {
+        "id": "google-ChIJY7hFmwrDyIARjhIM4XlbK4M",
+        "name": "The Underground Speakeasy and Distillery",
+        "latitude": 36.1728228,
+        "longitude": -115.1412524,
+        "category": "Bar",
+        "attribution": "Google Maps",
+        "sourceUrl": "https://maps.google.com/?cid=9451748821991953038&g_mp=Cidnb29nbGUubWFwcy5wbGFjZXMudjEuUGxhY2VzLlNlYXJjaFRleHQQAhgEIAA",
+        "address": "300 Stewart Ave, Las Vegas, NV 89101, USA"
+      },
+      "placeId": "ChIJY7hFmwrDyIARjhIM4XlbK4M",
+      "resolvedAddress": "300 Stewart Ave, Las Vegas, NV 89101, USA",
+      "sourceUrl": "https://maps.google.com/?cid=9451748821991953038&g_mp=Cidnb29nbGUubWFwcy5wbGFjZXMudjEuUGxhY2VzLlNlYXJjaFRleHQQAhgEIAA",
+      "resolutionStatus": "google_resolved",
+      "note": "Inside the Mob Museum. Uses the parent destination, with its own story."
+    },
+    {
+      "id": "LVAD007",
+      "name": "Roxie's Historic Brothel",
+      "address": "",
+      "latitude": null,
+      "longitude": null,
+      "type": "historic_area",
+      "group": "story_only",
+      "story_id": "chapter_05",
+      "visit_mode": "audio_only_no_map_pin",
+      "storyIds": [
+        "chapter_05"
+      ],
+      "destinationId": null,
+      "parentId": null,
+      "geofenceId": null,
+      "resolvedOn": "2026-11-11",
+      "resolutionStatus": "historical_audio_only",
+      "note": "Historical audio only. Original site not verified; no pin or directions."
+    },
+    {
+      "id": "LVAD008",
+      "name": "Burlesque Hall of Fame",
+      "address": "1027 S Main St Suite 110, Las Vegas, NV 89101, USA",
+      "latitude": 36.160137399999996,
+      "longitude": -115.1529585,
+      "type": "current_museum",
+      "group": "optional",
+      "story_id": "",
+      "visit_mode": "rideshare",
+      "storyIds": [
+        "chapter_06"
+      ],
+      "destinationId": "LVAD008",
+      "parentId": null,
+      "geofenceId": "LVAD008",
+      "resolvedOn": "2026-11-11",
+      "googleResolution": {
+        "id": "google-ChIJV3uZDnXDyIARWKssPy2HUlA",
+        "name": "Burlesque Hall of Fame",
+        "latitude": 36.160137399999996,
+        "longitude": -115.1529585,
+        "category": "Museum",
+        "attribution": "Google Maps",
+        "sourceUrl": "https://maps.google.com/?cid=5787837099527678808&g_mp=Cidnb29nbGUubWFwcy5wbGFjZXMudjEuUGxhY2VzLlNlYXJjaFRleHQQAhgEIAA",
+        "address": "1027 S Main St #110, Las Vegas, NV 89101, USA"
+      },
+      "placeId": "ChIJV3uZDnXDyIARWKssPy2HUlA",
+      "resolvedAddress": "1027 S Main St #110, Las Vegas, NV 89101, USA",
+      "sourceUrl": "https://maps.google.com/?cid=5787837099527678808&g_mp=Cidnb29nbGUubWFwcy5wbGFjZXMudjEuUGxhY2VzLlNlYXJjaFRleHQQAhgEIAA",
+      "resolutionStatus": "google_resolved"
+    },
+    {
+      "id": "LVAD009",
+      "name": "Historic Moulin Rouge Site",
+      "address": "900 W Bonanza Rd, Las Vegas, NV 89106, USA",
+      "latitude": 36.1775488,
+      "longitude": -115.15344979999999,
+      "type": "historic_demolished",
+      "group": "optional",
+      "story_id": "",
+      "visit_mode": "public_view_only",
+      "storyIds": [],
+      "destinationId": "LVAD009",
+      "parentId": null,
+      "geofenceId": "LVAD009",
+      "resolvedOn": "2026-11-11",
+      "googleResolution": {
+        "id": "google-ChIJR1OzVgDDyIARCIscadf0AM8",
+        "name": "Moulin Rouge Hotel & Casino",
+        "latitude": 36.1775488,
+        "longitude": -115.15344979999999,
+        "category": "Casino",
+        "attribution": "Google Maps",
+        "sourceUrl": "https://maps.google.com/?cid=14916191171869707016&g_mp=Cidnb29nbGUubWFwcy5wbGFjZXMudjEuUGxhY2VzLlNlYXJjaFRleHQQAhgEIAA",
+        "address": "900 W Bonanza Rd, Las Vegas, NV 89106, USA"
+      },
+      "placeId": "ChIJR1OzVgDDyIARCIscadf0AM8",
+      "resolvedAddress": "900 W Bonanza Rd, Las Vegas, NV 89106, USA",
+      "sourceUrl": "https://special.library.unlv.edu/aae/iconic-moulin-rouge",
+      "resolutionStatus": "historic_site_google_address_match",
+      "note": "Former site only. View from public space; Google listing does not establish an operating hotel.",
+      "bonusStory": "The Moulin Rouge opened in May 1955 as a luxury interracial hotel and casino. It closed that October, but its significance outlasted that brief season. In March 1960, a meeting here helped bring an agreement to integrate Strip and downtown hotel-casinos. Think about the contrast: a business that operated for months became associated with a change that reshaped the city. The original resort is gone. This is a story about the site and the people who challenged exclusion, not an invitation to enter a surviving hotel."
+    },
+    {
+      "id": "LVAD010",
+      "name": "Erotic Heritage Museum",
+      "address": "3275 Sammy Davis Jr Dr, Las Vegas, NV 89109, USA",
+      "latitude": 36.1299776,
+      "longitude": -115.17459760000001,
+      "type": "current_museum",
+      "group": "optional",
+      "story_id": "",
+      "visit_mode": "rideshare",
+      "storyIds": [],
+      "destinationId": "LVAD010",
+      "parentId": null,
+      "geofenceId": "LVAD010",
+      "resolvedOn": "2026-11-11",
+      "googleResolution": {
+        "id": "google-ChIJ45Bz-RDEyIAR2JvO0wuegDg",
+        "name": "Erotic Heritage Museum",
+        "latitude": 36.1299776,
+        "longitude": -115.17459760000001,
+        "category": "Museum",
+        "attribution": "Google Maps",
+        "sourceUrl": "https://maps.google.com/?cid=4071427836778290136&g_mp=Cidnb29nbGUubWFwcy5wbGFjZXMudjEuUGxhY2VzLlNlYXJjaFRleHQQAhgEIAA",
+        "address": "3275 S Sammy Davis Jr Dr, Las Vegas, NV 89109, USA"
+      },
+      "placeId": "ChIJ45Bz-RDEyIAR2JvO0wuegDg",
+      "resolvedAddress": "3275 S Sammy Davis Jr Dr, Las Vegas, NV 89109, USA",
+      "sourceUrl": "https://maps.google.com/?cid=4071427836778290136&g_mp=Cidnb29nbGUubWFwcy5wbGFjZXMudjEuUGxhY2VzLlNlYXJjaFRleHQQAhgEIAA",
+      "resolutionStatus": "google_resolved"
+    },
+    {
+      "id": "LVAD011",
+      "name": "Absinthe at Caesars Palace",
+      "address": "3570 S Las Vegas Blvd, Las Vegas, NV 89109, USA",
+      "latitude": 36.1155894,
+      "longitude": -115.1740309,
+      "type": "current_show",
+      "group": "optional",
+      "story_id": "",
+      "visit_mode": "rideshare",
+      "storyIds": [],
+      "destinationId": "LVAD011",
+      "parentId": null,
+      "geofenceId": "LVAD011",
+      "resolvedOn": "2026-11-11",
+      "googleResolution": {
+        "id": "google-ChIJP9t9ADvEyIARtKjA3vICJP4",
+        "name": "Absinthe",
+        "latitude": 36.1155894,
+        "longitude": -115.1740309,
+        "category": "Manufacturer",
+        "attribution": "Google Maps",
+        "sourceUrl": "https://maps.google.com/?cid=18312765226937788596&g_mp=Cidnb29nbGUubWFwcy5wbGFjZXMudjEuUGxhY2VzLlNlYXJjaFRleHQQAhgEIAA",
+        "address": "3570 S Las Vegas Blvd, Las Vegas, NV 89109, USA"
+      },
+      "placeId": "ChIJP9t9ADvEyIARtKjA3vICJP4",
+      "resolvedAddress": "3570 S Las Vegas Blvd, Las Vegas, NV 89109, USA",
+      "sourceUrl": "https://maps.google.com/?cid=18312765226937788596&g_mp=Cidnb29nbGUubWFwcy5wbGFjZXMudjEuUGxhY2VzLlNlYXJjaFRleHQQAhgEIAA",
+      "resolutionStatus": "google_resolved",
+      "note": "Show at Caesars Palace. Official operator confirms the address; Google category Manufacturer is not used.",
+      "officialUrl": "https://spiegelworld.com/shows/absinthe/"
+    },
+    {
+      "id": "LVAD012",
+      "name": "Sapphire Las Vegas",
+      "address": "3025 Sammy Davis Jr Dr, Las Vegas, NV 89109, USA",
+      "latitude": 36.1347413,
+      "longitude": -115.171593,
+      "type": "adult_club",
+      "group": "nightlife",
+      "story_id": "",
+      "visit_mode": "rideshare",
+      "storyIds": [],
+      "destinationId": "LVAD012",
+      "parentId": null,
+      "geofenceId": "LVAD012",
+      "resolvedOn": "2026-11-11",
+      "googleResolution": {
+        "id": "google-ChIJj8bp9xXEyIARCca4_DIUblw",
+        "name": "Sapphire",
+        "latitude": 36.1347413,
+        "longitude": -115.171593,
+        "category": "place",
+        "attribution": "Google Maps",
+        "sourceUrl": "https://maps.google.com/?cid=6660283108148430345&g_mp=Cidnb29nbGUubWFwcy5wbGFjZXMudjEuUGxhY2VzLlNlYXJjaFRleHQQAhgEIAA",
+        "address": "3025 S Sammy Davis Jr Dr, Las Vegas, NV 89109, USA"
+      },
+      "placeId": "ChIJj8bp9xXEyIARCca4_DIUblw",
+      "resolvedAddress": "3025 S Sammy Davis Jr Dr, Las Vegas, NV 89109, USA",
+      "sourceUrl": "https://maps.google.com/?cid=6660283108148430345&g_mp=Cidnb29nbGUubWFwcy5wbGFjZXMudjEuUGxhY2VzLlNlYXJjaFRleHQQAhgEIAA",
+      "resolutionStatus": "google_resolved"
+    },
+    {
+      "id": "LVAD013",
+      "name": "Spearmint Rhino Las Vegas",
+      "address": "3340 S Highland Dr, Las Vegas, NV 89109, USA",
+      "latitude": 36.1289282,
+      "longitude": -115.17839560000002,
+      "type": "adult_club",
+      "group": "nightlife",
+      "story_id": "",
+      "visit_mode": "rideshare",
+      "storyIds": [],
+      "destinationId": "LVAD013",
+      "parentId": null,
+      "geofenceId": "LVAD013",
+      "resolvedOn": "2026-11-11",
+      "googleResolution": {
+        "id": "google-ChIJV3syXRrEyIARRrsuX85xHHY",
+        "name": "Spearmint Rhino Gentlemen's Club Las Vegas",
+        "latitude": 36.1289282,
+        "longitude": -115.17839560000002,
+        "category": "place",
+        "attribution": "Google Maps",
+        "sourceUrl": "https://maps.google.com/?cid=8510802526997494598&g_mp=Cidnb29nbGUubWFwcy5wbGFjZXMudjEuUGxhY2VzLlNlYXJjaFRleHQQAhgEIAA",
+        "address": "3340 S Highland Dr, Las Vegas, NV 89109, USA"
+      },
+      "placeId": "ChIJV3syXRrEyIARRrsuX85xHHY",
+      "resolvedAddress": "3340 S Highland Dr, Las Vegas, NV 89109, USA",
+      "sourceUrl": "https://maps.google.com/?cid=8510802526997494598&g_mp=Cidnb29nbGUubWFwcy5wbGFjZXMudjEuUGxhY2VzLlNlYXJjaFRleHQQAhgEIAA",
+      "resolutionStatus": "google_resolved"
+    },
+    {
+      "id": "LVAD014",
+      "name": "Palomino Club",
+      "address": "1848 Las Vegas Blvd N, North Las Vegas, NV 89030, USA",
+      "latitude": 36.193260699999996,
+      "longitude": -115.1313079,
+      "type": "adult_club",
+      "group": "nightlife",
+      "story_id": "",
+      "visit_mode": "rideshare",
+      "storyIds": [],
+      "destinationId": "LVAD014",
+      "parentId": null,
+      "geofenceId": "LVAD014",
+      "resolvedOn": "2026-11-11",
+      "googleResolution": {
+        "id": "google-ChIJYdREcYjDyIARIpZCszHtMjc",
+        "name": "Palomino Las Vegas Gentlemen's Club",
+        "latitude": 36.193260699999996,
+        "longitude": -115.1313079,
+        "category": "place",
+        "attribution": "Google Maps",
+        "sourceUrl": "https://maps.google.com/?cid=3977502218638235170&g_mp=Cidnb29nbGUubWFwcy5wbGFjZXMudjEuUGxhY2VzLlNlYXJjaFRleHQQAhgEIAA",
+        "address": "1848 Las Vegas Blvd N, North Las Vegas, NV 89030, USA"
+      },
+      "placeId": "ChIJYdREcYjDyIARIpZCszHtMjc",
+      "resolvedAddress": "1848 Las Vegas Blvd N, North Las Vegas, NV 89030, USA",
+      "sourceUrl": "https://maps.google.com/?cid=3977502218638235170&g_mp=Cidnb29nbGUubWFwcy5wbGFjZXMudjEuUGxhY2VzLlNlYXJjaFRleHQQAhgEIAA",
+      "resolutionStatus": "google_resolved"
+    },
+    {
+      "id": "LVAD015",
+      "name": "Larry Flynt's Hustler Club",
+      "address": "6007 Dean Martin Dr, Las Vegas, NV 89118, USA",
+      "latitude": 36.080174899999996,
+      "longitude": -115.18279609999999,
+      "type": "adult_club",
+      "group": "nightlife",
+      "story_id": "",
+      "visit_mode": "rideshare",
+      "storyIds": [],
+      "destinationId": "LVAD015",
+      "parentId": null,
+      "geofenceId": "LVAD015",
+      "resolvedOn": "2026-11-11",
+      "googleResolution": {
+        "id": "google-ChIJp30iVufFyIARaODDBJgLdoo",
+        "name": "Larry Flynt's Hustler Club - Las Vegas Strip Club",
+        "latitude": 36.080174899999996,
+        "longitude": -115.18279609999999,
+        "category": "place",
+        "attribution": "Google Maps",
+        "sourceUrl": "https://maps.google.com/?cid=9977174772028792936&g_mp=Cidnb29nbGUubWFwcy5wbGFjZXMudjEuUGxhY2VzLlNlYXJjaFRleHQQAhgEIAA",
+        "address": "6007 Dean Martin Dr, Las Vegas, NV 89118, USA"
+      },
+      "placeId": "ChIJp30iVufFyIARaODDBJgLdoo",
+      "resolvedAddress": "6007 Dean Martin Dr, Las Vegas, NV 89118, USA",
+      "sourceUrl": "https://maps.google.com/?cid=9977174772028792936&g_mp=Cidnb29nbGUubWFwcy5wbGFjZXMudjEuUGxhY2VzLlNlYXJjaFRleHQQAhgEIAA",
+      "resolutionStatus": "google_resolved"
+    },
+    {
+      "id": "LVAD016",
+      "name": "Peppermint Hippo Las Vegas",
+      "address": "1531 S Las Vegas Blvd, Las Vegas, NV 89104, USA",
+      "latitude": 36.1521729,
+      "longitude": -115.15125900000001,
+      "type": "adult_club",
+      "group": "nightlife",
+      "story_id": "",
+      "visit_mode": "rideshare",
+      "storyIds": [],
+      "destinationId": "LVAD016",
+      "parentId": null,
+      "geofenceId": "LVAD016",
+      "resolvedOn": "2026-11-11",
+      "googleResolution": {
+        "id": "google-ChIJV1rlcgfDyIAR0lHAxrlktBw",
+        "name": "Peppermint Hippo",
+        "latitude": 36.1521729,
+        "longitude": -115.15125900000001,
+        "category": "place",
+        "attribution": "Google Maps",
+        "sourceUrl": "https://maps.google.com/?cid=2068388877936120274&g_mp=Cidnb29nbGUubWFwcy5wbGFjZXMudjEuUGxhY2VzLlNlYXJjaFRleHQQAhgEIAA",
+        "address": "1531 S Las Vegas Blvd, Las Vegas, NV 89104, USA"
+      },
+      "placeId": "ChIJV1rlcgfDyIAR0lHAxrlktBw",
+      "resolvedAddress": "1531 S Las Vegas Blvd, Las Vegas, NV 89104, USA",
+      "sourceUrl": "https://maps.google.com/?cid=2068388877936120274&g_mp=Cidnb29nbGUubWFwcy5wbGFjZXMudjEuUGxhY2VzLlNlYXJjaFRleHQQAhgEIAA",
+      "resolutionStatus": "google_resolved"
     }
   ]
 }

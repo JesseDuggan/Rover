@@ -37,5 +37,5 @@ Live existing Railway route endpoint returned all four stops successfully. No ba
 - https://themobmuseum.org/digital-archive/this-building-of-ours/
 - https://themobmuseum.org/underground/
 
-## Story details update
-The catalogue now opens a details page with all eight individually readable/playable chapters before route preview. Geographic routing still uses four unique anchors. Optional cultural visit cards cover the Burlesque Hall of Fame, the historic Moulin Rouge site, and the Underground; none changes the core route. Moulin Rouge has a separately playable sourced bonus story. No current adult-club directory or booking flow is included. Chapter audio is stopped when navigating away.
+## Complete master import
+All 16 master CSV records are preserved in `assets/tours/LV-05.json`, alongside the existing chapter and route schema. The catalogue opens Locations (16), with a Google map of 13 physical destinations and four groups. Stories (8) retains all eight texts and playback. The four core anchors alone feed the existing pedestrian route preview. Arizona Club shares Block 16; Underground is a child of Mob Museum; Roxie's remains audio-only. Optional visits and five nightlife cards open individual Google Maps directions without changing the core walk. No transport is booked. Missing narration is explicitly labelled. See SIN_CITY_IMPORT_AUDIT.md for each record and resolution evidence.
