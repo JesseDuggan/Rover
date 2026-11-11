@@ -16,6 +16,7 @@ class TourRoutePreview extends StatefulWidget {
     super.key,
     required this.initialWalk,
     this.rehearsalStart,
+    this.researchApproach = true,
     required this.api,
     required this.onUse,
     required this.loadWalk,
@@ -24,6 +25,7 @@ class TourRoutePreview extends StatefulWidget {
   });
   final PreparedWalk initialWalk;
   final LatLng? rehearsalStart;
+  final bool researchApproach;
   final void Function(PreparedWalk) onUse;
   final RoverApiClient api;
   final Future<PreparedWalk> Function(List<String>) loadWalk;
@@ -87,6 +89,7 @@ class _PreviewState extends State<TourRoutePreview> {
     JourneyCoverage path,
     List<PreparedStop> stops,
   ) async {
+    if (!widget.researchApproach) return null;
     final length = path.project(stops.first.point).along;
     if (length < 180) return null;
     final target = length / 2;
@@ -268,10 +271,14 @@ class _PreviewState extends State<TourRoutePreview> {
               TextButton.icon(
                 icon: const Icon(Icons.pin_drop_outlined),
                 label: const Text('Use shared test start'),
-                onPressed: busy ? null : () {
-                  edit(() => origin = testStart);
-                  controller?.moveCamera(google.CameraUpdate.newLatLng(googlePoint(testStart)));
-                },
+                onPressed: busy
+                    ? null
+                    : () {
+                        edit(() => origin = testStart);
+                        controller?.moveCamera(
+                          google.CameraUpdate.newLatLng(googlePoint(testStart)),
+                        );
+                      },
               ),
             DropdownButtonFormField<int>(
               initialValue: budget,

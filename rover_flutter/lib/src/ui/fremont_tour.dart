@@ -38,18 +38,22 @@ Future<PreparedWalk> loadCityTour({
   final route = tour['starts'][start];
   final chapters = tour['chapters'] as List;
   final selected = interests.map((v) => v.toLowerCase().trim()).toSet();
-  LatLng point(List values) => LatLng(values[0] as double, values[1] as double);
+  LatLng point(List values) =>
+      LatLng((values[0] as num).toDouble(), (values[1] as num).toDouble());
   final stops = <PreparedStop>[];
   for (final index in route['order'] as List) {
     final chapter = chapters[index];
-    final angles = chapter['angles'] as List;
+    final angles = chapter['angles'] as List? ?? [];
     int matches(dynamic angle) =>
         (angle['interests'] as List).where(selected.contains).length;
-    final best = matches(angles[1]) > matches(angles[0]) ? 1 : 0;
+    final best = angles.length > 1 && matches(angles[1]) > matches(angles[0])
+        ? 1
+        : 0;
     final words = [
       chapter['opening'],
-      angles[best]['text'],
-      if (depth.toLowerCase() == 'deeper stories') angles[1 - best]['text'],
+      if (angles.isNotEmpty) angles[best]['text'],
+      if (angles.length > 1 && depth.toLowerCase() == 'deeper stories')
+        angles[1 - best]['text'],
     ].join(' ');
     final image = chapter['photo'];
     final credit = image == null ? null : creditsByAsset[image['asset']];

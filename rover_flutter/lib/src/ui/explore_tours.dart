@@ -16,7 +16,18 @@ import 'tour_route_preview.dart';
 import 'prepare_tour_stories.dart';
 
 class CityTour {
-  const CityTour(this.asset, this.name, this.description, this.estimate);
+  const CityTour(
+    this.asset,
+    this.name,
+    this.description,
+    this.estimate, {
+    this.minimumAge = 0,
+    this.savedNarration = false,
+    this.cover,
+  });
+  final int minimumAge;
+  final bool savedNarration;
+  final String? cover;
   final String asset, name, description;
   final String estimate;
 }
@@ -48,6 +59,16 @@ const vegasTours = [
   ),
 ];
 
+const afterDarkTour = CityTour(
+  'LV-05',
+  'Sin City Secrets: Las Vegas After Dark',
+  'Draft preview · Eight historical chapters at four outdoor stops. Gambling, vanished brothels and the people behind the spectacle. 21+ only.',
+  'Distance and time calculated in route preview',
+  minimumAge: 21,
+  savedNarration: true,
+  cover: 'fremont',
+);
+
 class ExploreToursScreen extends StatefulWidget {
   const ExploreToursScreen({super.key});
   @override
@@ -58,6 +79,7 @@ class _ExploreToursState extends State<ExploreToursScreen> {
   final api = RoverApiClient();
   bool opening = false;
   bool preparing = false;
+  bool adultOptIn = false;
   @override
   void dispose() {
     api.close();
@@ -66,6 +88,7 @@ class _ExploreToursState extends State<ExploreToursScreen> {
 
   Future<void> open(CityTour tour) async {
     if (opening) return;
+    if (tour.minimumAge > 0 && !adultOptIn) return;
     setState(() => opening = true);
     try {
       final prefs = PreferencesScope.of(context).preferences;
@@ -123,14 +146,15 @@ class _ExploreToursState extends State<ExploreToursScreen> {
           ),
         );
         try {
-          walk = await prepareTourStories(
-            api,
-            walk,
-            interests: tourInterests,
-            depth: prefs.contentDepth,
-            onProgress: (done, total) => progress.value =
-                'Checked $done of $total stops. Reviewed stories remain available if research cannot finish.',
-          );
+          if (!tour.savedNarration)
+            walk = await prepareTourStories(
+              api,
+              walk,
+              interests: tourInterests,
+              depth: prefs.contentDepth,
+              onProgress: (done, total) => progress.value =
+                  'Checked $done of $total stops. Reviewed stories remain available if research cannot finish.',
+            );
         } finally {
           if (navigator.mounted) navigator.pop();
           progress.dispose();
@@ -164,12 +188,15 @@ class _ExploreToursState extends State<ExploreToursScreen> {
         );
       }
 
-      if (tour.asset == 'fremont') {
+      if (tour.asset == 'fremont' || tour.savedNarration) {
         await navigator.push<void>(
           MaterialPageRoute(
             builder: (_) => TourRoutePreview(
               initialWalk: walk,
-              rehearsalStart: fremontRehearsalStart,
+              rehearsalStart: tour.savedNarration
+                  ? walk.stops.first.point
+                  : fremontRehearsalStart,
+              researchApproach: !tour.savedNarration,
               api: api,
               pace: prefs.walkingPace,
               onUse: play,
@@ -262,7 +289,7 @@ class _ExploreToursState extends State<ExploreToursScreen> {
               padding: EdgeInsets.only(top: 4, bottom: 18),
               child: Text('4 walking tours · Preview from anywhere'),
             ),
-            for (final tour in vegasTours)
+            for (final tour in [...vegasTours, if (adultOptIn) afterDarkTour])
               Padding(
                 padding: const EdgeInsets.only(bottom: 12),
                 child: Card(
@@ -275,7 +302,7 @@ class _ExploreToursState extends State<ExploreToursScreen> {
                         AspectRatio(
                           aspectRatio: 2.9,
                           child: Image.asset(
-                            'assets/tours/${tour.asset}.jpg',
+                            'assets/tours/${tour.cover ?? tour.asset}.jpg',
                             fit: BoxFit.cover,
                             excludeFromSemantics: true,
                           ),
@@ -304,6 +331,40 @@ class _ExploreToursState extends State<ExploreToursScreen> {
                   ),
                 ),
               ),
+            SwitchListTile(
+              title: const Text('Show adults-only tours (21+)'),
+              subtitle: const Text(
+                'Off by default. Keep off for family walks.',
+              ),
+              value: adultOptIn,
+              onChanged: (value) async {
+                if (!value) {
+                  setState(() => adultOptIn = false);
+                  return;
+                }
+                final accepted = await showDialog<bool>(
+                  context: context,
+                  builder: (dialog) => AlertDialog(
+                    title: const Text('Adults-only history'),
+                    content: const Text(
+                      'These tours discuss gambling, prostitution and organized crime without explicit detail. Confirm that you and everyone listening are 21 or older. Optional indoor visits have separate admission rules. This is a draft for testing.',
+                    ),
+                    actions: [
+                      TextButton(
+                        onPressed: () => Navigator.pop(dialog, false),
+                        child: const Text('Cancel'),
+                      ),
+                      FilledButton(
+                        onPressed: () => Navigator.pop(dialog, true),
+                        child: const Text('Everyone is 21+'),
+                      ),
+                    ],
+                  ),
+                );
+                if (mounted && accepted == true)
+                  setState(() => adultOptIn = true);
+              },
+            ),
             const Text(
               'Times include brief stops. Allow extra time for meals or indoor visits.',
             ),

@@ -1,0 +1,132 @@
+{
+  "id": "walkabout_lv_sin_city_secrets_v1",
+  "title": "Sin City Secrets: Las Vegas After Dark",
+  "theme": "the people and changing rules behind downtown Las Vegas",
+  "status": "draft",
+  "minimumAge": 21,
+  "narrationPolicy": "saved",
+  "chapters": [
+    {
+      "name": "Golden Gate — Where the night begins",
+      "point": [
+        36.17157422,
+        -115.14606118
+      ],
+      "opening": "Welcome to Sin City Secrets. Our first secret is rather modest: before the neon spectacle, a comfortable room was a selling point. The Golden Gate began as Hotel Nevada in 1906. Its history records room and board at a dollar a day, with electric lighting and steam heat. In 1907, the hotel received the town’s first telephone. Its number was one. Imagine being so early to the party that your phone number needs just a single digit. Look at the frontage and think about the travellers who arrived in a railroad town, long before today’s casino skyline. This walk follows the changing bargains behind the city’s reputation: who could make money, who did the work, and who made the rules.",
+      "angles": [],
+      "sources": {
+        "Golden Gate history": "https://www.goldengatecasino.com/our-story/"
+      },
+      "siteType": "historic_surviving",
+      "chapterIds": [
+        1
+      ],
+      "reviewedOn": "2026-11-11",
+      "confidence": "source-supported; field check pending",
+      "photo": {
+        "asset": "LV-02",
+        "caption": "the Golden Gate frontage"
+      }
+    },
+    {
+      "name": "Binion’s — The gamble and the performers",
+      "point": [
+        36.171396,
+        -115.144024
+      ],
+      "opening": "Benny Binion bought this property in 1951. The casino’s own history remembers an approach built around player comfort, including carpet and air conditioning. Those details sound ordinary now; they help explain how hospitality became part of the gamble. In 1970, a small poker gathering here became the beginning of the World Series of Poker. The tournament later moved elsewhere. You are looking at a starting point, not its present home.\n\nNow consider another kind of work behind the Las Vegas spectacle: performance. This is a citywide story, not a claim that these performers worked in this building. The Burlesque Hall of Fame preserves costumes, props and personal objects, including Sally Rand’s fans and Jennie Lee’s typewriter. A stage costume draws the eye, but a typewriter hints at the organising and record-keeping behind a career. Jennie Lee helped build the collection; Dixie Evans later carried it forward. Their work preserved performers’ lives as well as their glamour. The museum is a separate visit in the Arts District, outside this walking route.",
+      "angles": [],
+      "sources": {
+        "Binion’s history": "https://www.binions.com/history.php",
+        "Burlesque Hall of Fame collection": "https://burlesquehall.com/about/frequently-asked-questions-faq/"
+      },
+      "siteType": "historic_surviving",
+      "chapterIds": [
+        4,
+        6
+      ],
+      "reviewedOn": "2026-11-11",
+      "confidence": "source-supported; field check pending"
+    },
+    {
+      "name": "Block 16 — A vanished district",
+      "point": [
+        36.1724166667,
+        -115.14425
+      ],
+      "opening": "This marker recalls Block 16, the old district along First Street. The marker describes a place where liquor, gambling and prostitution became concentrated. In 1942, pressure from the Army helped bring prostitution here to an end. The buildings have gone; this is a historical district, not an invitation to find an operating brothel.\n\nThe Arizona Club was one of its best-known saloons. Archive photographs show an imposing bar. They tell us less about many of the women who worked nearby. UNLV’s account records Pilar Santa Cruz, who ran the Red Front Saloon and converted it into a rooming house after the district closed. Her story is a reminder that the people behind a notorious reputation also had businesses and livelihoods.\n\nOne final chapter happened elsewhere, not on this block. Roxie’s opened in the Four Mile area in 1946. A federal raid in 1954 and newspaper reporting exposed corruption surrounding the business. Closing one district had not ended the wider story. As we continue, notice how a small marker can hold a much larger argument about money and power.",
+      "angles": [],
+      "sources": {
+        "Centennial marker": "https://www.hmdb.org/m.asp?m=47859",
+        "UNLV historical research": "https://www.unlv.edu/news/article/my-nevada-5-prostitution-las-vegas"
+      },
+      "siteType": "demolished_area",
+      "chapterIds": [
+        2,
+        3,
+        5
+      ],
+      "reviewedOn": "2026-11-11",
+      "confidence": "source-supported; field check pending"
+    },
+    {
+      "name": "The Mob Museum — Follow the money",
+      "point": [
+        36.172607,
+        -115.1412656
+      ],
+      "opening": "Our final building once served as a federal courthouse and post office. A Senate investigation into organized crime held a hearing here. That makes the museum more than a place displaying evidence: the building itself belongs to the story. Think back to the hotel, the casino and the vanished district. Their histories raised the same question in different ways: who benefits, and who gets to set the rules?\n\nFor an optional final chapter, the museum’s Underground presents Prohibition history through a speakeasy and distillery experience in the basement. It is a modern museum experience, not a surviving secret bar from the twenties. Check the museum’s current admission and opening information if you want to go inside. Our outdoor walk ends here. You can finish without buying a ticket or a drink. The most interesting souvenir may be the next question you ask when a city offers you a glamorous version of its past.",
+      "angles": [],
+      "sources": {
+        "Museum building archive": "https://themobmuseum.org/digital-archive/this-building-of-ours/",
+        "The Underground": "https://themobmuseum.org/underground/"
+      },
+      "siteType": "historic_surviving",
+      "chapterIds": [
+        7,
+        8
+      ],
+      "reviewedOn": "2026-11-11",
+      "confidence": "source-supported; field check pending",
+      "photo": {
+        "asset": "mob",
+        "caption": "the Mob Museum building"
+      }
+    }
+  ],
+  "starts": {
+    "Default": {
+      "order": [
+        0,
+        1,
+        2,
+        3
+      ],
+      "path": [
+        [
+          36.17157422,
+          -115.14606118
+        ],
+        [
+          36.171396,
+          -115.144024
+        ],
+        [
+          36.1724166667,
+          -115.14425
+        ],
+        [
+          36.172607,
+          -115.1412656
+        ]
+      ]
+    }
+  },
+  "geometrySource": "Preview anchors only; Google pedestrian routing required before playback",
+  "editorialNotes": [
+    "Eight supplied chapters grouped into four distinct outdoor triggers. Binion’s precedes Block 16 to avoid backtracking.",
+    "Roxie’s and burlesque are regional context, not invented local entrances.",
+    "No operating adult-club recommendations included until current details are reviewed.",
+    "Saved narration contains no live prices or hours."
+  ]
+}
