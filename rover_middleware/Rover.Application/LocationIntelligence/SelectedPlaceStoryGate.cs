@@ -25,7 +25,7 @@ public static class SelectedPlaceStoryGate
             var distance = RouteMath.DistanceMeters(coordinates, story.Anchor);
             Add(distance > 150, "anchor_too_far", "Story anchor exceeds the selected-place distance limit of 150 m.");
         }
-        Add(!string.Join(" ", story.Claims.Select(c => c.Text)).Contains(placeName, StringComparison.OrdinalIgnoreCase),
+        Add(!story.Claims.Any(c => PlaceNameEvidence.Contains(c.Text, placeName)),
             "selected_name_missing", "Claims do not contain the supplied selected-place name. Check documented identity or aliases; do not infer equivalence.");
         if (variant is null)
         {

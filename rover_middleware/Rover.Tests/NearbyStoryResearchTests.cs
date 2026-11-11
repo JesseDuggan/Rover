@@ -92,6 +92,32 @@ internal static class NearbyStoryResearchTests
             }
             finally { StoryInspection.Listener.Value = previous; }
         }
+        foreach (var (label, evidence, expected) in new[] {
+            ("Town Hall - Perth", "Perth Town Hall preserves local records.", true),
+            ("Town Hall - Perth", "Perth’s Town Hall preserves local records.", true),
+            ("Museum – Smallville", "Smallville Museum preserves local records.", true),
+            ("Town Hall - Perth", "Town Hall preserves local records.", false),
+            ("Town Hall - Perth", "Perth Museum and Town Hall have records.", false),
+            ("Town Hall - Perth", "Northperth Town Hall preserves records.", false),
+            ("Town Hall - Perth", "Perth Town Hallway preserves records.", false),
+            ("Coffee Club", "Coffee Clubhouse preserves records.", false),
+            ("Old Palace", "New Palace preserves records.", false)
+        })
+        {
+            var candidate = story with { Claims = [story.Claims[0] with { Text = evidence }] };
+            var failures = SelectedPlaceStoryGate.Evaluate(candidate, candidate.Variants[0], label, point, now);
+            Check(failures.All(f => f.Code != "selected_name_missing") == expected,
+                "Formatting equivalence must preserve the full named identity: " + label + " / " + evidence);
+            if (expected)
+            {
+                Check(SelectedPlaceStoryGate.Evaluate(candidate with { Anchor = new GeoLocation(51, 8) },
+                    candidate.Variants[0], label, point, now).Any(f => f.Code == "anchor_too_far"),
+                    "A matching name in another location must still fail geography.");
+                Check(SelectedPlaceStoryGate.Evaluate(candidate with { Sources = [] },
+                    candidate.Variants[0], label, point, now).Any(f => f.Code == "source_reference_invalid"),
+                    "Name formatting cannot bypass cited-source validation.");
+            }
+        }
         var longText = string.Join(" ", Enumerable.Repeat("fixture", 50)) + ".";
         Check(SpokenStoryQuality.Review(longText)?.Contains("longest 50") == true, "Flag overloaded spoken sentences.");
         Check(SpokenStoryQuality.Review("A short fixture sentence. Another clear sentence.") is null, "Clear sentences need no warning.");

@@ -11,6 +11,10 @@ internal static class StoryEditorialTests
     public static async Task SafetyAndEvidence()
     {
         await Verify(false);
+        await EmptyClassificationRecovery(false);
+        await EmptyClassificationRecovery(true);
+        await MissingCitationsRemainRejected();
+        await Verify(true, mismatchedVenue: true);
         await Verify(false, recovery: true);
         await Verify(false, foodOnly: true);
         await Verify(true, foodOnly: true);
@@ -31,7 +35,73 @@ internal static class StoryEditorialTests
         await Verify(true, rejectedDraft: "What I searched and why it fell short: I searched the archive.");
         await Verify(true, rejectedDraft: "This plaque marks the exact spot of the historic photograph.");
     }
-    private static async Task Verify(bool question, bool relevant = true, bool recovery = false, bool foodOnly = false, string? scope = null, bool areaRecovery = false, string? coordinateCase = null, string? rejectedDraft = null, bool gap = false)
+    private static async Task MissingCitationsRemainRejected()
+    {
+        var calls = 0;
+        using var client = new HttpClient(new RoutingHttpMessageHandler(request =>
+        {
+            calls++;
+            return new HttpResponseMessage(HttpStatusCode.OK) { Content = new StringContent(
+                """{"status":"completed","output":[{"content":[{"text":"An uncited answer about a local workshop is not sufficient evidence for narration.","annotations":[]}]}]}""") };
+        }));
+        var anchor = new GeoLocation(44.9, -76.25);
+        var segment = new RouteStorySegment("area", 0, anchor, anchor, anchor, 0, 0, 0, 0, false, []);
+        var researcher = new OpenAILocalRouteResearcher(client, new() { Enabled = true, ApiKey = "test", Model = "test" }, TimeProvider.System);
+        var result = await researcher.ResearchAsync(new([segment], new ApproximateLiveLocation(null, null, null, null), [], ["history"], "en") { AreaFirst = true }, default);
+        Check(calls == 2 && result.Failed && result.Stories.Count == 0,
+            "Missing citations get only one bounded retry and never become narration.");
+    }
+
+    private static async Task EmptyClassificationRecovery(bool remainsEmpty)
+    {
+        var anchor = new GeoLocation(44.9, -76.25);
+        var calls = 0;
+        var events = new List<StoryInspectionEvent>();
+        var previous = StoryInspection.Listener.Value;
+        StoryInspection.Listener.Value = events.Add;
+        try
+        {
+            using var client = new HttpClient(new RoutingHttpMessageHandler(request =>
+            {
+                using var body = JsonDocument.Parse(request.Content!.ReadAsStringAsync().GetAwaiter().GetResult());
+                calls++;
+                string output;
+                if (calls % 2 == 1)
+                {
+                    var text = "The Riverside workshop made tools for local farms. Its surviving workbench explains how workers shaped each handle by hand. Location: Riverside workshop; latitude 44.9; longitude -76.25.";
+                    output = JsonSerializer.Serialize(new { status = "completed", output = new[] { new { content = new[] { new {
+                        text = text + " [1]", annotations = new[] { new { type = "url_citation", start_index = text.Length + 1,
+                            end_index = text.Length + 4, url = "https://archive.example/workshop", title = "Workshop archive" } }
+                    } } } } });
+                }
+                else
+                {
+                    var instructions = body.RootElement.GetProperty("instructions").GetString()!;
+                    Check(instructions.Contains("EVERY evidenceIndex") && instructions.Contains("retain the otherwise usable card"),
+                        "Classification accounts for passages and preserves unresolved geographic evidence for validation.");
+                    var text = calls == 2 || remainsEmpty
+                        ? "{\"stories\":[],\"omitted\":[{\"evidenceIndex\":0,\"reason\":\"insufficient_evidence\"}]}"
+                        : JsonSerializer.Serialize(new { stories = new[] { new {
+                            evidenceIndex = 0, title = "Workshop tools", kind = "history", latitude = 44.9, longitude = -76.25,
+                            locationEvidence = "Riverside workshop", audienceSuitability = "family", geographicScope = "local"
+                        } }, omitted = Array.Empty<object>() });
+                    output = JsonSerializer.Serialize(new { status = "completed", output = new[] { new { content = new[] { new { text } } } } });
+                }
+                return new HttpResponseMessage(HttpStatusCode.OK) { Content = new StringContent(output) };
+            }));
+            var researcher = new OpenAILocalRouteResearcher(client, new LocalRouteResearchOptions { Enabled = true, ApiKey = "test", Model = "test" }, TimeProvider.System);
+            var segment = new RouteStorySegment("area", 0, anchor, anchor, anchor, 0, 0, 0, 0, false, []);
+            var result = await researcher.ResearchAsync(new([segment], new ApproximateLiveLocation(null, null, null, null), [], ["history"], "en") { AreaFirst = true, MaximumStories = 2 }, default);
+            Check(calls == 4, "Empty classification has exactly one bounded research recovery.");
+            Check(result.Stories.Count == (remainsEmpty ? 0 : 1), "Recovery never invents a card for still-empty evidence.");
+            Check(events.Any(e => e.Stage == "Evidence classification" && e.Reason.Contains("insufficient_evidence")),
+                "Omitted evidence is visible in inspector.");
+            Check(events.Count(e => e.Stage == "Evidence recovery") == 1, "Recovery is recorded once.");
+        }
+        finally { StoryInspection.Listener.Value = previous; }
+    }
+
+    private static async Task Verify(bool question, bool relevant = true, bool recovery = false, bool foodOnly = false, string? scope = null, bool areaRecovery = false, string? coordinateCase = null, string? rejectedDraft = null, bool gap = false, bool mismatchedVenue = false)
     {
         var anchor = new GeoLocation(52.2946778, 4.7108732);
         var segment = new RouteStorySegment("area", 0, anchor, anchor, anchor, 0, 0, 0, 0, false, []);
@@ -39,6 +109,7 @@ internal static class StoryEditorialTests
             "Accounts disagree about its opening date. The workshop at 12 King Street preserves their tools and written records. " +
             "Those records explain how the workshop changed over time. The archive also documents the surrounding community. " +
             "Location: test archive; latitude 52.295; longitude 4.711.";
+        if (mismatchedVenue) passage = passage.Replace("test archive", "North Perth Town Hall");
         foreach (var audience in new string?[] { "family", "sensitive", "mature", null })
         {
             var calls = 0;
@@ -103,12 +174,12 @@ internal static class StoryEditorialTests
                             "Scope policy must reach classifier instructions, not just untrusted evidence.");
                     var cards = JsonSerializer.Serialize(new { stories = new[] { new {
                         evidenceIndex = 0, title = "Workshop records", kind = "history",
-                        latitude = scope is not null ? anchor.Latitude + 0.03 : recovery && calls == 2 ? anchor.Latitude + 1 : anchor.Latitude, longitude = anchor.Longitude,
+                        latitude = mismatchedVenue ? anchor.Latitude + 1 : scope is not null ? anchor.Latitude + 0.03 : recovery && calls == 2 ? anchor.Latitude + 1 : anchor.Latitude, longitude = anchor.Longitude,
                         geographicScope = scope ?? "local",
                         geographicArea = scope is null ? null : "test archive",
                         geographicConnection = scope is null ? null : relevant
                             ? "The archive also documents the surrounding community." : "Unsupported connection to a different city.",
-                        locationEvidence = "test archive", startsUtc = (string?)null, endsUtc = (string?)null,
+                        locationEvidence = mismatchedVenue ? "North Perth Town Hall" : "test archive", startsUtc = (string?)null, endsUtc = (string?)null,
                         audienceSuitability = audience, sensitivityNotice = (string?)null,
                         uncertainClaims = new[] { "Accounts disagree about its opening date.", "Invented dispute." },
                         answersQuestion = relevant
@@ -134,10 +205,16 @@ internal static class StoryEditorialTests
                 new() { Enabled = true, ApiKey = "test", Model = "test" }, TimeProvider.System);
             var result = await researcher.ResearchAsync(new([segment],
                 new ApproximateLiveLocation(null, null, null, null), [], foodOnly ? ["food"] : ["history"], "en") {
+                    PublicPlaces = mismatchedVenue ? [new("Town Hall - Perth", null, anchor)] : null,
                     AreaFirst = !recovery || areaRecovery,
                     Question = question ? new(gap ? "Research this block or landscape and its workshop." : "How did the workshop change?", StoryQuestionScope.Neighbourhood,
                         StoryQuestionFormat.ThenAndNow, 1, 180) : null
                 }, default);
+            if (mismatchedVenue)
+            {
+                Check(result.Stories.Count == 0, "A longer name must not inherit a selected place pin and bypass geographic rejection.");
+                continue;
+            }
             if (rejectedDraft is not null)
             {
                 Check(result.Stories.Count == 0, "An annotated failed search or overprecise draft must not reach playback.");

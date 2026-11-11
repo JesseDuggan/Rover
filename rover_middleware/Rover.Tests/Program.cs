@@ -1045,9 +1045,10 @@ static async Task LocalRouteResearchValidation()
             var body = request.Content!.ReadAsStringAsync().GetAwaiter().GetResult();
             AssertTrue(!body.Contains("walk-test"), "Research must not receive user session identifiers.");
             using var payload = JsonDocument.Parse(body);
-            AssertEqual(calls % 2 == 1 ? 8192 : 4096, payload.RootElement.GetProperty("max_output_tokens").GetInt32());
+            var isSearch = payload.RootElement.TryGetProperty("tools", out _);
+            AssertEqual(isSearch ? 8192 : 4096, payload.RootElement.GetProperty("max_output_tokens").GetInt32());
             AssertEqual("low", payload.RootElement.GetProperty("reasoning").GetProperty("effort").GetString());
-            if (calls % 2 == 1)
+            if (isSearch)
             {
                 AssertTrue(payload.RootElement.GetProperty("instructions").GetString()!.Contains("at most three"), "Search should request a bounded starter pack.");
                 var input = payload.RootElement.GetProperty("input").GetString()!;
@@ -1064,7 +1065,7 @@ static async Task LocalRouteResearchValidation()
                 AssertTrue(input.Contains("actively search official neighbourhood") && input.Contains("existing search budget"), "Current events need an explicit bounded search, not incidental discovery.");
             }
             if (scenario == "failure") return JsonResponse(HttpStatusCode.ServiceUnavailable, "{}");
-            if (calls % 2 == 1)
+            if (isSearch)
             {
                 var response = research;
                 if (scenario is "missing-annotations" or "bad-offset" or "bad-url" or "short-text" or "embedded-url")
@@ -1118,7 +1119,7 @@ static async Task LocalRouteResearchValidation()
             AssertEqual(anchor, result.Stories.Single().Anchor);
         }
         if (scenario == "far") AssertEqual(4, calls);
-        else AssertTrue(calls <= 2, "Only an empty out-of-area result gets a recovery attempt.");
+        else AssertTrue(calls <= 2, "Recovery is bounded to two calls for rejected citations and four for unresolved geography.");
         var expectedDiagnostic = scenario switch
         {
             "missing-annotations" => "1 paragraphs; 0 citation annotations",
@@ -1212,10 +1213,10 @@ static async Task LocalRouteResearchValidation()
                 Enabled = true, ApiKey = secret, Model = "test", CaptureRejectedResponses = capture
             }, TimeProvider.System, logger);
         var captured = await captureResearcher.ResearchAsync(query, CancellationToken.None);
-        AssertEqual(1, calls);
+        AssertEqual(2, calls);
         AssertEqual(0, captured.Stories.Count);
-        AssertEqual(capture ? 2 : 1, logger.Entries.Count);
-        var diagnosticEntry = logger.Entries.Single(entry => entry.EventId.Name != "RoverResearchCapture");
+        AssertEqual(capture ? 4 : 2, logger.Entries.Count);
+        foreach (var diagnosticEntry in logger.Entries.Where(entry => entry.EventId.Name != "RoverResearchCapture"))
         AssertTrue(diagnosticEntry.Message.Contains("citation failure")
             && !diagnosticEntry.Message.Contains(secret)
             && !diagnosticEntry.Message.Contains("I could not establish"),
@@ -1223,13 +1224,15 @@ static async Task LocalRouteResearchValidation()
         AssertTrue(!captured.Warning!.Contains("I could not establish"), "Raw research must not appear in app status.");
         if (capture)
         {
-            var entry = logger.Entries.Single(entry => entry.EventId.Name == "RoverResearchCapture");
+            foreach (var entry in logger.Entries.Where(entry => entry.EventId.Name == "RoverResearchCapture"))
+            {
             AssertEqual("RoverResearchCapture", entry.EventId.Name);
             AssertTrue(entry.Message.Contains("I could not establish a locality.") && entry.Message.Contains("Paris"), "Capture must expose the rejected text and coarse context.");
             AssertTrue(entry.Message.Contains("[truncated]") && entry.Message.Contains("[REDACTED]"), "Capture must bound text and redact credentials.");
             AssertTrue(!entry.Message.Contains(secret) && !entry.Message.Contains("48.856"), "Capture must not disclose the API key or precise query coordinates.");
             AssertTrue(!entry.Message.Contains("Museum street"), "Capture must not disclose the added public-place address context.");
             AssertTrue(entry.Message.Contains("48.86") && entry.Message.Contains("SearchCalls=0"), "Capture must use rounded request coordinates and record search execution.");
+            }
         }
     }
     using var disabledClient = new HttpClient(new RoutingHttpMessageHandler(_ => throw new InvalidOperationException("Disabled research called network")));

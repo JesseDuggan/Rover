@@ -42,6 +42,24 @@ Multiple failed checks can produce multiple records for one candidate; do not co
 records as separate stories or provider calls. The acceptance requirements are unchanged.
 Source-reference failures are now recorded rather than silently skipped.
 
+Place-name checks permit formatting equivalence: punctuation, possessives, and a
+spaced-dash locality suffix moved before the intact place name. They do not infer
+former names or arbitrary aliases. Coordinate substitution requires whole-name
+equivalence with exactly one supplied public place; a longer name containing that
+name cannot inherit its pin. Subject distance, audience, freshness and source checks
+remain required.
+
+Automatic area research now has one bounded recovery for a completed search with
+no usable cited passages or zero classified cards, as well as unresolved/out-of-area
+coordinates. Recovery is shared across locations and remains subject to cancellation;
+it does not turn uncited evidence into narration or retry provider transport errors.
+`Evidence classification / Omitted` records a passage index and a controlled reason
+(or `unaccounted_passage` when the classifier omitted its explanation).
+`Evidence recovery / Started` identifies the recovery trigger. These are model
+decisions, not proof the source lacks a worthwhile story. A failed second pass stays
+empty/failed. Expect a possible additional research/classification pair; compare
+recovered stories and call counts before claiming savings.
+
 `Spoken quality / Review suggested` flags sentences exceeding 35 words using punctuation
 as a heuristic. Abbreviations can affect counts. This is an editorial review signal, not a
 factual rejection, and does not add a model call or prevent narration. Shared preparation
