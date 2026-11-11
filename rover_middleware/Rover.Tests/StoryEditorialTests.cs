@@ -10,9 +10,11 @@ internal static class StoryEditorialTests
 {
     public static async Task SafetyAndEvidence()
     {
+        SpokenEditChecks();
         await Verify(false);
         await Verify(false, crossSentenceQualifier: true);
         await Verify(false, briefEvidence: true);
+        await Verify(false, edited: true);
         await EmptyClassificationRecovery(false);
         await EmptyClassificationRecovery(true);
         await MissingCitationsRemainRejected();
@@ -103,7 +105,7 @@ internal static class StoryEditorialTests
         finally { StoryInspection.Listener.Value = previous; }
     }
 
-    private static async Task Verify(bool question, bool relevant = true, bool recovery = false, bool foodOnly = false, string? scope = null, bool areaRecovery = false, string? coordinateCase = null, string? rejectedDraft = null, bool gap = false, bool mismatchedVenue = false, bool crossSentenceQualifier = false, bool briefEvidence = false)
+    private static async Task Verify(bool question, bool relevant = true, bool recovery = false, bool foodOnly = false, string? scope = null, bool areaRecovery = false, string? coordinateCase = null, string? rejectedDraft = null, bool gap = false, bool mismatchedVenue = false, bool crossSentenceQualifier = false, bool briefEvidence = false, bool edited = false)
     {
         var anchor = new GeoLocation(52.2946778, 4.7108732);
         var segment = new RouteStorySegment("area", 0, anchor, anchor, anchor, 0, 0, 0, 0, false, []);
@@ -189,6 +191,8 @@ internal static class StoryEditorialTests
                         locationEvidence = mismatchedVenue ? "North Perth Town Hall" : "test archive", startsUtc = (string?)null, endsUtc = (string?)null,
                         audienceSuitability = audience, sensitivityNotice = (string?)null,
                         uncertainClaims = new[] { crossSentenceQualifier ? "worked there. Accounts disagree" : "Accounts disagree about its opening date.", "Invented dispute." },
+                        spokenSentences = edited ? System.Text.RegularExpressions.Regex.Split(passage.Trim(), @"(?<=[.!?])\s+")
+                            .Where(t => !t.StartsWith("Location:")).Select(t => new SpokenStorySentence(t, [t])).ToArray() : null,
                         answersQuestion = relevant
                     } } });
                     if (coordinateCase is not null && calls == 2)
@@ -239,6 +243,7 @@ internal static class StoryEditorialTests
             }
             Check(result.Stories.Count == 1 && calls == (recovery ? 4 : 2), "Research uses at most one recovery attempt.");
             var story = result.Stories.Single();
+            if (edited) Check(story.Claims.All(c => c.ClaimId.Contains(":spoken:")), "Valid spoken edits reach all research paths with source references intact.");
             Check(story.Claims.Any(c => c.Text.Contains("12 King Street")), "Original address evidence must remain intact.");
             Check(story.Variants.All(v => !v.Narration.Contains("12 King Street")), "All spoken variants omit address numbers.");
             Check(story.Variants.All(v => !v.Narration.Contains("Location:") && !v.Narration.Contains("latitude")),
@@ -265,6 +270,35 @@ internal static class StoryEditorialTests
             if (audience is "sensitive" or "mature")
                 Check(!string.IsNullOrWhiteSpace(story.SensitivityNotice), "Sensitive content needs a notice.");
         }
+    }
+
+    private static void SpokenEditChecks()
+    {
+        var evidence = "The workshop opened in 1820. Accounts disagree about its opening date. Workers repaired farm tools. Apprentices trained in the upper room. The surviving bench has tool marks.";
+        SpokenStorySentence[] sentences = [
+            new("The workshop opened in 1820. Accounts disagree about its opening date.", ["The workshop opened in 1820. Accounts disagree about its opening date."]),
+            new("Workers repaired farm tools.", ["Workers repaired farm tools."]),
+            new("Apprentices trained in the upper room.", ["Apprentices trained in the upper room."]),
+            new("The surviving bench has tool marks.", ["The surviving bench has tool marks."])
+        ];
+        string[] caveats = ["Accounts disagree about its opening date."];
+        Check(SpokenStoryDraft.TryPrepare(evidence, sentences, caveats, out var draft)
+            && draft.Contains(caveats[0]), "A supported spoken edit retains its caveat.");
+        var missingCaveat = sentences.ToArray(); missingCaveat[0] = sentences[0] with { Text = "The workshop opened in 1820." };
+        Check(!SpokenStoryDraft.TryPrepare(evidence, missingCaveat, caveats, out _), "An edit cannot drop a historical qualification.");
+        var inventedQuote = sentences.ToArray(); inventedQuote[1] = sentences[1] with { EvidenceQuotes = ["An invented archive description."] };
+        Check(!SpokenStoryDraft.TryPrepare(evidence, inventedQuote, caveats, out _), "Supporting excerpts must exist in the cited passage.");
+        var inventedYear = sentences.ToArray(); inventedYear[0] = sentences[0] with { Text = sentences[0].Text.Replace("1820", "1850") };
+        Check(!SpokenStoryDraft.TryPrepare(evidence, inventedYear, caveats, out _), "Spoken edits cannot invent a year.");
+        foreach (var unsupported in new[] { "1990s", "21st", "50km" })
+        {
+            var changed = sentences.ToArray(); changed[0] = sentences[0] with { Text = sentences[0].Text.Replace("1820", unsupported) };
+            Check(!SpokenStoryDraft.TryPrepare(evidence, changed, caveats, out _), "Unsupported decades, ordinals and attached units fail numeric validation.");
+        }
+        Check(!SpokenStoryDraft.TryPrepare(evidence, sentences, [], out _, isLegend: true),
+            "Legends with unidentified attribution retain original evidence, not an edited version.");
+        var overloaded = sentences.ToArray(); overloaded[1] = sentences[1] with { Text = string.Join(" ", Enumerable.Repeat("word", 40)) };
+        Check(!SpokenStoryDraft.TryPrepare(evidence, overloaded, caveats, out _), "Overloaded edited sentences are rejected.");
     }
 
     private static void Check(bool condition, string message)
