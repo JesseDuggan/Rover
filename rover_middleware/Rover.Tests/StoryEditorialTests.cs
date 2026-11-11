@@ -56,6 +56,8 @@ internal static class StoryEditorialTests
                 {
                     Check(body.RootElement.GetProperty("instructions").GetString()!.Contains(NarrationAddressPolicy.Instructions),
                         "Every research path receives the shared narration address rule.");
+                    Check(body.RootElement.GetProperty("instructions").GetString()!.Contains(SpokenStoryQuality.Instructions),
+                        "Questions, gaps and automatic research receive the shared spoken-quality guidance.");
                     var input = body.RootElement.GetProperty("input").GetString()!;
                     var instructions = body.RootElement.GetProperty("instructions").GetString()!;
                     Check(instructions.Contains("warm, conversational") && instructions.Contains("family-safe")

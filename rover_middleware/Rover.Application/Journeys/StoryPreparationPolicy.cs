@@ -4,7 +4,7 @@ namespace Rover.Application.Journeys;
 // deliberately not an input: it must not change the quality of the evidence.
 public static class StoryPreparationPolicy
 {
-    public const string Version = "shared-preparation-v2";
+    public const string Version = "shared-preparation-v3-spoken";
 
     public static string Depth(string? value) => value?.Trim().ToLowerInvariant() switch
     {
@@ -23,7 +23,7 @@ public static class StoryPreparationPolicy
     };
 
     public static string Instructions(string? depth) =>
-        NarrationAddressPolicy.Instructions + " " +
+        NarrationAddressPolicy.Instructions + SpokenStoryQuality.Instructions + " " +
         "Use the selected interests to choose the story angle, not the type of journey. " +
         "First verify what the place actually is. Follow a specific person, former name, former use, visible detail or natural process into relevant primary or local sources. " +
         "For gaps, research the street, landscape or neighbourhood with a documented connection to this stretch. " +

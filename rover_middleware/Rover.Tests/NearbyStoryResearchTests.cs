@@ -63,17 +63,41 @@ internal static class NearbyStoryResearchTests
             "Valid cited story must preserve identity and evidence.");
         Check(researcher.Query?.MaximumStories == 1
             && researcher.Query.PublicPlaces?.Single().Location == point, "Research must be bounded to selected place.");
-        foreach (var invalid in new[] {
-            story with { Anchor = new GeoLocation(51, 8) },
-            story with { Claims = [new("claim", "Another business has history.", ["source"], .9)] },
-            story with { Variants = [new(AdaptiveStoryLength.Standard, 30, "I could not verify a place called Coffee Club here.", ["claim"])] },
-            story with { Sources = [] },
-            story with { ExpiresUtc = now.AddMinutes(-1) }
+        foreach (var (invalid, code) in new[] {
+            (story with { Anchor = new GeoLocation(51, 8) }, "anchor_too_far"),
+            (story with { Anchor = new GeoLocation(double.NaN, 8) }, "anchor_nonfinite"),
+            (story with { Claims = [new("claim", "Another business has history.", ["source"], .9)] }, "selected_name_missing"),
+            (story with { Variants = [new(AdaptiveStoryLength.Standard, 30, "I could not verify a place called Coffee Club here.", ["claim"])] }, "search_failure_narration"),
+            (story with { Sources = [] }, "source_reference_invalid"),
+            (story with { Sources = [story.Sources[0] with { Url = "file:///private" }] }, "source_reference_invalid"),
+            (story with { ExpiresUtc = now }, "evidence_expired"),
+            (story with { AudienceSuitability = "sensitive" }, "autoplay_ineligible"),
+            (story with { Variants = [] }, "variant_missing"),
+            (story with { Variants = [story.Variants[0] with { Narration = "" }] }, "narration_empty"),
+            (story with { Variants = [story.Variants[0] with { ClaimIds = [] }] }, "claim_ids_empty"),
+            (story with { Variants = [story.Variants[0] with { ClaimIds = ["missing"] }] }, "claim_reference_mismatch"),
+            (story with { Claims = [story.Claims[0] with { SourceIds = [] }] }, "claim_sources_empty")
         })
         {
-            result = await NearbyStoryResearch.CreateAsync(new FakeResearcher(new([invalid], null)), place, request, now, default);
-            Check(result.ResearchStatus == "empty" && result.ShortSpokenNarration == "", "Unsafe evidence must not play.");
+            var events = new List<StoryInspectionEvent>();
+            var previous = StoryInspection.Listener.Value;
+            StoryInspection.Listener.Value = events.Add;
+            try
+            {
+                result = await NearbyStoryResearch.CreateAsync(new FakeResearcher(new([invalid], null)), place, request, now, default);
+                Check(result.ResearchStatus == "empty" && result.ShortSpokenNarration == "", "Unsafe evidence must not play.");
+                Check(events.Any(e => e.Stage == "Selected-place gate" && e.Outcome == "Rejected" && e.Reason.StartsWith(code + ":")),
+                    "Every failed predicate must be visible in inspector: " + code);
+                Check(!events.Any(e => e.Stage == "Selected-place gate" && e.Outcome == "Accepted"), "Rejected evidence must never be accepted.");
+            }
+            finally { StoryInspection.Listener.Value = previous; }
         }
+        var longText = string.Join(" ", Enumerable.Repeat("fixture", 50)) + ".";
+        Check(SpokenStoryQuality.Review(longText)?.Contains("longest 50") == true, "Flag overloaded spoken sentences.");
+        Check(SpokenStoryQuality.Review("A short fixture sentence. Another clear sentence.") is null, "Clear sentences need no warning.");
+        var longStory = story with { Variants = [story.Variants[0] with { Narration = longText }] };
+        Check((await NearbyStoryResearch.CreateAsync(new FakeResearcher(new([longStory], null)), place, request, now, default)).ResearchStatus == "ready",
+            "Editorial warnings do not silence verified stories or change evidence gates.");
         result = await NearbyStoryResearch.CreateAsync(new FakeResearcher(new([], "failure") { Failed = true }), place, request, now, default);
         Check(result.ResearchStatus == "failed", "Failure must not look like no evidence.");
         result = await NearbyStoryResearch.CreateAsync(researcher, place, request with { SelectedPlaceIds = ["other"] }, now, default);

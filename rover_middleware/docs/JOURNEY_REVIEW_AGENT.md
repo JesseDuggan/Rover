@@ -32,6 +32,22 @@ Suggested delegation prompt:
 
 Human review should decide whether a rejection was correct before relaxing a gate, whether repeated passes recovered value before reducing calls, and whether missing linkage is expected for that action. Any approved change and before/after validation is a separate task; this workflow creates no schedule and does not train or update a model.
 
+## Selected-place and spoken-quality diagnostics
+
+Selected-place rejections now use stable reason prefixes, including `selected_name_missing`,
+`anchor_too_far`, `anchor_nonfinite`, `evidence_expired`, `autoplay_ineligible`,
+`variant_missing`, `narration_empty`, `search_failure_narration`, `claim_ids_empty`,
+`claim_reference_mismatch`, `claim_sources_empty`, and `source_reference_invalid`.
+Multiple failed checks can produce multiple records for one candidate; do not count those
+records as separate stories or provider calls. The acceptance requirements are unchanged.
+Source-reference failures are now recorded rather than silently skipped.
+
+`Spoken quality / Review suggested` flags sentences exceeding 35 words using punctuation
+as a heuristic. Abbreviations can affect counts. This is an editorial review signal, not a
+factual rejection, and does not add a model call or prevent narration. Shared preparation
+v3 asks for short complete spoken sentences and evidence-supported depth in every journey
+type. Compare actual new narrations; prompt changes alone do not prove improved quality.
+
 Run focused offline tests:
 
 ```powershell

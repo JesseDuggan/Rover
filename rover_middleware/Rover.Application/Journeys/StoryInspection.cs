@@ -16,9 +16,14 @@ public static class StoryInspection
         catch { }
     }
     public static void Story(AdaptiveRouteStory story, string stage)
-        => Record(stage, story.CanAutoplay ? "Eligible" : "Not eligible for autoplay",
+    {
+        Record(stage, story.CanAutoplay ? "Eligible" : "Not eligible for autoplay",
             $"{story.Claims.Count} claims; {story.Sources.Count} sources; category {story.Category}; audience {story.AudienceSuitability}. Source links support the story as a whole; sentence-level verification is not independently measured.",
             story.StoryId, story.Title,
             story.Variants.OrderByDescending(v => v.EstimatedDurationSeconds).FirstOrDefault()?.Narration,
             story.Sources.Select(s => s.Url).OfType<string>().ToArray(), story.ResearchDepth);
+        var narration = story.Variants.OrderByDescending(v => v.EstimatedDurationSeconds).FirstOrDefault()?.Narration;
+        if (narration is not null && SpokenStoryQuality.Review(narration) is {} quality)
+            Record("Spoken quality", "Review suggested", quality, story.StoryId, story.Title);
+    }
 }

@@ -80,24 +80,22 @@ public static class NearbyStoryResearch
             cancellationToken.ThrowIfCancellationRequested();
             foreach (var story in result.Stories)
             {
-                if (!story.CanAutoplay) { StoryInspection.Record("Selected-place gate", "Rejected", "Story is not eligible for autoplay.", story.StoryId, story.Title); continue; }
                 var variant = story.Variants.FirstOrDefault(v => v.Length == StoryPreparationPolicy.Length(request.ContentDepth))
                     ?? story.Variants.OrderByDescending(v => v.EstimatedDurationSeconds).FirstOrDefault();
-                if (variant is null || string.IsNullOrWhiteSpace(variant.Narration) || ReportsMissingEvidence(variant.Narration)
-                    || variant.ClaimIds.Count == 0 || story.ExpiresUtc <= now
-                    || !double.IsFinite(story.Anchor.Latitude) || !double.IsFinite(story.Anchor.Longitude)
-                    || RouteMath.DistanceMeters(place.Coordinates, story.Anchor) > 150
-                    || !string.Join(" ", story.Claims.Select(c => c.Text)).Contains(place.Name, StringComparison.OrdinalIgnoreCase)) {
-                    StoryInspection.Record("Selected-place gate", "Rejected", "Narration, expiry, geographic proximity, selected-place identity or claim reference checks failed.", story.StoryId, story.Title); continue;
+                var failures = SelectedPlaceStoryGate.Evaluate(story, variant, place.Name, place.Coordinates, now);
+                if (failures.Count > 0)
+                {
+                    foreach (var failure in failures)
+                        StoryInspection.Record("Selected-place gate", "Rejected", $"{failure.Code}: {failure.Reason}", story.StoryId, story.Title);
+                    continue;
                 }
+                if (variant is null) continue; // The gate records variant_missing above.
                 var claims = story.Claims.Where(c => variant.ClaimIds.Contains(c.ClaimId)).ToArray();
                 var sources = story.Sources.Where(s => claims.Any(c => c.SourceIds.Contains(s.SourceId))
                     && Uri.TryCreate(s.Url, UriKind.Absolute, out var uri)
                     && (uri.Scheme == "https" || uri.Scheme == "http")).ToArray();
-                if (claims.Length != variant.ClaimIds.Distinct().Count()
-                    || claims.Any(c => c.SourceIds.Count == 0
-                        || c.SourceIds.Any(id => !sources.Any(s => s.SourceId == id))))
-                    continue;
+                if (SpokenStoryQuality.Review(variant.Narration) is {} quality)
+                    StoryInspection.Record("Spoken quality", "Review suggested", quality, story.StoryId, story.Title);
                 StoryInspection.Record("Selected-place gate", "Accepted", "Selected-place identity, proximity, expiry and claim/source references passed.", story.StoryId, story.Title, variant.Narration, sources.Select(s => s.Url).OfType<string>().ToArray(), StoryPreparationPolicy.Depth(request.ContentDepth));
                 // Research does not confer permission to persist third-party content.
                 return new LocationStoryResult(
