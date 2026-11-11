@@ -1,4 +1,5 @@
 import '../voice/spoken_location.dart';
+import '../api/journey_identity.dart';
 
 import 'dart:async';
 
@@ -71,7 +72,8 @@ class JourneyLabScreen extends StatefulWidget {
 }
 
 class _JourneyLabState extends State<JourneyLabScreen> {
-  late final api = widget.client ?? RoverApiClient();
+  late final api = (widget.client ?? RoverApiClient())
+    ..journeyId = JourneyIdentity.create();
   final mapKey = GlobalKey();
   final map = MapController();
   static const initialCenter = LatLng(43.65, -79.38);
@@ -208,6 +210,7 @@ class _JourneyLabState extends State<JourneyLabScreen> {
     if (busy) return;
     if (mode == _Tap.start) {
       edit(() {
+        api.journeyId = JourneyIdentity.create();
         start = location;
         mode = _Tap.end;
       });
@@ -1283,6 +1286,7 @@ class _JourneyLabState extends State<JourneyLabScreen> {
   );
 
   _Json snapshot() => {
+    'journeyId': api.journeyId,
     'preparedFor': preparedFor,
     'start': _coordinates(start!),
     'end': end == null ? null : _coordinates(end!),
@@ -1342,7 +1346,15 @@ class _JourneyLabState extends State<JourneyLabScreen> {
       if (mounted) setState(() => status = 'No saved test route yet.');
       return;
     }
-    restore(jsonDecode(await file.readAsString()) as _Json);
+    final data = jsonDecode(await file.readAsString()) as _Json;
+    if (!mounted) return;
+    restore(data);
+    if (data['journeyId'] != api.journeyId) {
+      data['journeyId'] = api.journeyId;
+      final temp = File('${file.path}.tmp');
+      await temp.writeAsString(jsonEncode(data), flush: true);
+      await temp.rename(file.path);
+    }
   });
 
   void restore(_Json data) {
@@ -1390,6 +1402,7 @@ class _JourneyLabState extends State<JourneyLabScreen> {
     }
     if (!mounted) return;
     setState(() {
+      api.journeyId = JourneyIdentity.restore(data['journeyId']);
       start = origin;
       end = destination;
       stops = ordered;
@@ -1442,37 +1455,47 @@ class _JourneyLabState extends State<JourneyLabScreen> {
         depth: prefs.contentDepth,
       );
       if (!mounted) return;
-      await Navigator.push<void>(
-        context,
-        MaterialPageRoute(
-          builder: (_) => TourRoutePreview(
-            rehearsalStart: fremontRehearsalStart,
-            initialWalk: walk,
-            api: api,
-            pace: prefs.walkingPace,
-            onUse: openPrepared,
-            profileInterests: prefs.interests,
-            loadWalk: (interests) => fremontTour(
-              start: startName,
-              interests: interests,
-              depth: prefs.contentDepth,
+      final tourApi = RoverApiClient(config: api.config, journeyId: JourneyIdentity.create());
+      try {
+        await Navigator.push<void>(
+          context,
+          MaterialPageRoute(
+            builder: (_) => TourRoutePreview(
+              rehearsalStart: fremontRehearsalStart,
+              initialWalk: walk,
+              api: tourApi,
+              pace: prefs.walkingPace,
+              onUse: (walk) => openPrepared(walk, journeyId: tourApi.journeyId),
+              profileInterests: prefs.interests,
+              loadWalk: (interests) => fremontTour(
+                start: startName,
+                interests: interests,
+                depth: prefs.contentDepth,
+              ),
             ),
           ),
-        ),
-      );
+        );
+      } finally {
+        tourApi.close(force: true);
+      }
     });
   }
 
-  void openPrepared(PreparedWalk walk) {
-    Navigator.of(context).push(
-      MaterialPageRoute<void>(
-        builder: (_) => PreparedWalkScreen(
-          walk: walk,
-          research: (stop) => askAtStop(stop, 'What occupies this site today?'),
-          followUp: askAtStop,
+  Future<void> openPrepared(PreparedWalk walk, {String? journeyId}) async {
+    final preparedApi = RoverApiClient(config: api.config, journeyId: journeyId ?? api.journeyId);
+    try {
+      await Navigator.of(context).push(
+        MaterialPageRoute<void>(
+          builder: (_) => PreparedWalkScreen(
+            walk: walk,
+            research: (stop) => askTourQuestion(preparedApi, stop, 'What occupies this site today?'),
+            followUp: (stop, question) => askTourQuestion(preparedApi, stop, question),
+          ),
         ),
-      ),
-    );
+      );
+    } finally {
+      preparedApi.close(force: true);
+    }
   }
 
   Future<WalkAnswer?> askAtStop(PreparedStop stop, String question) =>
@@ -1708,7 +1731,7 @@ class _JourneyLabState extends State<JourneyLabScreen> {
               label: const Text('Fremont Past to Present'),
             ),
             FilledButton.icon(
-              onPressed: busy ? null : () => openPrepared(kingStreetTrail),
+              onPressed: busy ? null : () => openPrepared(kingStreetTrail, journeyId: JourneyIdentity.create()),
               icon: const Icon(Icons.theater_comedy),
               label: const Text('King Street Story Trail'),
             ),
@@ -1731,12 +1754,12 @@ class _JourneyLabState extends State<JourneyLabScreen> {
                     ),
             ),
             OutlinedButton.icon(
-              onPressed: busy ? null : () => openPrepared(bloorRehearsal),
+              onPressed: busy ? null : () => openPrepared(bloorRehearsal, journeyId: JourneyIdentity.create()),
               icon: const Icon(Icons.headphones),
               label: const Text('Bloor West rehearsal'),
             ),
             OutlinedButton.icon(
-              onPressed: busy ? null : () => openPrepared(perthFieldTest),
+              onPressed: busy ? null : () => openPrepared(perthFieldTest, journeyId: JourneyIdentity.create()),
               icon: const Icon(Icons.directions_walk),
               label: const Text('Perth field test'),
             ),

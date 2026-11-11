@@ -23,10 +23,13 @@ import 'story_question_models.dart';
 import 'walk_models.dart';
 
 class RoverApiClient {
-  RoverApiClient({RoverApiConfig? config, HttpClient? httpClient})
+  RoverApiClient({RoverApiConfig? config, HttpClient? httpClient, this.journeyId})
     : config = config ?? RoverApiConfig.fromEnvironment(),
       _httpClient = httpClient ?? HttpClient();
 
+  // Owned by a journey screen; captured before asynchronous I/O so an old
+  // request cannot be attributed to a newly opened journey.
+  String? journeyId;
   final RoverApiConfig config;
   final HttpClient _httpClient;
 
@@ -716,6 +719,7 @@ class RoverApiClient {
     Map<String, Object?>? body,
     Duration? responseTimeout,
   }) async {
+    final requestJourneyId = journeyId;
     final operationName = '$method $path';
     final stopwatch = Stopwatch()..start();
     try {
@@ -724,6 +728,9 @@ class RoverApiClient {
           .timeout(config.connectionTimeout);
       request.headers.contentType = ContentType.json;
       request.headers.set(HttpHeaders.acceptHeader, ContentType.json.mimeType);
+      if (requestJourneyId != null) {
+        request.headers.set('X-Walkabout-Journey', requestJourneyId);
+      }
       _applyDevelopmentUser(request);
       _applyBetaApiKey(request);
 
