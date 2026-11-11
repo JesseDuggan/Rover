@@ -15,6 +15,10 @@ internal static class StoryEditorialTests
         await Verify(false, crossSentenceQualifier: true);
         await Verify(false, briefEvidence: true);
         await Verify(false, edited: true);
+        await Verify(false, edited: true, repairEdit: true);
+        await Verify(false, edited: true, repairEdit: true, repairFails: true);
+        await Verify(false, edited: true, repairEdit: true, repairFails: true, repairFailure: "timeout");
+        await Verify(false, edited: true, repairEdit: true, repairFailure: "cancel");
         await EmptyClassificationRecovery(false);
         await EmptyClassificationRecovery(true);
         await MissingCitationsRemainRejected();
@@ -105,7 +109,7 @@ internal static class StoryEditorialTests
         finally { StoryInspection.Listener.Value = previous; }
     }
 
-    private static async Task Verify(bool question, bool relevant = true, bool recovery = false, bool foodOnly = false, string? scope = null, bool areaRecovery = false, string? coordinateCase = null, string? rejectedDraft = null, bool gap = false, bool mismatchedVenue = false, bool crossSentenceQualifier = false, bool briefEvidence = false, bool edited = false)
+    private static async Task Verify(bool question, bool relevant = true, bool recovery = false, bool foodOnly = false, string? scope = null, bool areaRecovery = false, string? coordinateCase = null, string? rejectedDraft = null, bool gap = false, bool mismatchedVenue = false, bool crossSentenceQualifier = false, bool briefEvidence = false, bool edited = false, bool repairEdit = false, bool repairFails = false, string? repairFailure = null)
     {
         var anchor = new GeoLocation(52.2946778, 4.7108732);
         var segment = new RouteStorySegment("area", 0, anchor, anchor, anchor, 0, 0, 0, 0, false, []);
@@ -119,10 +123,23 @@ internal static class StoryEditorialTests
         foreach (var audience in new string?[] { "family", "sensitive", "mature", null })
         {
             var calls = 0;
+            var repairs = 0;
+            using var caller = new CancellationTokenSource();
             using var client = new HttpClient(new RoutingHttpMessageHandler(request =>
             {
 
                 using var body = JsonDocument.Parse(request.Content!.ReadAsStringAsync().GetAwaiter().GetResult());
+                if (body.RootElement.GetProperty("instructions").GetString()!.StartsWith("Repair only"))
+                {
+                    repairs++;
+                    if (repairFailure == "cancel") caller.Cancel();
+                    if (repairFailure is not null) throw new OperationCanceledException();
+                    var text = SpokenStoryDraft.EvidenceSentences(passage)[0] + (repairFails ? " In 1999." : "");
+                    var patch = JsonSerializer.Serialize(new { text, evidenceSentenceIndices = new[] { 0 } });
+                    return new HttpResponseMessage(HttpStatusCode.OK) { Content = new StringContent(JsonSerializer.Serialize(new {
+                        status = "completed", output = new[] { new { content = new[] { new { text = patch } } } }
+                    })) };
+                }
                 if (body.RootElement.GetProperty("instructions").GetString()!.Contains("local reference librarian"))
                     return new HttpResponseMessage(HttpStatusCode.OK) {
                         Content = new StringContent("""{"status":"completed","output":[{"content":[{"annotations":[{"type":"url_citation","url":"https://archive.example/record-16"},{"type":"url_citation","url":"http://localhost/private"}]}]}]}""")
@@ -191,8 +208,9 @@ internal static class StoryEditorialTests
                         locationEvidence = mismatchedVenue ? "North Perth Town Hall" : "test archive", startsUtc = (string?)null, endsUtc = (string?)null,
                         audienceSuitability = audience, sensitivityNotice = (string?)null,
                         uncertainClaims = new[] { crossSentenceQualifier ? "worked there. Accounts disagree" : "Accounts disagree about its opening date.", "Invented dispute." },
-                        spokenSentences = edited ? System.Text.RegularExpressions.Regex.Split(passage.Trim(), @"(?<=[.!?])\s+")
-                            .Where(t => !t.StartsWith("Location:")).Select(t => new SpokenStorySentence(t, [t])).ToArray() : null,
+                        spokenSentences = edited ? SpokenStoryDraft.EvidenceSentences(passage)
+                            .Select((t, i) => new SpokenStorySentence(t + (repairEdit && i == 0 ? " In 1999." : ""), EvidenceSentenceIndices: [i]))
+                            .Where(s => !s.Text.StartsWith("Location:")).ToArray() : null,
                         answersQuestion = relevant
                     } } });
                     if (coordinateCase is not null && calls == 2)
@@ -214,13 +232,21 @@ internal static class StoryEditorialTests
             }));
             var researcher = new OpenAILocalRouteResearcher(client,
                 new() { Enabled = true, ApiKey = "test", Model = "test" }, TimeProvider.System);
-            var result = await researcher.ResearchAsync(new([segment],
+            var pendingResult = researcher.ResearchAsync(new([segment],
                 new ApproximateLiveLocation(null, null, null, null), [], foodOnly ? ["food"] : ["history"], "en") {
                     PublicPlaces = mismatchedVenue ? [new("Town Hall - Perth", null, anchor)] : null,
                     AreaFirst = !recovery || areaRecovery,
                     Question = question ? new(gap ? "Research this block or landscape and its workshop." : "How did the workshop change?", StoryQuestionScope.Neighbourhood,
                         StoryQuestionFormat.ThenAndNow, 1, 180) : null
-                }, default);
+                }, caller.Token);
+            if (repairFailure == "cancel")
+            {
+                var cancelled = false;
+                try { await pendingResult; } catch (OperationCanceledException) { cancelled = true; }
+                Check(cancelled && repairs == 1, "Caller cancellation propagates through a bounded repair.");
+                continue;
+            }
+            var result = await pendingResult;
             if (mismatchedVenue)
             {
                 Check(result.Stories.Count == 0, "A longer name must not inherit a selected place pin and bypass geographic rejection.");
@@ -241,9 +267,12 @@ internal static class StoryEditorialTests
                 Check(result.Stories.Count == 0, "Cited but irrelevant passages are not answers.");
                 continue;
             }
+            Check(repairs == (repairEdit ? 1 : 0), "At most one tool-free repair; no repeated search for prose correction.");
             Check(result.Stories.Count == 1 && calls == (recovery ? 4 : 2), "Research uses at most one recovery attempt.");
             var story = result.Stories.Single();
-            if (edited) Check(story.Claims.All(c => c.ClaimId.Contains(":spoken:")), "Valid spoken edits reach all research paths with source references intact.");
+            if (edited && !repairFails) Check(story.Claims.All(c => c.ClaimId.Contains(":spoken:")), "Valid spoken edits reach all research paths with source references intact.");
+            if (repairFails) Check(story.Claims.All(c => !c.ClaimId.Contains(":spoken:"))
+                && story.Claims.All(c => !c.Text.Contains("1999")), "Failed repair retains original evidence without its invented date.");
             Check(story.Claims.Any(c => c.Text.Contains("12 King Street")), "Original address evidence must remain intact.");
             Check(story.Variants.All(v => !v.Narration.Contains("12 King Street")), "All spoken variants omit address numbers.");
             Check(story.Variants.All(v => !v.Narration.Contains("Location:") && !v.Narration.Contains("latitude")),
@@ -284,6 +313,19 @@ internal static class StoryEditorialTests
         string[] caveats = ["Accounts disagree about its opening date."];
         Check(SpokenStoryDraft.TryPrepare(evidence, sentences, caveats, out var draft)
             && draft.Contains(caveats[0]), "A supported spoken edit retains its caveat.");
+        var indexed = sentences.Select((s, i) => new SpokenStorySentence(s.Text,
+            EvidenceSentenceIndices: i == 0 ? [0, 1] : [i + 1])).ToArray();
+        Check(SpokenStoryDraft.TryPrepare(evidence, indexed, caveats, out var indexedDraft)
+            && indexedDraft == draft, "Source sentence IDs preserve original evidence without model transcription.");
+        foreach (var invalid in new[] { -1, 99 })
+        {
+            var changed = indexed.ToArray(); changed[1] = indexed[1] with { EvidenceSentenceIndices = [invalid] };
+            Check(!SpokenStoryDraft.TryPrepare(evidence, changed, caveats, out _, out var reason)
+                && reason == "invalid_evidence_indices:item_1", "Unknown source sentence IDs are rejected.");
+        }
+        var wrongSupport = indexed.ToArray(); wrongSupport[0] = indexed[0] with { EvidenceSentenceIndices = [2] };
+        Check(!SpokenStoryDraft.TryPrepare(evidence, wrongSupport, caveats, out _, out var numberReason)
+            && numberReason == "unsupported_numeric_token:item_0", "Numeric checks use referenced sentences, not the whole passage.");
         var missingCaveat = sentences.ToArray(); missingCaveat[0] = sentences[0] with { Text = "The workshop opened in 1820." };
         Check(!SpokenStoryDraft.TryPrepare(evidence, missingCaveat, caveats, out _), "An edit cannot drop a historical qualification.");
         var inventedQuote = sentences.ToArray(); inventedQuote[1] = sentences[1] with { EvidenceQuotes = ["An invented archive description."] };
@@ -299,6 +341,24 @@ internal static class StoryEditorialTests
             "Legends with unidentified attribution retain original evidence, not an edited version.");
         var overloaded = sentences.ToArray(); overloaded[1] = sentences[1] with { Text = string.Join(" ", Enumerable.Repeat("word", 40)) };
         Check(!SpokenStoryDraft.TryPrepare(evidence, overloaded, caveats, out _), "Overloaded edited sentences are rejected.");
+        var metadata = sentences.ToArray(); metadata[1] = sentences[1] with { Text = "Location: a workshop." };
+        Check(!SpokenStoryDraft.TryPrepare(evidence, metadata, caveats, out _, out var metadataReason)
+            && metadataReason.StartsWith("forbidden_metadata"), "Location labels are not narration.");
+        Check(SpokenStoryDraft.EvidenceSentences(evidence + " Location: test workshop; latitude 44.9; longitude -76.25.").Length == 5,
+            "Research location metadata is not a supporting story sentence.");
+        foreach (var (candidate, expected) in new (SpokenStorySentence[]? Candidate, string Reason)[] {
+            (null, "edit_missing"), ([], "edit_empty"), (sentences.Take(3).ToArray(), "sentence_count_out_of_range"),
+            (missingCaveat, "qualification_missing:qualification_0"),
+            (inventedQuote, "quote_not_in_evidence:item_1:quote_0"),
+            (inventedYear, "unsupported_numeric_token:item_0"),
+            (overloaded, "sentence_too_long:item_1")
+        })
+            Check(!SpokenStoryDraft.TryPrepare(evidence, candidate, caveats, out var rejected, out var reason)
+                && rejected == "" && reason == expected, "Safe diagnostic must identify the failing predicate: " + expected);
+        Check(SpokenStoryDraft.TryPrepare(evidence, sentences, caveats, out _, out var acceptedReason)
+            && acceptedReason == "accepted", "Successful diagnostics agree with the original overload.");
+        Check(!SpokenStoryDraft.TryPrepare(evidence, sentences, [], out _, out var legendReason, isLegend: true)
+            && legendReason == "legend_qualification_missing", "Legend fallback has a specific safe reason.");
     }
 
     private static void Check(bool condition, string message)
