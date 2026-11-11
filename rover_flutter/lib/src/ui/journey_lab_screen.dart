@@ -4,6 +4,10 @@ import 'dart:async';
 
 import 'prepared_walk_screen.dart';
 import 'king_street_trail.dart';
+import 'fremont_tour.dart';
+import 'tour_question.dart';
+import 'tour_route_preview.dart';
+import 'walking_preview.dart';
 import 'journey_coverage.dart';
 
 import 'dart:convert';
@@ -58,7 +62,8 @@ List<_Json> _rows(_Json json, String key) => (json[key] as List).cast<_Json>();
 enum _Tap { start, end, stop }
 
 class JourneyLabScreen extends StatefulWidget {
-  const JourneyLabScreen({super.key, this.client});
+  const JourneyLabScreen({super.key, this.client, this.useTestMap = false});
+  final bool useTestMap;
   final RoverApiClient? client;
 
   @override
@@ -89,16 +94,19 @@ class _JourneyLabState extends State<JourneyLabScreen> {
   List<LatLng> geometry = [];
   _Json? plan, area;
   Map<String, dynamic> stories = {};
+  String? preparedFor;
   List<dynamic> plannerSkips = [];
   String? working;
   String status = '';
   int minutes = 60, next = 0;
   final speech = DeviceTextToSpeech();
   int playbackId = 0;
+  Completer<void>? skipPreviewStory;
   String? playingTitle;
   String playingText = '';
   List<String> playingSources = const [];
   RoverLatLng? playingLocation;
+  final _storyPictureLookup = WalkStoryPictures();
   List<StoryPicture>? playingPictures;
   LatLng? simulatedPosition;
   int? replacing;
@@ -133,10 +141,13 @@ class _JourneyLabState extends State<JourneyLabScreen> {
       await action();
     } catch (e) {
       if (mounted) {
-        final interrupted = label == 'Generating stories' && researchInterrupted(e);
-        setState(() => status = interrupted
-            ? 'Story research was interrupted. Any stories already prepared are still here. Check your connection, then tap Generate journey stories to continue.'
-            : '$label failed. $e');
+        final interrupted =
+            label == 'Generating stories' && researchInterrupted(e);
+        setState(
+          () => status = interrupted
+              ? 'Story research was interrupted. Any stories already prepared are still here. Check your connection, then tap Generate journey stories to continue.'
+              : '$label failed. $e',
+        );
       }
     } finally {
       if (mounted) setState(() => working = null);
@@ -267,11 +278,7 @@ class _JourneyLabState extends State<JourneyLabScreen> {
         stops: suggest ? [] : stops,
         suggest: suggest,
         minutes: minutes,
-        pace: switch (PreferencesScope.of(context).preferences.walkingPace.toLowerCase()) {
-          '' || 'easy' || 'leisurely' || 'relaxed' => 'Leisurely',
-          'brisk' => 'Brisk',
-          _ => 'Standard',
-        },
+        pace: previewPace(PreferencesScope.of(context).preferences.walkingPace),
         interests: interests,
       );
       if (!mounted) return;
@@ -338,7 +345,7 @@ class _JourneyLabState extends State<JourneyLabScreen> {
           google.CameraUpdate.newLatLngZoom(googlePoint(target), zoom),
         ),
       );
-    } else {
+    } else if (widget.useTestMap) {
       map.move(target, zoom);
     }
   }
@@ -397,6 +404,7 @@ class _JourneyLabState extends State<JourneyLabScreen> {
       unawaited(moveCamera(google.CameraUpdate.newLatLngBounds(bounds, 40)));
       return;
     }
+    if (!widget.useTestMap) return;
     map.fitCamera(
       CameraFit.coordinates(
         coordinates: geometry,
@@ -419,8 +427,12 @@ class _JourneyLabState extends State<JourneyLabScreen> {
   }
 
   String profileQuestion(String question, List<String> interests) {
-    final prefix = interests.isEmpty ? '' : 'Walker interests: ${interests.join(', ')}. ';
-    final words = '${prefix.length > 125 ? prefix.substring(0, 125) : prefix} $question'.trim();
+    final prefix = interests.isEmpty
+        ? ''
+        : 'Walker interests: ${interests.join(', ')}. ';
+    final words =
+        '${prefix.length > 125 ? prefix.substring(0, 125) : prefix} $question'
+            .trim();
     return words.length <= 500 ? words : words.substring(0, 500);
   }
 
@@ -457,16 +469,78 @@ class _JourneyLabState extends State<JourneyLabScreen> {
         if (!active()) return;
         await speech.configure(rate: 0.5);
         if (!active()) return;
-        Future<void> narrate(String title, String words, [List<String> sources = const [], dynamic pictures]) async {
+        Future<void> narrate(
+          String title,
+          String words, [
+          List<String> sources = const [],
+          dynamic pictures,
+        ]) async {
           setState(() {
             playingTitle = title;
             playingText = spokenLocationText(words);
             playingSources = sources;
-            playingPictures = parsePictures(pictures);
-            final point = onlyStop == null ? simulatedPosition : _point(onlyStop);
-            playingLocation = point == null ? null : RoverLatLng(latitude: point.latitude, longitude: point.longitude);
+            playingPictures = parsePictures(pictures)
+                ?.where(
+                  (p) => illustratesStory(
+                    p,
+                    title.replaceFirst(
+                      RegExp(r'^(Passing|Between stops) · '),
+                      '',
+                    ),
+                  ),
+                )
+                .toList();
+            final point = onlyStop == null
+                ? simulatedPosition
+                : _point(onlyStop);
+            playingLocation = point == null
+                ? null
+                : RoverLatLng(
+                    latitude: point.latitude,
+                    longitude: point.longitude,
+                  );
           });
-          await speech.speak(words);
+          bool ready = false;
+          final prepared = playingPictures;
+          final location = playingLocation;
+          unawaited(() async {
+            final candidates =
+                prepared ??
+                (location == null || sources.isEmpty
+                    ? <StoryPicture>[]
+                    : await _storyPictureLookup.find(
+                        title.replaceFirst(
+                          RegExp(r'^(Passing|Between stops) · '),
+                          '',
+                        ),
+                        sources,
+                        location.latitude,
+                        location.longitude,
+                      ));
+            for (final picture in candidates) {
+              if (!active() || playingTitle != title) return;
+              if (!await storyPhotoReady(picture)) continue;
+              if (!active() || playingTitle != title) return;
+              setState(
+                () => playingPictures = [
+                  picture,
+                  ...candidates.where((p) => p.url != picture.url),
+                ],
+              );
+              ready = true;
+              return;
+            }
+          }());
+          final skip = Completer<void>();
+          skipPreviewStory = skip;
+          try {
+            await Future.any([speech.speak(words), skip.future]);
+            if (active() && ready && !skip.isCompleted) {
+              await Future.any([speech.speak(storyPictureCue), skip.future]);
+            }
+          } finally {
+            if (identical(skipPreviewStory, skip)) skipPreviewStory = null;
+          }
         }
 
         final intro = area == null ? null : introduction(area!);
@@ -480,7 +554,13 @@ class _JourneyLabState extends State<JourneyLabScreen> {
         }
         if (onlyStop != null) {
           final words = verified(onlyStop)?.shortSpokenNarration;
-          if (words != null) await narrate(onlyStop['name'], words, pictureSources(onlyStop), stories[onlyStop['id']]?['pictures']);
+          if (words != null)
+            await narrate(
+              onlyStop['name'],
+              words,
+              pictureSources(onlyStop),
+              stories[onlyStop['id']]?['pictures'],
+            );
           if (active())
             setState(
               () => status = words == null
@@ -492,45 +572,59 @@ class _JourneyLabState extends State<JourneyLabScreen> {
         {
           final path = JourneyCoverage(geometry);
           final events =
-              <({double at, String title, String words, bool passing, List<String> sources, dynamic pictures})>[
-                for (final stop in stops)
-                  if (verified(stop)?.shortSpokenNarration
-                      case final String words)
-                    (
-                      at: path.project(_point(stop)).along,
-                      title: stop['name'] as String,
-                      words: words,
-                      pictures: stories[stop['id']]?['pictures'],
-                      sources: pictureSources(stop),
-                      passing: false,
-                    ),
-                for (final place
-                    in (plan?['coverage']?['passing'] as List? ?? [])
-                        .cast<_Json>())
-                  if (verified(place)?.shortSpokenNarration
-                      case final String words)
-                    (
-                      at: (place['metres'] as num).toDouble(),
-                      title: 'Passing · ${place['name']}',
-                      words: shortPassage(words),
-                      pictures: stories[place['id']]?['pictures'],
-                      sources: pictureSources(place),
-                      passing: true,
-                    ),
-                for (final cue
-                    in (plan?['between'] as List? ?? []).cast<_Json>())
-                  if (DateTime.tryParse(cue['expiresUtc'] as String)
-                          ?.isAfter(DateTime.now()) ==
-                      true)
-                    (
-                      at: (cue['metres'] as num).toDouble(),
-                      title: 'Between stops · ${cue['title']}',
-                      words: cue['words'] as String,
-                      pictures: cue['pictures'],
-                      sources: (cue['sources'] as List? ?? []).whereType<Map>().map((s) => s['url']).whereType<String>().toList(),
-                      passing: true,
-                    ),
-              ]..sort((a, b) => a.at.compareTo(b.at));
+              <
+                  ({
+                    double at,
+                    String title,
+                    String words,
+                    bool passing,
+                    List<String> sources,
+                    dynamic pictures,
+                  })
+                >[
+                  for (final stop in stops)
+                    if (verified(stop)?.shortSpokenNarration
+                        case final String words)
+                      (
+                        at: path.project(_point(stop)).along,
+                        title: stop['name'] as String,
+                        words: words,
+                        pictures: stories[stop['id']]?['pictures'],
+                        sources: pictureSources(stop),
+                        passing: false,
+                      ),
+                  for (final place
+                      in (plan?['coverage']?['passing'] as List? ?? [])
+                          .cast<_Json>())
+                    if (verified(place)?.shortSpokenNarration
+                        case final String words)
+                      (
+                        at: (place['metres'] as num).toDouble(),
+                        title: 'Passing · ${place['name']}',
+                        words: shortPassage(words),
+                        pictures: stories[place['id']]?['pictures'],
+                        sources: pictureSources(place),
+                        passing: true,
+                      ),
+                  for (final cue
+                      in (plan?['between'] as List? ?? []).cast<_Json>())
+                    if (DateTime.tryParse(cue['expiresUtc'] as String)
+                            ?.isAfter(DateTime.now()) ==
+                        true)
+                      (
+                        at: (cue['metres'] as num).toDouble(),
+                        title: 'Between stops · ${cue['title']}',
+                        words: cue['words'] as String,
+                        pictures: cue['pictures'],
+                        sources: (cue['sources'] as List? ?? [])
+                            .whereType<Map>()
+                            .map((s) => s['url'])
+                            .whereType<String>()
+                            .toList(),
+                        passing: true,
+                      ),
+                ]
+                ..sort((a, b) => a.at.compareTo(b.at));
           if (events.isEmpty && intro == null) {
             setState(
               () => status =
@@ -559,7 +653,12 @@ class _JourneyLabState extends State<JourneyLabScreen> {
             });
             await advance(event.at);
             if (!active()) return;
-            final voice = narrate(event.title, event.words, event.sources, event.pictures);
+            final voice = narrate(
+              event.title,
+              event.words,
+              event.sources,
+              event.pictures,
+            );
             if (event.passing) {
               final nextAt = index + 1 < events.length
                   ? events[index + 1].at
@@ -595,7 +694,13 @@ class _JourneyLabState extends State<JourneyLabScreen> {
 
   Future<void> stopPreview() async {
     playbackId++;
+    await skipNarration();
+  }
+
+  Future<void> skipNarration() async {
+    final skip = skipPreviewStory;
     await speech.stop();
+    if (skip != null && !skip.isCompleted) skip.complete();
   }
 
   bool researchInterrupted(Object error) =>
@@ -604,11 +709,27 @@ class _JourneyLabState extends State<JourneyLabScreen> {
       error is SocketException ||
       error is HttpException ||
       error is TimeoutException ||
-      (error is RoverApiException && [502, 503, 504].contains(error.statusCode));
+      (error is RoverApiException &&
+          [502, 503, 504].contains(error.statusCode));
 
   Future<void> generate() => run('Generating stories', () async {
     final issues = <String>[];
     final selectedInterests = interests;
+    final selectedDepth = PreferencesScope.of(context).preferences.contentDepth;
+    final profileKey = jsonEncode({
+      'interests': selectedInterests.map((s) => s.toLowerCase()).toList()
+        ..sort(),
+      'depth': selectedDepth,
+      'policy': 'shared-preparation-v1',
+    });
+    if (preparedFor != profileKey) {
+      stories.clear();
+      area = null;
+      plan?.remove("between");
+      plan?.remove("coverage");
+      plan?.remove("gapSearches");
+      preparedFor = profileKey;
+    }
     if (area == null) {
       try {
         final _Json result;
@@ -657,14 +778,14 @@ class _JourneyLabState extends State<JourneyLabScreen> {
     }
     final pending = stops.where((stop) {
       final saved = verified(stop);
-      return saved == null || (stories[stop['id']]?['depthChecked'] != true &&
-          needsDeeperResearch(saved.shortSpokenNarration));
+      return saved == null;
     }).toList();
     Future<String?> prepare(_Json stop) async {
       final name = subject(stop).name;
       try {
         await researchStop(stop, selectedInterests);
-        if (mounted && verified(stop) == null) return 'No verified story for $name.';
+        if (mounted && verified(stop) == null)
+          return 'No verified story for $name.';
         if (mounted) stories[stop['id']]['depthChecked'] = true;
       } catch (e) {
         if (researchInterrupted(e)) rethrow;
@@ -672,6 +793,7 @@ class _JourneyLabState extends State<JourneyLabScreen> {
       }
       return null;
     }
+
     for (var index = 0; index < pending.length; index += 2) {
       if (!mounted) return;
       final batch = pending.skip(index).take(2).toList();
@@ -705,7 +827,7 @@ class _JourneyLabState extends State<JourneyLabScreen> {
         final metres = (gap.start + gap.end) / 2;
         final point = path.at(metres);
         const distance = Distance();
-        if (searchedAt == null || distance(searchedAt!, point) >= 750) {
+        if (searchedAt == null || distance(searchedAt, point) >= 750) {
           searchedAt = point;
           setState(() => working = 'Looking for a neighbourhood story');
           if (eventQueries < 3) {
@@ -732,7 +854,9 @@ class _JourneyLabState extends State<JourneyLabScreen> {
                   storyCount: 1,
                   availableNarrationSeconds: 45,
                   question: profileQuestion(
-                      'Research this block or landscape in local-language archives. What used to be here, who used it, or what shaped it? Find one sourced detail tied to this exact stretch and look for a cited illustrated record of its subject. Attribute recollections. Skip unrelated landmarks. $landmark', selectedInterests),
+                    'Research this block or landscape in local-language archives. What used to be here, who used it, or what shaped it? Find one sourced detail tied to this exact stretch and look for a cited illustrated record of its subject. Attribute recollections. Skip unrelated landmarks. $landmark',
+                    selectedInterests,
+                  ),
                 ),
               );
               if (!mounted) return;
@@ -803,9 +927,17 @@ class _JourneyLabState extends State<JourneyLabScreen> {
                       1000,
             )
             .toList();
-        final story = candidates.where((candidate) => !needsDeeperResearch(
-          candidate.variants.firstWhere((v) => v.narration.trim().isNotEmpty).narration,
-        )).firstOrNull ?? candidates.firstOrNull;
+        final story =
+            candidates
+                .where(
+                  (candidate) => !needsDeeperResearch(
+                    candidate.variants
+                        .firstWhere((v) => v.narration.trim().isNotEmpty)
+                        .narration,
+                  ),
+                )
+                .firstOrNull ??
+            candidates.firstOrNull;
         if (story == null) continue;
         covered.add(story.title);
         cues.add({
@@ -826,17 +958,37 @@ class _JourneyLabState extends State<JourneyLabScreen> {
     if (mounted && plan != null) {
       setState(() => working = 'Finding story pictures');
       final jobs = <Future<void> Function()>[];
-      for (final place in [...stops, ..._rows(plan?['coverage'] ?? {'passing': []}, 'passing')]) {
+      for (final place in [
+        ...stops,
+        ..._rows(plan?['coverage'] ?? {'passing': []}, 'passing'),
+      ]) {
         final record = stories[place['id']];
         if (record is _Json && verified(place) != null) {
-          jobs.add(() => preparePictures(record, pictureSources(place), _point(place)));
+          jobs.add(
+            () => preparePictures(
+              record,
+              pictureSources(place),
+              _point(place),
+              place['name'] as String,
+            ),
+          );
         }
       }
       final path = JourneyCoverage(geometry);
       for (final cue in (plan?['between'] as List? ?? []).whereType<_Json>()) {
-        final urls = (cue['sources'] as List? ?? []).whereType<Map>()
-            .map((s) => s['url']).whereType<String>().toList();
-        jobs.add(() => preparePictures(cue, urls, path.at((cue['metres'] as num).toDouble())));
+        final urls = (cue['sources'] as List? ?? [])
+            .whereType<Map>()
+            .map((s) => s['url'])
+            .whereType<String>()
+            .toList();
+        jobs.add(
+          () => preparePictures(
+            cue,
+            urls,
+            path.at((cue['metres'] as num).toDouble()),
+            cue['title'] as String,
+          ),
+        );
       }
       for (var i = 0; mounted && i < jobs.length; i += 3) {
         await Future.wait(jobs.skip(i).take(3).map((job) => job()));
@@ -851,7 +1003,10 @@ class _JourneyLabState extends State<JourneyLabScreen> {
 
   Future<void> checkCoverage() =>
       run('Checking story gaps', () => scanCoverage());
-  Future<void> scanCoverage({bool planning = false, bool duringGeneration = false}) async {
+  Future<void> scanCoverage({
+    bool planning = false,
+    bool duringGeneration = false,
+  }) async {
     final searches = Map<String, dynamic>.from(
       plan?['gapSearches'] as Map? ?? {},
     );
@@ -1085,123 +1240,21 @@ class _JourneyLabState extends State<JourneyLabScreen> {
 
   Future<void> researchStop(_Json stop, List<String> selectedInterests) async {
     final place = subject(stop);
-    // Reviewed primary-source fallback for the organisation pin, including the real performance venues.
-    // Keep it available if either live research service is empty or unavailable.
-    if (place.id == 'google-ChIJy70XqzTL1IkR1Lhf72C_vWU') {
-      setState(
-        () => stories[place.id] = {
-          'placeId': place.id,
-          'storyTitle': 'The Toronto Symphony Orchestra’s two halls',
-          'shortSpokenNarration': 'The Toronto Symphony Orchestra performs at Roy Thomson Hall. Its first audience heard it at Massey Hall, on April 23, 1923. On the programme that day was Tchaikovsky’s Fifth Symphony. A century later the orchestra chose that same symphony for its return to Massey Hall, a musical link to its first audience.',
-          'factIdsUsed': ['tso-first-programme', 'tso-performance-venues'],
-          'researchStatus': 'ready',
-          'requiredAttribution': ['Toronto Symphony Orchestra'],
-          'sourceReferences': [
-            for (final entry in {
-              'Historic season announcement':
-                  'https://newsroom.tso.ca/historic-202223-season-announcement',
-              'Performance venues':
-                  'https://newsroom.tso.ca/category/media-kit',
-            }.entries)
-              {
-                'providerName': 'Toronto Symphony Orchestra',
-                'attribution': 'Toronto Symphony Orchestra',
-                'sourceUrl': entry.value,
-                'sourceTitle': entry.key,
-              },
-          ],
-        },
-      );
-    }
-    final result = verified(stop) ?? await api.createDriveStopStory(
-      id: place.id,
-      interests: selectedInterests,
-      journeyStart: _coordinates(start!),
-      journeyEnd: _coordinates(end ?? _point(stops.last)),
-      name: place.name,
-      latitude: place.location.latitude,
-      longitude: place.location.longitude,
-    );
+    final result =
+        verified(stop) ??
+        await api.createDriveStopStory(
+          id: place.id,
+          interests: selectedInterests,
+          journeyStart: _coordinates(start!),
+          journeyEnd: _coordinates(end ?? _point(stops.last)),
+          name: place.name,
+          latitude: place.location.latitude,
+          longitude: place.location.longitude,
+        );
     if (!mounted) return;
     final usable = usableDriveStory(result, place, DateTime.now().toUtc());
-    final organisation = RegExp(
-      r'\b(orchestra|symphony|symphonique|orchestre|ensemble|ballet company|theatre company|philharmonic)\b',
-      caseSensitive: false,
-    ).hasMatch(place.name);
-    if (usable && verified(stop) == null)
+    if (usable && verified(stop) == null) {
       setState(() => stories[place.id] = result.toJson());
-    if (usable && !organisation && !needsDeeperResearch(result.shortSpokenNarration)) return;
-    final prompt = organisation
-        ? "Research the ${place.name} itself. Find a named work, artist or historic first in its official archives or programmes. Tell us what happened, when, and at which named venue. Identify its regular performance venue and distinguish that venue from its office and any historic venue. Mention the organisation by name. Cite the primary source and omit anything unverified."
-        : "Look up ${place.name} at this site under former or local names. Follow one person, visible feature, natural process or event into a local archive or primary source. What happened here that a passerby would miss? Name the place and tell the sourced detail. Seek a cited illustrated collection record or Wikimedia article about the subject. Omit unverified details.";
-    final response = await api.researchStoryQuestion(
-      StoryQuestionRequest(
-        location: place.location,
-        scope: 'Street',
-        format: 'Single',
-        storyCount: 1,
-        availableNarrationSeconds: 60,
-        question: profileQuestion(prompt, selectedInterests),
-      ),
-    );
-    if (!mounted) return;
-    for (final answer in response.answers) {
-      final story = answer.story, variant = answer.variant;
-      final expiry = story.expiresUtc;
-      if (usable && !organisation && needsDeeperResearch(variant.narration)) continue;
-      if (!story.canAutoplay ||
-          expiry == null ||
-          !expiry.isAfter(DateTime.now()) ||
-          !variant.narration.toLowerCase().contains(place.name.toLowerCase()) ||
-          variant.claimIds.isEmpty ||
-          (!organisation &&
-              JourneyCoverage.distance(
-                    _point(stop),
-                    LatLng(story.relevanceLatitude, story.relevanceLongitude),
-                  ) >
-                  150))
-        continue;
-      final sources = {
-        for (final source in story.sources)
-          if (source.url != null &&
-              ['http', 'https'].contains(Uri.tryParse(source.url!)?.scheme))
-            source.sourceId: source,
-      };
-      final claims = {for (final claim in story.claims) claim.claimId: claim};
-      if (!variant.claimIds.every(
-        (id) => claims[id]?.sourceIds.any(sources.containsKey) == true,
-      ))
-        continue;
-      final used = {for (final id in variant.claimIds) ...claims[id]!.sourceIds}
-          .where(sources.containsKey);
-      final refs = used.map((id) => sources[id]!).toList();
-      setState(
-        () => stories[place.id] = {
-          'placeId': place.id,
-          'storyTitle': story.title,
-          'shortSpokenNarration': variant.narration,
-          'factIdsUsed': variant.claimIds,
-          'researchStatus': 'ready',
-          'expiresUtc': expiry.toIso8601String(),
-          'requiredAttribution': [
-            for (final source in refs) source.attribution,
-          ],
-          'sourceReferences': [
-            for (final source in refs)
-              {
-                'providerName': source.providerName,
-                'providerRecordId': source.sourceId,
-                'sourceUrl': source.url,
-                'sourceTitle': source.title,
-                'attribution': source.attribution,
-                'retrievedUtc': source.retrievedUtc.toIso8601String(),
-                'confidenceScore': source.confidence,
-                'expiresUtc': expiry.toIso8601String(),
-              },
-          ],
-        },
-      );
-      break;
     }
   }
 
@@ -1230,6 +1283,7 @@ class _JourneyLabState extends State<JourneyLabScreen> {
   );
 
   _Json snapshot() => {
+    'preparedFor': preparedFor,
     'start': _coordinates(start!),
     'end': end == null ? null : _coordinates(end!),
     'minutes': minutes,
@@ -1349,11 +1403,64 @@ class _JourneyLabState extends State<JourneyLabScreen> {
           : null;
       area = data['area'];
       stories = data['stories'];
+      preparedFor = data['preparedFor'] as String?;
       next = data['next'];
       mode = _Tap.stop;
       replacing = null;
     });
     fit();
+  }
+
+  Future<void> chooseFremontStart() async {
+    final prefs = PreferencesScope.of(context).preferences;
+    final startName = await showDialog<String>(
+      context: context,
+      builder: (ctx) => SimpleDialog(
+        title: const Text('Start Fremont Past to Present'),
+        children: [
+          Padding(
+            padding: const EdgeInsets.symmetric(horizontal: 24, vertical: 8),
+            child: Text(
+              prefs.interests.isEmpty
+                  ? 'Your tour uses the introductory stories.'
+                  : 'Your interests: ${prefs.interests.join(', ')}',
+            ),
+          ),
+          for (final name in ['Plaza', 'El Cortez'])
+            SimpleDialogOption(
+              onPressed: () => Navigator.pop(ctx, name),
+              child: Text('Start at $name'),
+            ),
+        ],
+      ),
+    );
+    if (!mounted || startName == null) return;
+    await run('Opening Fremont tour', () async {
+      final walk = await fremontTour(
+        start: startName,
+        interests: prefs.interests,
+        depth: prefs.contentDepth,
+      );
+      if (!mounted) return;
+      await Navigator.push<void>(
+        context,
+        MaterialPageRoute(
+          builder: (_) => TourRoutePreview(
+            rehearsalStart: fremontRehearsalStart,
+            initialWalk: walk,
+            api: api,
+            pace: prefs.walkingPace,
+            onUse: openPrepared,
+            profileInterests: prefs.interests,
+            loadWalk: (interests) => fremontTour(
+              start: startName,
+              interests: interests,
+              depth: prefs.contentDepth,
+            ),
+          ),
+        ),
+      );
+    });
   }
 
   void openPrepared(PreparedWalk walk) {
@@ -1368,35 +1475,8 @@ class _JourneyLabState extends State<JourneyLabScreen> {
     );
   }
 
-  Future<WalkAnswer?> askAtStop(PreparedStop stop, String question) async {
-    final result = await api.researchStoryQuestion(
-      StoryQuestionRequest(
-        location: RoverLatLng(
-          latitude: stop.point.latitude,
-          longitude: stop.point.longitude,
-        ),
-        question:
-            'At ${stop.name}, the walker asks: $question. Verify the answer for this specific place.',
-        scope: 'Street',
-        format: 'Single',
-        storyCount: 1,
-      ),
-    );
-    final answer = result.answers
-        .where(
-          (a) =>
-              a.story.canAutoplay &&
-              a.story.sources.isNotEmpty &&
-              a.variant.narration.trim().isNotEmpty,
-        )
-        .firstOrNull;
-    if (answer == null) return null;
-    return WalkAnswer(answer.variant.narration, {
-      for (final source in answer.story.sources)
-        if (source.url != null)
-          source.title ?? source.providerName: source.url!,
-    });
-  }
+  Future<WalkAnswer?> askAtStop(PreparedStop stop, String question) =>
+      askTourQuestion(api, stop, question);
 
   List<PreparedStop> get preparedStops => [
     for (final s in stops)
@@ -1409,29 +1489,102 @@ class _JourneyLabState extends State<JourneyLabScreen> {
               if (source.sourceUrl != null)
                 source.sourceTitle ?? source.providerName: source.sourceUrl!,
           }),
+          pictures: (parsePictures(stories[s['id']]?['pictures']) ?? [])
+              .where((p) => illustratesStory(p, s['name']))
+              .toList(),
         ),
   ];
 
+  List<PreparedStop> get preparedWalkingStories {
+    final path = JourneyCoverage(geometry);
+    final itinerary = [...preparedStops];
+    for (final place in _rows(
+      plan?['coverage'] ?? {'passing': []},
+      'passing',
+    )) {
+      final story = verified(place);
+      if (story == null) continue;
+      itinerary.add(
+        PreparedStop(
+          place['name'],
+          path.at((place['metres'] as num).toDouble()),
+          WalkAnswer(shortPassage(story.shortSpokenNarration), {
+            for (final source in story.sourceReferences)
+              if (source.sourceUrl != null)
+                source.sourceTitle ?? source.providerName: source.sourceUrl!,
+          }),
+          pictures: parsePictures(stories[place['id']]?['pictures']) ?? [],
+        ),
+      );
+    }
+    for (final cue in (plan?['between'] as List? ?? []).whereType<_Json>()) {
+      if (DateTime.tryParse(cue['expiresUtc'] as String? ?? '')
+              ?.isAfter(DateTime.now()) !=
+          true)
+        continue;
+      itinerary.add(
+        PreparedStop(
+          cue['title'],
+          path.at((cue['metres'] as num).toDouble()),
+          WalkAnswer(cue['words'], {
+            for (final source
+                in (cue['sources'] as List? ?? []).whereType<Map>())
+              if (source['url'] is String)
+                (source['title'] ?? source['url']).toString():
+                    source['url'] as String,
+          }),
+          pictures: parsePictures(cue['pictures']) ?? [],
+        ),
+      );
+    }
+    return itinerary..sort(
+      (a, b) =>
+          path.project(a.point).along.compareTo(path.project(b.point).along),
+    );
+  }
+
   List<StoryPicture>? parsePictures(dynamic raw) => raw is List
-      ? raw.whereType<_Json>().map(StoryPicture.parse).whereType<StoryPicture>().take(3).toList()
+      ? raw
+            .whereType<_Json>()
+            .map(StoryPicture.parse)
+            .whereType<StoryPicture>()
+            .take(3)
+            .toList()
       : null;
 
-  Future<void> preparePictures(_Json record, List<String> urls, LatLng point) async {
+  Future<void> preparePictures(
+    _Json record,
+    List<String> urls,
+    LatLng point,
+    String title,
+  ) async {
     if (record['pictures'] is List) return;
     try {
       final result = await api.getStoryImages(
         urls.where(supportedPictureSource).toSet().take(6).toList(),
-        latitude: point.latitude, longitude: point.longitude,
+        latitude: point.latitude,
+        longitude: point.longitude,
       );
       if (!mounted || result['status'] == 'unavailable') return;
-      record['pictures'] = (result['images'] as List? ?? []).whereType<_Json>()
-          .where((row) => StoryPicture.parse(row) != null).take(3).toList();
+      record['pictures'] = (result['images'] as List? ?? [])
+          .whereType<_Json>()
+          .where((row) {
+            final picture = StoryPicture.parse(row);
+            return picture != null && illustratesStory(picture, title);
+          })
+          .take(3)
+          .toList();
     } on Exception {
       // A missing illustration must never prevent the chapter from playing.
     }
   }
 
-  List<String> pictureSources(_Json stop) => verified(stop)?.sourceReferences.map((s) => s.sourceUrl).whereType<String>().toList() ?? const [];
+  List<String> pictureSources(_Json stop) =>
+      verified(stop)?.sourceReferences
+          .map((s) => s.sourceUrl)
+          .whereType<String>()
+          .toList() ??
+      const [];
 
   void showStop(_Json stop) {
     final story = verified(stop);
@@ -1451,12 +1604,17 @@ class _JourneyLabState extends State<JourneyLabScreen> {
               SelectableText(story.shortSpokenNarration),
               if (story.tellMeMore case final more?) SelectableText(more),
               const Divider(),
-              if (parsePictures(stories[stop['id']]?['pictures']) case final pictures? when pictures.isNotEmpty)
+              if (parsePictures(stories[stop['id']]?['pictures'])
+                  case final pictures? when pictures.isNotEmpty)
                 PictureCarousel(pictures: pictures)
-              else StoryImages(
-                sourceUrls: story.sourceReferences.map((s) => s.sourceUrl).whereType<String>().toList(),
-                nearbyLocation: subject(stop).location,
-              ),
+              else
+                StoryImages(
+                  sourceUrls: story.sourceReferences
+                      .map((s) => s.sourceUrl)
+                      .whereType<String>()
+                      .toList(),
+                  nearbyLocation: subject(stop).location,
+                ),
               const Text('Sources'),
               for (final source in story.sourceReferences)
                 ListTile(
@@ -1507,22 +1665,36 @@ class _JourneyLabState extends State<JourneyLabScreen> {
                 title: Text(playingTitle!),
                 subtitle: ConstrainedBox(
                   constraints: const BoxConstraints(maxHeight: 135),
-                  child: SingleChildScrollView(child: Column(
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    children: [
-                      Text(playingText),
-                      if (playingText.isNotEmpty && playingPictures?.isNotEmpty == true)
-                        PictureCarousel(pictures: playingPictures!, compact: true)
-                      else if (playingText.isNotEmpty && playingPictures == null && playingSources.isNotEmpty)
-                        StoryImages(sourceUrls: playingSources, compact: true,
-                          nearbyLocation: playingLocation),
-                    ],
-                  )),
+                  child: SingleChildScrollView(
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        if (playingText.isNotEmpty &&
+                            playingPictures?.isNotEmpty == true)
+                          PictureCarousel(
+                            pictures: playingPictures!,
+                            compact: true,
+                          ),
+                        Text(playingText),
+                      ],
+                    ),
+                  ),
                 ),
-                trailing: IconButton(
-                  tooltip: 'Stop preview',
-                  icon: const Icon(Icons.stop_circle),
-                  onPressed: stopPreview,
+                trailing: Row(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    if (playingText.isNotEmpty)
+                      IconButton(
+                        tooltip: 'Skip this story',
+                        icon: const Icon(Icons.skip_next),
+                        onPressed: skipNarration,
+                      ),
+                    IconButton(
+                      tooltip: 'Stop preview',
+                      icon: const Icon(Icons.stop_circle),
+                      onPressed: stopPreview,
+                    ),
+                  ],
                 ),
               ),
             ),
@@ -1530,6 +1702,11 @@ class _JourneyLabState extends State<JourneyLabScreen> {
         child: ListView(
           padding: const EdgeInsets.all(16),
           children: [
+            OutlinedButton.icon(
+              onPressed: busy ? null : chooseFremontStart,
+              icon: const Icon(Icons.tour),
+              label: const Text('Fremont Past to Present'),
+            ),
             FilledButton.icon(
               onPressed: busy ? null : () => openPrepared(kingStreetTrail),
               icon: const Icon(Icons.theater_comedy),
@@ -1584,6 +1761,21 @@ class _JourneyLabState extends State<JourneyLabScreen> {
               ),
             ),
             const SizedBox(height: 8),
+            TextButton.icon(
+              icon: const Icon(Icons.my_location),
+              label: const Text('Use my current location as start'),
+              onPressed: busy
+                  ? null
+                  : () => run('Finding your location', () async {
+                      final point = await currentWalkStart();
+                      if (!mounted) return;
+                      edit(() {
+                        start = point;
+                        mode = end == null ? _Tap.end : _Tap.stop;
+                      });
+                      move(point, 15);
+                    }),
+            ),
             SegmentedButton<_Tap>(
               segments: const [
                 ButtonSegment(value: _Tap.start, label: Text('Start')),
@@ -1613,6 +1805,8 @@ class _JourneyLabState extends State<JourneyLabScreen> {
                 height: 300,
                 child: googleEnabled
                     ? googleMap()
+                    : !widget.useTestMap
+                    ? const Center(child: Text('Google Maps unavailable'))
                     : FlutterMap(
                         mapController: map,
                         options: MapOptions(
@@ -1781,9 +1975,24 @@ class _JourneyLabState extends State<JourneyLabScreen> {
                       }),
               ),
 
-              Text(
-                "${plan!['distanceMeters']} m · ${plan!['walkingMinutes']} min walking · ${plan!['visitMinutes']} min visiting",
-              ),
+              if (geometry.length >= 2)
+                WalkingPreview(
+                  plan: plan!,
+                  geometry: geometry,
+                  budget: minutes,
+                  first: stops.isEmpty
+                      ? end ?? geometry.last
+                      : _point(stops.first),
+                  firstName: stops.isEmpty
+                      ? 'Destination'
+                      : stops.first['name'],
+                  names: [
+                    for (final s in stops) s['name'] as String,
+                    if (end != null &&
+                        (stops.isEmpty || end != _point(stops.last)))
+                      'Destination',
+                  ],
+                ),
               FilledButton(
                 onPressed: busy ? null : generate,
                 child: const Text('Generate journey stories'),
@@ -1818,7 +2027,7 @@ class _JourneyLabState extends State<JourneyLabScreen> {
                           PreparedWalk(
                             trailTheme ?? 'Prepared walk',
                             List.of(geometry),
-                            preparedStops,
+                            preparedWalkingStories,
                             theme: trailTheme,
                           ),
                         ),

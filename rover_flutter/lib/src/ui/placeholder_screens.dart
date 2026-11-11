@@ -2198,9 +2198,9 @@ class _AdaptiveRouteStoryPanel extends StatelessWidget {
                     label: const Text('Resume'),
                   ),
                   OutlinedButton.icon(
-                    onPressed: controller.isBusy
+                    onPressed: controller.isBusy && !speaking
                         ? null
-                        : () => unawaited(controller.skipCurrent(session)),
+                        : () => unawaited(controller.skipCurrent(session, voiceController)),
                     icon: const Icon(Icons.skip_next),
                     label: const Text('Skip'),
                   ),

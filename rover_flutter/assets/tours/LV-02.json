@@ -1,0 +1,461 @@
+{
+  "title": "The Original Las Vegas Walking Tour",
+  "theme": "downtown from the railroad to Container Park",
+  "geometrySource": "© OpenStreetMap contributors, ODbL — https://www.openstreetmap.org/copyright",
+  "chapters": [
+    {
+      "name": "Plaza Hotel & Casino",
+      "photo": {"asset": "plaza", "caption": "the Plaza Hotel and Casino"},
+      "point": [
+        36.171808,
+        -115.1466072
+      ],
+      "opening": "Imagine stepping off a train at the head of Fremont Street. Before the Plaza opened here in 1971, this was the site of the Las Vegas rail depot.",
+      "angles": [
+        {
+          "interests": [
+            "history",
+            "notable people"
+          ],
+          "text": "In 1905 the railroad held its land auction here. The passengers buying lots were helping decide where the town itself would grow."
+        },
+        {
+          "interests": [
+            "architecture",
+            "art",
+            "food"
+          ],
+          "text": "Look for the glass dome facing Fremont. The hotelÃ¢â‚¬â„¢s media archive shows that a swimming pool once occupied that spot above the street."
+        }
+      ],
+      "sources": {
+        "Plaza history": "https://www.plazahotelcasino.com/about-us/",
+        "Plaza media archive": "https://www.plazahotelcasino.com/wp-content/uploads/2017/01/Plaza-Media-Kit.pdf"
+      }
+    },
+    {
+      "name": "Golden Gate",
+      "photo": {"asset": "LV-02", "caption": "the Golden Gate casino frontage"},
+      "point": [
+        36.17157422,
+        -115.14606118
+      ],
+      "opening": "At One Fremont Street, the Golden Gate began life as Hotel Nevada in 1906. Ten rooms survive from its opening.",
+      "angles": [
+        {
+          "interests": [
+            "history",
+            "hidden gems"
+          ],
+          "text": "A year after the hotel opened, the cityÃ¢â‚¬â„¢s first telephone was installed here. To reach it you only needed one number, one."
+        },
+        {
+          "interests": [
+            "architecture",
+            "art"
+          ],
+          "text": "Electric lights, ventilation and steam radiators were selling points when the hotel opened. Its first outdoor electric sign came two decades later."
+        }
+      ],
+      "sources": {
+        "Golden Gate hotel archive": "https://www.goldengatecasino.com/hotel/the-original-10/"
+      }
+    },
+    {
+      "name": "Golden Nugget",
+      "point": [
+        36.17097795,
+        -115.1446851
+      ],
+      "opening": "The Golden Nugget has a real piece of gold behind its name. The lobby display is called the Hand of Faith.",
+      "angles": [
+        {
+          "interests": [
+            "history",
+            "notable people",
+            "hidden gems"
+          ],
+          "text": "In 1980 Kevin Hillier took a metal detector out near Wedderburn in Australia. He uncovered about sixty-one pounds of gold just beneath the surface."
+        },
+        {
+          "interests": [
+            "nature",
+            "architecture"
+          ],
+          "text": "This property also built a pool complex around a shark aquarium. Picture the two very different pieces of nature the hotel chose to bring into downtown Las Vegas."
+        }
+      ],
+      "sources": {
+        "Golden Nugget collection": "https://www.goldennugget.com/las-vegas/casino/hand-of-faith/",
+        "Golden Nugget pool": "https://www.goldennugget.com/las-vegas/amenities/h2o-pool/"
+      }
+    },
+    {
+      "name": "Fremont Street Experience",
+      "photo": {"asset": "fremont", "caption": "the canopy over Fremont Street"},
+      "point": [
+        36.170521572727274,
+        -115.14363189090909
+      ],
+      "opening": "Under Viva Vision, the ceiling of this pedestrian street doubles as a screen. A whole block of people can watch the same show simply by looking up.",
+      "angles": [
+        {
+          "interests": [
+            "art",
+            "movies",
+            "film and television"
+          ],
+          "text": "Think of where a cinema normally puts its audience. Here people stand along the length of the picture, looking up from different angles."
+        },
+        {
+          "interests": [
+            "culture",
+            "architecture"
+          ],
+          "text": "Look from the canopy down to the outdoor stages. The street accommodates live performers at ground level and a light show overhead."
+        }
+      ],
+      "sources": {
+        "Fremont Street Experience filming guide": "https://vegasexperience.com/wp-content/uploads/2026/01/2025-Fremont-Street-Filming-Fact-Sheet.pdf"
+      }
+    },
+    {
+      "name": "Fremont East gateway",
+      "point": [
+        36.169083725,
+        -115.14049445
+      ],
+      "opening": "At the Fremont East gateway, the illuminated sign names a whole district. It gives the street an entrance you can walk through.",
+      "angles": [
+        {
+          "interests": [
+            "art",
+            "architecture"
+          ],
+          "text": "Look at the span over the street. A sign on a single building draws your eye to a door. This one frames the view down the block."
+        },
+        {
+          "interests": [
+            "history",
+            "culture"
+          ],
+          "text": "The city singled out this gateway in its community design guide as an example of how a neighbourhood can establish its own identity."
+        }
+      ],
+      "sources": {
+        "City of Las Vegas design guide": "https://files.lasvegasnevada.gov/planning/Community-Design-Element.pdf"
+      }
+    },
+    {
+      "name": "El Cortez",
+      "photo": {"asset": "el-cortez", "caption": "a vintage postcard of the El Cortez hotel"},
+      "point": [
+        36.16862486,
+        -115.13903766
+      ],
+      "opening": "El Cortez opened on Fremont Street in November 1941 with just fifty-nine rooms.",
+      "angles": [
+        {
+          "interests": [
+            "history",
+            "notable people"
+          ],
+          "text": "In 1945 a group including Moe Sedway bought the hotel. One of its original builders, J. Kell Houssels, acquired it again the following year."
+        },
+        {
+          "interests": [
+            "architecture",
+            "art"
+          ],
+          "text": "The builders chose Spanish Colonial Revival for the original hotel. Look from the facade to the lettering above it. The hotel dates that neon design to 1952."
+        }
+      ],
+      "sources": {
+        "El Cortez hotel history": "https://elcortezhotelcasino.com/press/el-cortez-fun-facts/",
+        "El Cortez facade": "https://elcortezhotelcasino.com/about-us/"
+      }
+    },
+    {
+      "name": "Downtown Container Park and the Mantis",
+      "point": [
+        36.1680536,
+        -115.13810015
+      ],
+      "opening": "Look for the giant metal praying mantis at the park entrance on Fremont and Seventh. It stands forty feet tall.",
+      "angles": [
+        {
+          "interests": [
+            "art",
+            "culture"
+          ],
+          "text": "The sculpture doubles as a performance. Trained operators control the flames, and a sound system gives the metal insect a voice."
+        },
+        {
+          "interests": [
+            "nature",
+            "architecture"
+          ],
+          "text": "Start with the shape of a real mantis, its folded forelegs and narrow body. Enlarge it to the height of a building and those limbs become a silhouette you can pick out from the street."
+        }
+      ],
+      "sources": {
+        "Downtown Container Park": "https://downtowncontainerpark.com/events/community-sunset-drum-circle"
+      }
+    }
+  ],
+  "starts": {
+    "Default": {
+      "order": [
+        0,
+        1,
+        2,
+        3,
+        4,
+        5,
+        6
+      ],
+      "path": [
+        [
+          36.171808,
+          -115.1466072
+        ],
+        [
+          36.1718297,
+          -115.1465701
+        ],
+        [
+          36.1718397,
+          -115.1465096
+        ],
+        [
+          36.171843,
+          -115.1464732
+        ],
+        [
+          36.1718258,
+          -115.1464339
+        ],
+        [
+          36.1718469,
+          -115.1464203
+        ],
+        [
+          36.1718141,
+          -115.1463536
+        ],
+        [
+          36.1717628,
+          -115.1462461
+        ],
+        [
+          36.1717342,
+          -115.1462006
+        ],
+        [
+          36.1717252,
+          -115.1461796
+        ],
+        [
+          36.1716487,
+          -115.1462332
+        ],
+        [
+          36.1716055,
+          -115.1461334
+        ],
+        [
+          36.17157422,
+          -115.14606118
+        ],
+        [
+          36.1714491,
+          -115.1457723
+        ],
+        [
+          36.1711979,
+          -115.1451926
+        ],
+        [
+          36.17097795,
+          -115.1446851
+        ],
+        [
+          36.170758,
+          -115.1441776
+        ],
+        [
+          36.1707369,
+          -115.1441289
+        ],
+        [
+          36.1706972,
+          -115.1440371
+        ],
+        [
+          36.1706679,
+          -115.1439696
+        ],
+        [
+          36.170521572727274,
+          -115.14363189090909
+        ],
+        [
+          36.1702655,
+          -115.1430409
+        ],
+        [
+          36.1702189,
+          -115.1429333
+        ],
+        [
+          36.1701808,
+          -115.1428452
+        ],
+        [
+          36.1701646,
+          -115.142808
+        ],
+        [
+          36.1698114,
+          -115.1419927
+        ],
+        [
+          36.1697797,
+          -115.1419196
+        ],
+        [
+          36.1697605,
+          -115.1418754
+        ],
+        [
+          36.169733,
+          -115.141812
+        ],
+        [
+          36.1697084,
+          -115.1417552
+        ],
+        [
+          36.1696894,
+          -115.1417112
+        ],
+        [
+          36.1692875,
+          -115.1407837
+        ],
+        [
+          36.1692194,
+          -115.1408317
+        ],
+        [
+          36.169215,
+          -115.1408218
+        ],
+        [
+          36.1691971,
+          -115.1407815
+        ],
+        [
+          36.1691449,
+          -115.1406636
+        ],
+        [
+          36.1691205,
+          -115.1406084
+        ],
+        [
+          36.1691133,
+          -115.1406048
+        ],
+        [
+          36.1691159,
+          -115.1405685
+        ],
+        [
+          36.169083725,
+          -115.14049445
+        ],
+        [
+          36.1689872,
+          -115.1402723
+        ],
+        [
+          36.1687336,
+          -115.1396915
+        ],
+        [
+          36.1687261,
+          -115.1396888
+        ],
+        [
+          36.1687285,
+          -115.1396799
+        ],
+        [
+          36.168792,
+          -115.1396312
+        ],
+        [
+          36.1688673,
+          -115.1395797
+        ],
+        [
+          36.1688322,
+          -115.1394888
+        ],
+        [
+          36.1687969,
+          -115.1394075
+        ],
+        [
+          36.1687731,
+          -115.1393855
+        ],
+        [
+          36.16862486,
+          -115.13903766
+        ],
+        [
+          36.1685878,
+          -115.1389507
+        ],
+        [
+          36.1685733,
+          -115.1389254
+        ],
+        [
+          36.1683841,
+          -115.1384615
+        ],
+        [
+          36.1683735,
+          -115.1384384
+        ],
+        [
+          36.1683,
+          -115.1384862
+        ],
+        [
+          36.1682394,
+          -115.1385253
+        ],
+        [
+          36.168194,
+          -115.1384229
+        ],
+        [
+          36.1681703,
+          -115.1383682
+        ],
+        [
+          36.168152,
+          -115.1383304
+        ],
+        [
+          36.1680536,
+          -115.13810015
+        ]
+      ]
+    }
+  }
+}

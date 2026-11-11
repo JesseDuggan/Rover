@@ -1,0 +1,1139 @@
+{
+  "title": "Fremont Past to Present",
+  "geometryAttribution": "© OpenStreetMap contributors, ODbL https://www.openstreetmap.org/copyright",
+  "chapters": [
+    {
+      "name": "Plaza Hotel & Casino",
+      "photo": {"asset": "plaza", "caption": "the Plaza Hotel and Casino"},
+      "point": [
+        36.171808,
+        -115.1466072
+      ],
+      "opening": "Imagine stepping off a train at the head of Fremont Street. Before the Plaza opened here in 1971, this was the site of the Las Vegas rail depot.",
+      "angles": [
+        {
+          "interests": [
+            "history",
+            "notable people"
+          ],
+          "text": "In 1905 the railroad held its land auction here. The passengers buying lots were helping decide where the town itself would grow."
+        },
+        {
+          "interests": [
+            "architecture",
+            "art",
+            "food"
+          ],
+          "text": "Look for the glass dome facing Fremont. The hotel’s media archive shows that a swimming pool once occupied that spot above the street."
+        }
+      ],
+      "sources": {
+        "Plaza history": "https://www.plazahotelcasino.com/about-us/",
+        "Plaza media archive": "https://www.plazahotelcasino.com/wp-content/uploads/2017/01/Plaza-Media-Kit.pdf"
+      }
+    },
+    {
+      "name": "Golden Gate",
+      "photo": {"asset": "LV-02", "caption": "the Golden Gate casino frontage"},
+      "point": [
+        36.1715742,
+        -115.1460612
+      ],
+      "opening": "At One Fremont Street, the Golden Gate began life as Hotel Nevada in 1906. Ten rooms survive from its opening.",
+      "angles": [
+        {
+          "interests": [
+            "history",
+            "hidden gems"
+          ],
+          "text": "A year after the hotel opened, the city’s first telephone was installed here. To reach it you only needed one number, one."
+        },
+        {
+          "interests": [
+            "architecture",
+            "art"
+          ],
+          "text": "Electric lights, ventilation and steam radiators were selling points when the hotel opened. Its first outdoor electric sign came two decades later."
+        }
+      ],
+      "sources": {
+        "Golden Gate hotel archive": "https://www.goldengatecasino.com/hotel/the-original-10/"
+      }
+    },
+    {
+      "name": "Vegas Vic",
+      "point": [
+        36.1712338,
+        -115.1452754
+      ],
+      "opening": "Look up for a cowboy drawn in light. The sign makers at YESCO built Vegas Vic in 1951.",
+      "angles": [
+        {
+          "interests": [
+            "history",
+            "culture"
+          ],
+          "text": "Vic once called down a greeting to people on the street. A voice box gave the advertisement a voice of its own."
+        },
+        {
+          "interests": [
+            "art",
+            "architecture"
+          ],
+          "text": "Look at how the outline suggests motion. An animated arm and a winking eye could make a forty-foot sign seem to greet one person."
+        }
+      ],
+      "sources": {
+        "The Neon Museum": "https://neonmuseum.org/news/meet-yesco-the-company-behind-much-of-vegas-glow/"
+      }
+    },
+    {
+      "name": "Golden Nugget",
+      "point": [
+        36.170978,
+        -115.1446851
+      ],
+      "opening": "The Golden Nugget has a real piece of gold behind its name. The lobby display is called the Hand of Faith.",
+      "angles": [
+        {
+          "interests": [
+            "history",
+            "notable people",
+            "hidden gems"
+          ],
+          "text": "In 1980 Kevin Hillier took a metal detector out near Wedderburn in Australia. He uncovered about sixty-one pounds of gold just beneath the surface."
+        },
+        {
+          "interests": [
+            "nature",
+            "architecture"
+          ],
+          "text": "This property also built a pool complex around a shark aquarium. Picture the two very different pieces of nature the hotel chose to bring into downtown Las Vegas."
+        }
+      ],
+      "sources": {
+        "Golden Nugget collection": "https://www.goldennugget.com/las-vegas/casino/hand-of-faith/",
+        "Golden Nugget pool": "https://www.goldennugget.com/las-vegas/amenities/h2o-pool/"
+      }
+    },
+    {
+      "name": "Fremont Street Experience",
+      "photo": {"asset": "fremont", "caption": "the canopy over Fremont Street"},
+      "point": [
+        36.1705216,
+        -115.1436319
+      ],
+      "opening": "Under Viva Vision, the ceiling of this pedestrian street doubles as a screen. A whole block of people can watch the same show simply by looking up.",
+      "angles": [
+        {
+          "interests": [
+            "art",
+            "movies",
+            "film and television"
+          ],
+          "text": "Think of where a cinema normally puts its audience. Here people stand along the length of the picture, looking up from different angles."
+        },
+        {
+          "interests": [
+            "culture",
+            "architecture"
+          ],
+          "text": "Look from the canopy down to the outdoor stages. The street accommodates live performers at ground level and a light show overhead."
+        }
+      ],
+      "sources": {
+        "Fremont Street Experience filming guide": "https://vegasexperience.com/wp-content/uploads/2026/01/2025-Fremont-Street-Filming-Fact-Sheet.pdf"
+      }
+    },
+    {
+      "name": "The Mob Museum",
+      "optional": true,
+      "photo": {"asset": "mob", "caption": "the Mob Museum building"},
+      "point": [
+        36.172607,
+        -115.1412656
+      ],
+      "opening": "At 300 Stewart Avenue the building is part of the collection. This museum occupies a former federal courthouse and post office.",
+      "angles": [
+        {
+          "interests": [
+            "history",
+            "notable people"
+          ],
+          "text": "A Senate investigation into organized crime held a hearing in this building. People who come to learn about those hearings are visiting a place where witnesses actually testified."
+        },
+        {
+          "interests": [
+            "architecture",
+            "hidden gems"
+          ],
+          "text": "Picture the two kinds of visitors this building once received. Someone could come to mail a letter while someone else was arriving for federal court."
+        }
+      ],
+      "sources": {
+        "The Mob Museum building archive": "https://themobmuseum.org/digital-archive/this-building-of-ours/"
+      }
+    },
+    {
+      "name": "Neonopolis",
+      "point": [
+        36.1696529,
+        -115.1416269
+      ],
+      "opening": "At 450 Fremont, Neonopolis holds a collection on a very different scale from the giant signs outside. Toy Shack specializes in toys and memorabilia.",
+      "angles": [
+        {
+          "interests": [
+            "movies",
+            "film and television",
+            "culture"
+          ],
+          "text": "Viewers of Pawn Stars may recognize the shop. Its connection to the show gives these small collectibles a second audience far beyond Fremont Street."
+        },
+        {
+          "interests": [
+            "art",
+            "hidden gems"
+          ],
+          "text": "Think of a favourite toy from childhood. Its shape or colour might identify it decades later, even after the box and instructions have disappeared."
+        }
+      ],
+      "sources": {
+        "Neonopolis Toy Shack directory": "https://www.neonopolislv.com/toy-shack"
+      }
+    },
+    {
+      "name": "Fremont East gateway",
+      "point": [
+        36.1690837,
+        -115.1404945
+      ],
+      "opening": "At the Fremont East gateway, the illuminated sign names a whole district. It gives the street an entrance you can walk through.",
+      "angles": [
+        {
+          "interests": [
+            "art",
+            "architecture"
+          ],
+          "text": "Look at the span over the street. A sign on a single building draws your eye to a door. This one frames the view down the block."
+        },
+        {
+          "interests": [
+            "history",
+            "culture"
+          ],
+          "text": "The city singled out this gateway in its community design guide as an example of how a neighbourhood can establish its own identity."
+        }
+      ],
+      "sources": {
+        "City of Las Vegas design guide": "https://files.lasvegasnevada.gov/planning/Community-Design-Element.pdf"
+      }
+    },
+    {
+      "name": "El Cortez",
+      "photo": {"asset": "el-cortez", "caption": "a vintage postcard of the El Cortez hotel"},
+      "point": [
+        36.1686249,
+        -115.1390377
+      ],
+      "opening": "El Cortez opened on Fremont Street in November 1941 with just fifty-nine rooms.",
+      "angles": [
+        {
+          "interests": [
+            "history",
+            "notable people"
+          ],
+          "text": "In 1945 a group including Moe Sedway bought the hotel. One of its original builders, J. Kell Houssels, acquired it again the following year."
+        },
+        {
+          "interests": [
+            "architecture",
+            "art"
+          ],
+          "text": "The builders chose Spanish Colonial Revival for the original hotel. Look from the facade to the lettering above it. The hotel dates that neon design to 1952."
+        }
+      ],
+      "sources": {
+        "El Cortez hotel history": "https://elcortezhotelcasino.com/press/el-cortez-fun-facts/",
+        "El Cortez facade": "https://elcortezhotelcasino.com/about-us/"
+      }
+    },
+    {
+      "name": "Downtown Container Park and the Mantis",
+      "point": [
+        36.1680536,
+        -115.1381001
+      ],
+      "opening": "Look for the giant metal praying mantis at the park entrance on Fremont and Seventh. It stands forty feet tall.",
+      "angles": [
+        {
+          "interests": [
+            "art",
+            "culture"
+          ],
+          "text": "The sculpture doubles as a performance. Trained operators control the flames, and a sound system gives the metal insect a voice."
+        },
+        {
+          "interests": [
+            "nature",
+            "architecture"
+          ],
+          "text": "Start with the shape of a real mantis, its folded forelegs and narrow body. Enlarge it to the height of a building and those limbs become a silhouette you can pick out from the street."
+        }
+      ],
+      "sources": {
+        "Downtown Container Park": "https://downtowncontainerpark.com/events/community-sunset-drum-circle"
+      }
+    }
+  ],
+  "starts": {
+    "Plaza": {
+      "order": [
+        0,
+        1,
+        2,
+        3,
+        4,
+        5,
+        6,
+        7,
+        8,
+        9
+      ],
+      "path": [
+        [
+          36.171808,
+          -115.1466072
+        ],
+        [
+          36.1718297,
+          -115.1465701
+        ],
+        [
+          36.1718397,
+          -115.1465096
+        ],
+        [
+          36.171843,
+          -115.1464732
+        ],
+        [
+          36.1718258,
+          -115.1464339
+        ],
+        [
+          36.1718469,
+          -115.1464203
+        ],
+        [
+          36.1718141,
+          -115.1463536
+        ],
+        [
+          36.1717628,
+          -115.1462461
+        ],
+        [
+          36.1717342,
+          -115.1462006
+        ],
+        [
+          36.1717252,
+          -115.1461796
+        ],
+        [
+          36.1716487,
+          -115.1462332
+        ],
+        [
+          36.1716055,
+          -115.1461334
+        ],
+        [
+          36.1715742,
+          -115.1460612
+        ],
+        [
+          36.1714491,
+          -115.1457723
+        ],
+        [
+          36.1712338,
+          -115.1452754
+        ],
+        [
+          36.1711979,
+          -115.1451926
+        ],
+        [
+          36.170978,
+          -115.1446851
+        ],
+        [
+          36.170758,
+          -115.1441776
+        ],
+        [
+          36.1707369,
+          -115.1441289
+        ],
+        [
+          36.1706972,
+          -115.1440371
+        ],
+        [
+          36.1706679,
+          -115.1439696
+        ],
+        [
+          36.1705216,
+          -115.1436319
+        ],
+        [
+          36.1706679,
+          -115.1439696
+        ],
+        [
+          36.1707659,
+          -115.1439052
+        ],
+        [
+          36.1714206,
+          -115.1434788
+        ],
+        [
+          36.1717321,
+          -115.1432759
+        ],
+        [
+          36.1717342,
+          -115.1432652
+        ],
+        [
+          36.1717522,
+          -115.1432722
+        ],
+        [
+          36.1718372,
+          -115.1432179
+        ],
+        [
+          36.1719243,
+          -115.1431623
+        ],
+        [
+          36.1719465,
+          -115.1431504
+        ],
+        [
+          36.1720415,
+          -115.1430869
+        ],
+        [
+          36.1729094,
+          -115.1425065
+        ],
+        [
+          36.172995,
+          -115.1424585
+        ],
+        [
+          36.1730899,
+          -115.1424053
+        ],
+        [
+          36.1730036,
+          -115.1422156
+        ],
+        [
+          36.1729385,
+          -115.142071
+        ],
+        [
+          36.1728215,
+          -115.141786
+        ],
+        [
+          36.1727507,
+          -115.1416131
+        ],
+        [
+          36.172607,
+          -115.1412656
+        ],
+        [
+          36.1725352,
+          -115.1410918
+        ],
+        [
+          36.1724925,
+          -115.1409788
+        ],
+        [
+          36.1723545,
+          -115.1406609
+        ],
+        [
+          36.1723122,
+          -115.1405684
+        ],
+        [
+          36.1722586,
+          -115.1404705
+        ],
+        [
+          36.1721986,
+          -115.1403523
+        ],
+        [
+          36.1721537,
+          -115.1403772
+        ],
+        [
+          36.1720674,
+          -115.140427
+        ],
+        [
+          36.1720419,
+          -115.140442
+        ],
+        [
+          36.1720222,
+          -115.1404542
+        ],
+        [
+          36.1720147,
+          -115.1404366
+        ],
+        [
+          36.1718295,
+          -115.1405522
+        ],
+        [
+          36.1717703,
+          -115.1405758
+        ],
+        [
+          36.1714794,
+          -115.1407668
+        ],
+        [
+          36.1714669,
+          -115.1407809
+        ],
+        [
+          36.1714224,
+          -115.1408315
+        ],
+        [
+          36.1713627,
+          -115.1408659
+        ],
+        [
+          36.1710658,
+          -115.1410558
+        ],
+        [
+          36.171056,
+          -115.1410305
+        ],
+        [
+          36.1710281,
+          -115.1409598
+        ],
+        [
+          36.1709946,
+          -115.1408799
+        ],
+        [
+          36.1709744,
+          -115.140889
+        ],
+        [
+          36.1709394,
+          -115.1408799
+        ],
+        [
+          36.1708822,
+          -115.140918
+        ],
+        [
+          36.1708113,
+          -115.1409653
+        ],
+        [
+          36.1707661,
+          -115.1409954
+        ],
+        [
+          36.1707465,
+          -115.1410426
+        ],
+        [
+          36.1706728,
+          -115.1410764
+        ],
+        [
+          36.1699282,
+          -115.1415571
+        ],
+        [
+          36.1696894,
+          -115.1417112
+        ],
+        [
+          36.1696529,
+          -115.1416269
+        ],
+        [
+          36.1692875,
+          -115.1407837
+        ],
+        [
+          36.1692194,
+          -115.1408317
+        ],
+        [
+          36.169215,
+          -115.1408218
+        ],
+        [
+          36.1691971,
+          -115.1407815
+        ],
+        [
+          36.1691449,
+          -115.1406636
+        ],
+        [
+          36.1691205,
+          -115.1406084
+        ],
+        [
+          36.1691133,
+          -115.1406048
+        ],
+        [
+          36.1691159,
+          -115.1405685
+        ],
+        [
+          36.1690837,
+          -115.1404945
+        ],
+        [
+          36.1689872,
+          -115.1402723
+        ],
+        [
+          36.1687336,
+          -115.1396915
+        ],
+        [
+          36.1687261,
+          -115.1396888
+        ],
+        [
+          36.1687285,
+          -115.1396799
+        ],
+        [
+          36.168792,
+          -115.1396312
+        ],
+        [
+          36.1688673,
+          -115.1395797
+        ],
+        [
+          36.1688322,
+          -115.1394888
+        ],
+        [
+          36.1687969,
+          -115.1394075
+        ],
+        [
+          36.1687731,
+          -115.1393855
+        ],
+        [
+          36.1686249,
+          -115.1390377
+        ],
+        [
+          36.1685878,
+          -115.1389507
+        ],
+        [
+          36.1685733,
+          -115.1389254
+        ],
+        [
+          36.1683841,
+          -115.1384615
+        ],
+        [
+          36.1683735,
+          -115.1384384
+        ],
+        [
+          36.1683,
+          -115.1384862
+        ],
+        [
+          36.1682394,
+          -115.1385253
+        ],
+        [
+          36.168194,
+          -115.1384229
+        ],
+        [
+          36.1681703,
+          -115.1383682
+        ],
+        [
+          36.168152,
+          -115.1383304
+        ],
+        [
+          36.1680536,
+          -115.1381001
+        ]
+      ]
+    },
+    "El Cortez": {
+      "order": [
+        8,
+        9,
+        7,
+        6,
+        5,
+        4,
+        3,
+        2,
+        1,
+        0
+      ],
+      "path": [
+        [
+          36.1686249,
+          -115.1390377
+        ],
+        [
+          36.1685878,
+          -115.1389507
+        ],
+        [
+          36.1685733,
+          -115.1389254
+        ],
+        [
+          36.1683841,
+          -115.1384615
+        ],
+        [
+          36.1683735,
+          -115.1384384
+        ],
+        [
+          36.1683,
+          -115.1384862
+        ],
+        [
+          36.1682394,
+          -115.1385253
+        ],
+        [
+          36.168194,
+          -115.1384229
+        ],
+        [
+          36.1681703,
+          -115.1383682
+        ],
+        [
+          36.168152,
+          -115.1383304
+        ],
+        [
+          36.1680536,
+          -115.1381001
+        ],
+        [
+          36.168152,
+          -115.1383304
+        ],
+        [
+          36.1681703,
+          -115.1383682
+        ],
+        [
+          36.168194,
+          -115.1384229
+        ],
+        [
+          36.1682394,
+          -115.1385253
+        ],
+        [
+          36.1682291,
+          -115.1385613
+        ],
+        [
+          36.1684296,
+          -115.1390257
+        ],
+        [
+          36.1686293,
+          -115.1394885
+        ],
+        [
+          36.168659,
+          -115.1394975
+        ],
+        [
+          36.1686905,
+          -115.13958
+        ],
+        [
+          36.1687285,
+          -115.1396799
+        ],
+        [
+          36.1687261,
+          -115.1396888
+        ],
+        [
+          36.1687336,
+          -115.1396915
+        ],
+        [
+          36.1689872,
+          -115.1402723
+        ],
+        [
+          36.1690837,
+          -115.1404945
+        ],
+        [
+          36.1691159,
+          -115.1405685
+        ],
+        [
+          36.1691133,
+          -115.1406048
+        ],
+        [
+          36.1691205,
+          -115.1406084
+        ],
+        [
+          36.1691449,
+          -115.1406636
+        ],
+        [
+          36.1691971,
+          -115.1407815
+        ],
+        [
+          36.169215,
+          -115.1408218
+        ],
+        [
+          36.1692194,
+          -115.1408317
+        ],
+        [
+          36.1692875,
+          -115.1407837
+        ],
+        [
+          36.1696529,
+          -115.1416269
+        ],
+        [
+          36.1696894,
+          -115.1417112
+        ],
+        [
+          36.1699282,
+          -115.1415571
+        ],
+        [
+          36.1706728,
+          -115.1410764
+        ],
+        [
+          36.1707465,
+          -115.1410426
+        ],
+        [
+          36.1707661,
+          -115.1409954
+        ],
+        [
+          36.1708113,
+          -115.1409653
+        ],
+        [
+          36.1708822,
+          -115.140918
+        ],
+        [
+          36.1709394,
+          -115.1408799
+        ],
+        [
+          36.1709744,
+          -115.140889
+        ],
+        [
+          36.1709946,
+          -115.1408799
+        ],
+        [
+          36.1710281,
+          -115.1409598
+        ],
+        [
+          36.171056,
+          -115.1410305
+        ],
+        [
+          36.1710658,
+          -115.1410558
+        ],
+        [
+          36.1713627,
+          -115.1408659
+        ],
+        [
+          36.1714224,
+          -115.1408315
+        ],
+        [
+          36.1714669,
+          -115.1407809
+        ],
+        [
+          36.1714794,
+          -115.1407668
+        ],
+        [
+          36.1717703,
+          -115.1405758
+        ],
+        [
+          36.1718295,
+          -115.1405522
+        ],
+        [
+          36.1720147,
+          -115.1404366
+        ],
+        [
+          36.1720222,
+          -115.1404542
+        ],
+        [
+          36.1720419,
+          -115.140442
+        ],
+        [
+          36.1720674,
+          -115.140427
+        ],
+        [
+          36.1721537,
+          -115.1403772
+        ],
+        [
+          36.1721986,
+          -115.1403523
+        ],
+        [
+          36.1722586,
+          -115.1404705
+        ],
+        [
+          36.1723122,
+          -115.1405684
+        ],
+        [
+          36.1723545,
+          -115.1406609
+        ],
+        [
+          36.1724925,
+          -115.1409788
+        ],
+        [
+          36.1725352,
+          -115.1410918
+        ],
+        [
+          36.172607,
+          -115.1412656
+        ],
+        [
+          36.1727507,
+          -115.1416131
+        ],
+        [
+          36.1728215,
+          -115.141786
+        ],
+        [
+          36.1729385,
+          -115.142071
+        ],
+        [
+          36.1730036,
+          -115.1422156
+        ],
+        [
+          36.1730899,
+          -115.1424053
+        ],
+        [
+          36.172995,
+          -115.1424585
+        ],
+        [
+          36.1729094,
+          -115.1425065
+        ],
+        [
+          36.1720415,
+          -115.1430869
+        ],
+        [
+          36.1719465,
+          -115.1431504
+        ],
+        [
+          36.1719243,
+          -115.1431623
+        ],
+        [
+          36.1718372,
+          -115.1432179
+        ],
+        [
+          36.1717522,
+          -115.1432722
+        ],
+        [
+          36.1717342,
+          -115.1432652
+        ],
+        [
+          36.1717321,
+          -115.1432759
+        ],
+        [
+          36.1714206,
+          -115.1434788
+        ],
+        [
+          36.1707659,
+          -115.1439052
+        ],
+        [
+          36.1706679,
+          -115.1439696
+        ],
+        [
+          36.1705216,
+          -115.1436319
+        ],
+        [
+          36.1706679,
+          -115.1439696
+        ],
+        [
+          36.1706972,
+          -115.1440371
+        ],
+        [
+          36.1707369,
+          -115.1441289
+        ],
+        [
+          36.170758,
+          -115.1441776
+        ],
+        [
+          36.170978,
+          -115.1446851
+        ],
+        [
+          36.1711979,
+          -115.1451926
+        ],
+        [
+          36.1712338,
+          -115.1452754
+        ],
+        [
+          36.1714491,
+          -115.1457723
+        ],
+        [
+          36.1715742,
+          -115.1460612
+        ],
+        [
+          36.1716055,
+          -115.1461334
+        ],
+        [
+          36.1716487,
+          -115.1462332
+        ],
+        [
+          36.1717252,
+          -115.1461796
+        ],
+        [
+          36.1717342,
+          -115.1462006
+        ],
+        [
+          36.1717628,
+          -115.1462461
+        ],
+        [
+          36.1718141,
+          -115.1463536
+        ],
+        [
+          36.1718469,
+          -115.1464203
+        ],
+        [
+          36.1718258,
+          -115.1464339
+        ],
+        [
+          36.171843,
+          -115.1464732
+        ],
+        [
+          36.1718397,
+          -115.1465096
+        ],
+        [
+          36.1718297,
+          -115.1465701
+        ],
+        [
+          36.171808,
+          -115.1466072
+        ]
+      ]
+    }
+  }
+}

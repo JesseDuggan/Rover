@@ -51,7 +51,8 @@ class GoogleRoverMap extends StatefulWidget {
   State<GoogleRoverMap> createState() => _GoogleRoverMapState();
 }
 
-class _GoogleRoverMapState extends State<GoogleRoverMap> with WidgetsBindingObserver {
+class _GoogleRoverMapState extends State<GoogleRoverMap>
+    with WidgetsBindingObserver {
   static const _initialZoom = 16.0;
   static const _minimumZoom = 12.0;
   static const _maximumZoom = 20.0;
@@ -60,6 +61,8 @@ class _GoogleRoverMapState extends State<GoogleRoverMap> with WidgetsBindingObse
   bool _mapInitialized = false;
   bool _cameraFollowEnabled = true;
   bool _programmaticCameraMove = false;
+  bool _followMoveInFlight = false;
+  Timer? _cameraMoveReset;
   double _currentZoom = _initialZoom;
   double? _lastMovementBearing;
   RoverLatLng? _bearingAnchor;
@@ -85,17 +88,24 @@ class _GoogleRoverMapState extends State<GoogleRoverMap> with WidgetsBindingObse
   void didChangeAppLifecycleState(AppLifecycleState state) => _syncCompass();
 
   void _syncCompass() {
-    final foreground = WidgetsBinding.instance.lifecycleState == null ||
+    final foreground =
+        WidgetsBinding.instance.lifecycleState == null ||
         WidgetsBinding.instance.lifecycleState == AppLifecycleState.resumed;
     if (!widget.active || widget.overview || !foreground) {
       unawaited(_compass?.cancel());
       _compass = null;
+      _compassHeading = null;
+      _lastCompassPaint = null;
       return;
     }
     _compass ??= FlutterCompass.events?.listen((event) {
       final heading = event.heading;
-      if (!mounted || !widget.active || heading == null || !heading.isFinite ||
-          heading < 0 || (event.accuracy != null && event.accuracy! < 0)) {
+      if (!mounted ||
+          !widget.active ||
+          heading == null ||
+          !heading.isFinite ||
+          heading < 0 ||
+          (event.accuracy != null && event.accuracy! < 0)) {
         return;
       }
       final now = DateTime.now();
@@ -103,9 +113,18 @@ class _GoogleRoverMapState extends State<GoogleRoverMap> with WidgetsBindingObse
           now.difference(_lastCompassPaint!).inMilliseconds < 200) {
         return;
       }
+      final nextHeading = _compassHeading == null
+          ? heading
+          : smoothMapHeading(_compassHeading!, heading);
+      final change = _compassHeading == null
+          ? 180.0
+          : ((nextHeading - _compassHeading! + 540) % 360 - 180).abs();
+      if (change < 2) return;
       _lastCompassPaint = now;
-      setState(() => _compassHeading = _compassHeading == null
-          ? heading : smoothMapHeading(_compassHeading!, heading));
+      setState(() => _compassHeading = nextHeading);
+      if (_cameraFollowEnabled && !_northUp) {
+        unawaited(_followCurrentLocation());
+      }
     }, onError: (Object _) {});
   }
 
@@ -114,12 +133,20 @@ class _GoogleRoverMapState extends State<GoogleRoverMap> with WidgetsBindingObse
     final canvas = Canvas(recorder);
     canvas.drawCircle(const Offset(60, 60), 51, Paint()..color = Colors.white);
     final painter = TextPainter(
-      text: TextSpan(text: String.fromCharCode(Icons.navigation.codePoint),
-        style: TextStyle(fontFamily: Icons.navigation.fontFamily,
-          fontSize: 96, color: WalkaboutColors.blue)),
+      text: TextSpan(
+        text: String.fromCharCode(Icons.navigation.codePoint),
+        style: TextStyle(
+          fontFamily: Icons.navigation.fontFamily,
+          fontSize: 96,
+          color: WalkaboutColors.blue,
+        ),
+      ),
       textDirection: TextDirection.ltr,
     )..layout();
-    painter.paint(canvas, Offset((120 - painter.width) / 2, (120 - painter.height) / 2));
+    painter.paint(
+      canvas,
+      Offset((120 - painter.width) / 2, (120 - painter.height) / 2),
+    );
     final picture = recorder.endRecording();
     final image = await picture.toImage(120, 120);
     final bytes = await image.toByteData(format: ui.ImageByteFormat.png);
@@ -127,15 +154,22 @@ class _GoogleRoverMapState extends State<GoogleRoverMap> with WidgetsBindingObse
     picture.dispose();
     painter.dispose();
     if (mounted && bytes != null) {
-      setState(() => _arrowIcon = google.BitmapDescriptor.bytes(
-        bytes.buffer.asUint8List(), width: 40, height: 40));
+      setState(
+        () => _arrowIcon = google.BitmapDescriptor.bytes(
+          bytes.buffer.asUint8List(),
+          width: 40,
+          height: 40,
+        ),
+      );
     }
   }
 
   @override
   void didUpdateWidget(covariant GoogleRoverMap oldWidget) {
     super.didUpdateWidget(oldWidget);
-    if (oldWidget.active != widget.active || oldWidget.overview != widget.overview) _syncCompass();
+    if (oldWidget.active != widget.active ||
+        oldWidget.overview != widget.overview)
+      _syncCompass();
     if (oldWidget.currentStopIndex != widget.currentStopIndex) {
       _cameraFollowEnabled = true;
     }
@@ -157,6 +191,7 @@ class _GoogleRoverMapState extends State<GoogleRoverMap> with WidgetsBindingObse
   void dispose() {
     WidgetsBinding.instance.removeObserver(this);
     unawaited(_compass?.cancel());
+    _cameraMoveReset?.cancel();
     _controller?.dispose();
     super.dispose();
   }
@@ -205,7 +240,9 @@ class _GoogleRoverMapState extends State<GoogleRoverMap> with WidgetsBindingObse
           zoomGesturesEnabled: true,
           gestureRecognizers: <Factory<OneSequenceGestureRecognizer>>{
             Factory<_RoverMapGestureRecognizer>(
-              () => _RoverMapGestureRecognizer(_pauseCameraFollow),
+              () => _RoverMapGestureRecognizer(
+                () => _pauseCameraFollow(userGesture: true),
+              ),
             ),
           },
           markers: _markers(),
@@ -221,9 +258,14 @@ class _GoogleRoverMapState extends State<GoogleRoverMap> with WidgetsBindingObse
             top: widget.viewportPadding.top + 12,
             child: FloatingActionButton.small(
               heroTag: null,
-              tooltip: _northUp ? 'Follow direction of travel' : 'Keep north up',
+              tooltip: _northUp
+                  ? 'Follow direction of travel'
+                  : 'Keep north up',
               onPressed: () {
-                setState(() { _northUp = !_northUp; _cameraFollowEnabled = true; });
+                setState(() {
+                  _northUp = !_northUp;
+                  _cameraFollowEnabled = true;
+                });
                 unawaited(_followCurrentLocation());
               },
               child: Icon(_northUp ? Icons.explore_outlined : Icons.navigation),
@@ -264,8 +306,16 @@ class _GoogleRoverMapState extends State<GoogleRoverMap> with WidgetsBindingObse
         google.Marker(
           markerId: const google.MarkerId('walker-direction'),
           position: _googleLatLng(widget.currentLocation!),
-          icon: _arrowIcon ?? google.BitmapDescriptor.defaultMarkerWithHue(google.BitmapDescriptor.hueAzure),
-          rotation: _compassHeading ?? widget.currentHeadingDegrees ?? _lastMovementBearing ?? 0,
+          icon:
+              _arrowIcon ??
+              google.BitmapDescriptor.defaultMarkerWithHue(
+                google.BitmapDescriptor.hueAzure,
+              ),
+          rotation:
+              _compassHeading ??
+              widget.currentHeadingDegrees ??
+              _lastMovementBearing ??
+              0,
           anchor: const Offset(.5, .5),
           flat: true,
           zIndexInt: 10000,
@@ -303,7 +353,10 @@ class _GoogleRoverMapState extends State<GoogleRoverMap> with WidgetsBindingObse
     if (route.length < 2) {
       return _routeLines = const {};
     }
-    final split = splitNavigationRoute(route, widget.overview ? null : widget.currentLocation);
+    final split = splitNavigationRoute(
+      route,
+      widget.overview ? null : widget.currentLocation,
+    );
     return _routeLines = {
       if (split.completed.length > 1)
         google.Polyline(
@@ -399,8 +452,10 @@ class _GoogleRoverMapState extends State<GoogleRoverMap> with WidgetsBindingObse
     }
   }
 
-  void _pauseCameraFollow() {
-    if (_programmaticCameraMove || !_cameraFollowEnabled || !mounted) {
+  void _pauseCameraFollow({bool userGesture = false}) {
+    if ((!userGesture && _programmaticCameraMove) ||
+        !_cameraFollowEnabled ||
+        !mounted) {
       return;
     }
     setState(() => _cameraFollowEnabled = false);
@@ -414,10 +469,16 @@ class _GoogleRoverMapState extends State<GoogleRoverMap> with WidgetsBindingObse
   Future<void> _followCurrentLocation() async {
     final controller = _controller;
     final location = widget.currentLocation;
-    if (controller == null || location == null) {
+    if (!mounted ||
+        !widget.active ||
+        controller == null ||
+        location == null ||
+        _followMoveInFlight) {
       return;
     }
 
+    _followMoveInFlight = true;
+    _cameraMoveReset?.cancel();
     _programmaticCameraMove = true;
     try {
       await controller.moveCamera(
@@ -433,10 +494,17 @@ class _GoogleRoverMapState extends State<GoogleRoverMap> with WidgetsBindingObse
           ),
         ),
       );
+    } catch (error) {
+      if (mounted && identical(_controller, controller)) {
+        debugPrint('Map follow update failed: ${error.runtimeType}');
+      }
     } finally {
-      Future<void>.delayed(const Duration(milliseconds: 500), () {
-        _programmaticCameraMove = false;
-      });
+      _followMoveInFlight = false;
+      if (mounted) {
+        _cameraMoveReset = Timer(const Duration(milliseconds: 500), () {
+          _programmaticCameraMove = false;
+        });
+      }
     }
   }
 
@@ -478,6 +546,7 @@ class _GoogleRoverMapState extends State<GoogleRoverMap> with WidgetsBindingObse
 
   double _cameraBearing({RoverLatLng? centerLocation}) {
     if (_northUp || widget.overview) return 0;
+    if (_compassHeading != null) return _compassHeading!;
     if (_lastMovementBearing != null) return _lastMovementBearing!;
     final heading = widget.currentHeadingDegrees;
     if (heading != null && heading >= 0 && heading <= 360) {
@@ -492,7 +561,10 @@ class _GoogleRoverMapState extends State<GoogleRoverMap> with WidgetsBindingObse
       return 0;
     }
     RoverLatLng? routeTarget;
-    for (final point in splitNavigationRoute(widget.routeGeometry, origin).upcoming) {
+    for (final point in splitNavigationRoute(
+      widget.routeGeometry,
+      origin,
+    ).upcoming) {
       if (point.distanceTo(origin) > 8) {
         routeTarget = point;
         break;
@@ -513,7 +585,9 @@ class _GoogleRoverMapState extends State<GoogleRoverMap> with WidgetsBindingObse
     }
     final next = _bearingBetween(_bearingAnchor!, current);
     _bearingAnchor = current;
-    return _lastMovementBearing == null ? next : smoothMapHeading(_lastMovementBearing!, next);
+    return _lastMovementBearing == null
+        ? next
+        : smoothMapHeading(_lastMovementBearing!, next);
   }
 
   double _bearingBetween(RoverLatLng from, RoverLatLng to) {

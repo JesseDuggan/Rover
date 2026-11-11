@@ -2,6 +2,7 @@ import 'package:flutter/widgets.dart';
 
 import 'preferences_repository.dart';
 import 'rover_preferences.dart';
+import 'story_preparation_preferences.dart';
 
 class PreferencesController extends ChangeNotifier {
   PreferencesController(this._repository);
@@ -21,11 +22,13 @@ class PreferencesController extends ChangeNotifier {
     _preferences = await _repository.load();
     _persisted = _preferences;
     _isLoaded = true;
+    StoryPreparationPreferences.current = _preferences;
     notifyListeners();
   }
 
   Future<void> save(RoverPreferences preferences) async {
     _preferences = preferences;
+    StoryPreparationPreferences.current = _preferences;
     notifyListeners();
     final write = _pendingSave.then((_) => _repository.save(preferences));
     _pendingSave = write.catchError((Object _) {});
@@ -35,6 +38,7 @@ class PreferencesController extends ChangeNotifier {
     } catch (_) {
       if (identical(_preferences, preferences)) {
         _preferences = _persisted;
+        StoryPreparationPreferences.current = _preferences;
         notifyListeners();
       }
       rethrow;
@@ -52,6 +56,7 @@ class PreferencesController extends ChangeNotifier {
     await _repository.reset();
     _preferences = const RoverPreferences();
     _persisted = _preferences;
+    StoryPreparationPreferences.current = _preferences;
     notifyListeners();
   }
 }

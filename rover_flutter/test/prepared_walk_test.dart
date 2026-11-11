@@ -1,6 +1,7 @@
 import 'dart:async';
 
 import 'package:flutter/material.dart';
+import 'package:latlong2/latlong.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:rover/src/ui/prepared_walk_screen.dart';
 import 'package:rover/src/voice/rover_audio_services.dart';
@@ -56,7 +57,82 @@ class Location extends RoverLocationProvider {
   );
 }
 
+Future<void> finishStory(WidgetTester t, Voice voice) async {
+  for (var i = 0; i < 20 && find.text('Continue walking').evaluate().isEmpty; i++) {
+    await voice.stop();
+    await t.pump();
+  }
+  expect(find.text('Continue walking'), findsOneWidget);
+}
+
 void main() {
+  testWidgets('new arrival interrupts and skipping it resumes the nearby unfinished sentence', (t) async {
+    final path = bloorRehearsal.path;
+    final origin = path.first;
+    final next = LatLng(origin.latitude, origin.longitude + .0015);
+    final walk = PreparedWalk('Local walk', path, [
+      PreparedStop('First', origin, const WalkAnswer('First sentence. Finish this story.', {})),
+      PreparedStop('Second', next, const WalkAnswer('Second stop story.', {})),
+    ]);
+    final voice = Voice(), location = Location();
+    await t.pumpWidget(MaterialApp(home: PreparedWalkScreen(
+      walk: walk, voice: voice, location: location, research: (_) async => null)));
+    await t.tap(find.text('Test on foot with GPS'));
+    await t.pump();
+    location.at(origin.latitude, origin.longitude);
+    await t.pump();
+    await voice.stop();
+    await t.pump();
+    expect(voice.spoken.last, 'Finish this story.');
+    location.at(next.latitude, next.longitude);
+    await t.pump();
+    expect(voice.spoken.last, 'Second stop story.');
+    await t.ensureVisible(find.text('Continue to next stop'));
+    await t.tap(find.text('Continue to next stop'));
+    await t.pump();
+    expect(voice.spoken.last, 'Finish this story.');
+    expect(voice.spoken.where((s) => s == 'First sentence.'), hasLength(1));
+    expect(voice.spoken.where((s) => s == 'Second stop story.'), hasLength(1));
+    await t.pumpWidget(const SizedBox());
+  });
+
+  testWidgets('arrival announces the matching photo and the walker can open and close it', (t) async {
+    t.view.physicalSize = const Size(900, 1600);
+    t.view.devicePixelRatio = 1;
+    addTearDown(t.view.resetPhysicalSize);
+    addTearDown(t.view.resetDevicePixelRatio);
+    final path = bloorRehearsal.path;
+    const photo = TourPhoto(asset: 'assets/tours/plaza.jpg', caption: 'the Plaza Hotel and Casino',
+      author: 'Photographer', license: 'CC BY', source: 'https://commons.wikimedia.org', licenseUrl: 'https://creativecommons.org');
+    final walk = PreparedWalk('Test tour', path, [
+      PreparedStop('Plaza', path.first, const WalkAnswer('Look up at the hotel.', {}), photo: photo),
+      PreparedStop('Next stop', path.last, const WalkAnswer('Another story.', {})),
+    ], theme: 'downtown', orderedChapters: true);
+    final voice = Voice();
+    await t.pumpWidget(MaterialApp(home: PreparedWalkScreen(walk: walk, voice: voice, research: (_) async => null)));
+    expect(find.byTooltip('View photo of Plaza'), findsOneWidget);
+    expect(find.byTooltip('View photo of Next stop'), findsNothing);
+    await t.ensureVisible(find.text('Play from home'));
+    await t.tap(find.text('Play from home'));
+    await t.pump();
+    await voice.stop();
+    await t.pump();
+    await t.pump(const Duration(milliseconds: 300));
+    expect(voice.spoken.last, photo.cue);
+    final view = find.text('View photo · ${photo.caption}');
+    await t.ensureVisible(view);
+    await t.tap(view);
+    await t.pumpAndSettle();
+    expect(find.text('Story photo'), findsOneWidget);
+    await t.tap(find.byTooltip('Close photo'));
+    await t.pumpAndSettle();
+    await voice.stop();
+    await t.pump();
+    expect(voice.spoken.last, 'Look up at the hotel.');
+    expect(voice.spoken.where((s) => s == photo.cue), hasLength(1));
+    await t.pumpWidget(const SizedBox());
+  });
+
   testWidgets(
     'trail resumes the interrupted sentence and recaps only heard chapters',
     (t) async {
@@ -176,9 +252,10 @@ void main() {
       expect(askedAbout, same(stop));
       await t.tap(find.text('Stop walk'));
       await t.pump();
+      final before = List.of(voice.spoken);
       pending.complete(const WalkAnswer('Late answer', {}));
       await t.pump();
-      expect(voice.spoken, hasLength(1));
+      expect(voice.spoken, before);
       expect(find.text('Walk stopped.'), findsOneWidget);
       await t.pumpWidget(const SizedBox());
     },
@@ -208,17 +285,19 @@ void main() {
     location.at(museum.latitude, museum.longitude);
     await t.pump();
     await t.pump();
-    expect(voice.spoken.single, contains('Roderick Matheson'));
+    expect(voice.spoken.single, contains('stone house'));
     await t.tap(find.text('What’s there now?'));
     await t.pump();
     expect(voice.spoken.last, contains('Perth Museum'));
     await voice.stop();
     await t.pump();
+    await finishStory(t, voice);
+    expect(voice.spoken.join(' '), contains('Roderick Matheson'));
     location.at(end.latitude, end.longitude);
     await t.pump();
     await t.pump();
     expect(find.text('Walk complete'), findsOneWidget);
-    expect(voice.spoken, hasLength(2));
+    expect(voice.spoken.where((s) => s.contains('Roderick Matheson')), hasLength(1));
     await t.pumpWidget(const SizedBox());
     await location.readings.close();
   });
@@ -252,21 +331,18 @@ void main() {
         await t.pump(const Duration(seconds: 1));
         await t.pump();
         expect(location.requests, live ? 1 : 0);
-        expect(voice.spoken.single, contains('Chapman and Oxley'));
+        expect(voice.spoken.single, contains('south side of Bloor'));
         await t.tap(find.text('What’s there now?'));
         await t.pump();
         expect(voice.spoken.last, contains('Shoppers Drug Mart'));
         expect(find.textContaining('Follow-up ·'), findsOneWidget);
         await voice.stop();
         await t.pump();
-        expect(
-          find.text(
-            live
-                ? 'Walking · waiting for the next arrival'
-                : 'Simulating the walk',
-          ),
-          findsOneWidget,
-        );
+        expect(voice.spoken.last, contains('south side of Bloor'));
+        await finishStory(t, voice);
+        expect(voice.spoken.join(' '), contains('Chapman and Oxley'));
+        await t.tap(find.text('Continue walking'));
+        await t.pump();
         if (live) {
           final end = bloorRehearsal.path.last;
           location.at(end.latitude, end.longitude);
@@ -274,7 +350,7 @@ void main() {
         await t.pump(const Duration(seconds: 60));
         await t.pump();
         expect(find.text('Walk complete'), findsOneWidget);
-        expect(voice.spoken, hasLength(2));
+        expect(voice.spoken.where((s) => s.contains('Chapman and Oxley')), hasLength(1));
         await t.pumpWidget(const SizedBox());
         await location.readings.close();
       },

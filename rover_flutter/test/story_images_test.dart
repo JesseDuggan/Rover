@@ -13,6 +13,14 @@ void main() {
     'licenseUrl': 'https://creativecommons.org/licenses/by-sa/4.0/',
     'sourceUrl': 'https://commons.wikimedia.org/wiki/File:View.jpg',
   };
+  test('Nearby photos must identify this story subject', () {
+    final photo = StoryPicture.parse({...picture, 'isNearby': true,
+      'caption': 'Postcard of the Grand Hôtel, 1930'})!;
+    expect(illustratesStory(photo, 'Grand Hôtel'), isTrue);
+    expect(illustratesStory(photo, 'City Hall'), isFalse);
+    expect(illustratesStory(photo, ''), isFalse);
+    expect(illustratesStory(StoryPicture.parse(picture)!, 'City Hall'), isTrue);
+  });
   test('Only trusted picture and credit URLs are accepted', () {
     expect(StoryPicture.parse(picture), isNotNull);
     expect(StoryPicture.parse({...picture, 'url': 'https://thumb.wikimedia.org/view.jpg'}), isNotNull);

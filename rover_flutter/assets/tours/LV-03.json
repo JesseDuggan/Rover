@@ -1,0 +1,609 @@
+{
+  "title": "Arts District & Brewery Row",
+  "theme": "artists, makers and Brewery Row",
+  "geometrySource": "© OpenStreetMap contributors, ODbL — https://www.openstreetmap.org/copyright",
+  "chapters": [
+    {
+      "name": "Community Healing Garden",
+      "photo": {"asset": "garden", "caption": "a memorial stone and flowers in the Healing Garden"},
+      "opening": "This garden grew out of a very particular moment. Las Vegas residents came together after October 1, 2017, to make a place where people could remember the lives lost.",
+      "sources": {
+        "Community Healing Garden": "https://www.lasvegasnevada.gov/Residents/Parks-Facilities/Healing-Garden"
+      },
+      "angles": [
+        {
+          "interests": [
+            "history",
+            "culture"
+          ],
+          "text": "The memorial sits in the neighbourhood where volunteers built it. Take a moment here before walking on."
+        },
+        {
+          "interests": [
+            "nature",
+            "art"
+          ],
+          "text": "Notice how planting gives the memorial a living form. What you see here changes with the seasons."
+        }
+      ],
+      "point": [
+        36.1596403,
+        -115.1509845
+      ]
+    },
+    {
+      "name": "The Arts Factory",
+      "photo": {"asset": "LV-03", "caption": "a mural in the Las Vegas Arts District"},
+      "opening": "A warehouse became a home for working artists. Inside the Arts Factory, a visitor can move between studios and galleries under one roof.",
+      "sources": {
+        "The Arts Factory": "https://www.theartsfactorylv.com/"
+      },
+      "angles": [
+        {
+          "interests": [
+            "architecture",
+            "history"
+          ],
+          "text": "Look at how much space the old warehouse gives its new occupants. A building made for moving goods can now hold a whole community of makers."
+        },
+        {
+          "interests": [
+            "art",
+            "culture"
+          ],
+          "text": "Try following a single colour from one studio window to the next. Painters, photographers and other artists use the same building in very different ways."
+        }
+      ],
+      "point": [
+        36.159175383333334,
+        -115.15342326666666
+      ]
+    },
+    {
+      "name": "Antique Alley Mall",
+      "opening": "Main Street offers a different kind of local archive. At Antique Alley Mall, objects that once furnished homes or filled shop windows find another audience.",
+      "sources": {
+        "Antique Alley Mall": "https://www.antiquealleymall.com/"
+      },
+      "angles": [
+        {
+          "interests": [
+            "art",
+            "architecture"
+          ],
+          "text": "Pick out one object by its shape alone. Old lettering, furniture legs and light fixtures each carry clues to the tastes of their time."
+        },
+        {
+          "interests": [
+            "history",
+            "hidden gems"
+          ],
+          "text": "Look for the traces of use. A worn handle can say more about the everyday life of an object than its price tag."
+        }
+      ],
+      "point": [
+        36.1575384,
+        -115.15406232
+      ]
+    },
+    {
+      "name": "CraftHaus",
+      "opening": "Brewery Row adds another kind of workshop to the Arts District. At the CraftHaus taproom, the material people come to sample is beer.",
+      "sources": {
+        "CraftHaus": "https://www.crafthausbrewery.com/"
+      },
+      "angles": [
+        {
+          "interests": [
+            "food",
+            "coffee"
+          ],
+          "text": "Look for the descriptions of malt, hops and yeast. They are clues to flavour even if you are just passing by."
+        },
+        {
+          "interests": [
+            "culture",
+            "art"
+          ],
+          "text": "Compare the lettering on the brewery sign with the gallery signs you passed. Each maker needs a way to be noticed from the pavement."
+        }
+      ],
+      "point": [
+        36.157301520000004,
+        -115.15286036
+      ]
+    },
+    {
+      "name": "Able Baker Brewing",
+      "opening": "The last stop on this Main Street walk is a brewery whose name points back to Nevada’s atomic testing history.",
+      "sources": {
+        "Able Baker Brewing": "https://ablebakerbrewing.com/"
+      },
+      "angles": [
+        {
+          "interests": [
+            "history",
+            "unusual facts"
+          ],
+          "text": "Able and Baker were names used for early atomic tests. Here those words have found a second life on a neighbourhood brewery sign."
+        },
+        {
+          "interests": [
+            "food",
+            "culture"
+          ],
+          "text": "The name travels with the beer. Look for the same two words on the building, the tap list and the labels."
+        }
+      ],
+      "point": [
+        36.15303065,
+        -115.15411795
+      ]
+    }
+  ],
+  "starts": {
+    "Default": {
+      "order": [
+        0,
+        1,
+        2,
+        3,
+        4
+      ],
+      "path": [
+        [
+          36.1596403,
+          -115.1509845
+        ],
+        [
+          36.1594881,
+          -115.1509529
+        ],
+        [
+          36.1594093,
+          -115.1509216
+        ],
+        [
+          36.15931,
+          -115.1508822
+        ],
+        [
+          36.1591775,
+          -115.1508523
+        ],
+        [
+          36.1590299,
+          -115.1508465
+        ],
+        [
+          36.1590006,
+          -115.1508337
+        ],
+        [
+          36.1589778,
+          -115.1508095
+        ],
+        [
+          36.1589748,
+          -115.1508174
+        ],
+        [
+          36.1589764,
+          -115.150889
+        ],
+        [
+          36.158979,
+          -115.1510523
+        ],
+        [
+          36.1589797,
+          -115.1511055
+        ],
+        [
+          36.1589867,
+          -115.1511178
+        ],
+        [
+          36.1589737,
+          -115.151142
+        ],
+        [
+          36.1589601,
+          -115.1511619
+        ],
+        [
+          36.1589578,
+          -115.1514799
+        ],
+        [
+          36.158959,
+          -115.1516011
+        ],
+        [
+          36.1589713,
+          -115.1517317
+        ],
+        [
+          36.1589793,
+          -115.1517983
+        ],
+        [
+          36.1589825,
+          -115.1518623
+        ],
+        [
+          36.1589796,
+          -115.1519673
+        ],
+        [
+          36.1589793,
+          -115.1520247
+        ],
+        [
+          36.1589824,
+          -115.1520554
+        ],
+        [
+          36.158992,
+          -115.1520754
+        ],
+        [
+          36.1589879,
+          -115.1520936
+        ],
+        [
+          36.1589837,
+          -115.1521852
+        ],
+        [
+          36.1589788,
+          -115.1522619
+        ],
+        [
+          36.1589836,
+          -115.1522821
+        ],
+        [
+          36.1589742,
+          -115.1522964
+        ],
+        [
+          36.1589656,
+          -115.1523237
+        ],
+        [
+          36.1589592,
+          -115.1523862
+        ],
+        [
+          36.1589577,
+          -115.1524801
+        ],
+        [
+          36.1589563,
+          -115.152666
+        ],
+        [
+          36.1589553,
+          -115.1528475
+        ],
+        [
+          36.1589563,
+          -115.1533353
+        ],
+        [
+          36.1589601,
+          -115.1533951
+        ],
+        [
+          36.1589658,
+          -115.1534365
+        ],
+        [
+          36.1589824,
+          -115.1534559
+        ],
+        [
+          36.1589946,
+          -115.1534567
+        ],
+        [
+          36.1590179,
+          -115.1534505
+        ],
+        [
+          36.1590565,
+          -115.1534417
+        ],
+        [
+          36.1590984,
+          -115.153428
+        ],
+        [
+          36.159175383333334,
+          -115.15342326666666
+        ],
+        [
+          36.1590984,
+          -115.153428
+        ],
+        [
+          36.1590565,
+          -115.1534417
+        ],
+        [
+          36.1590179,
+          -115.1534505
+        ],
+        [
+          36.1589946,
+          -115.1534567
+        ],
+        [
+          36.1589824,
+          -115.1534559
+        ],
+        [
+          36.1589762,
+          -115.1534691
+        ],
+        [
+          36.158974,
+          -115.1535686
+        ],
+        [
+          36.1589727,
+          -115.1536275
+        ],
+        [
+          36.1589067,
+          -115.1536379
+        ],
+        [
+          36.1587655,
+          -115.1536603
+        ],
+        [
+          36.1587043,
+          -115.1536686
+        ],
+        [
+          36.1586856,
+          -115.1536938
+        ],
+        [
+          36.158554,
+          -115.1537044
+        ],
+        [
+          36.1582937,
+          -115.1537253
+        ],
+        [
+          36.1582524,
+          -115.1537286
+        ],
+        [
+          36.158218,
+          -115.15373
+        ],
+        [
+          36.1581004,
+          -115.1537345
+        ],
+        [
+          36.1576929,
+          -115.1537615
+        ],
+        [
+          36.1575698,
+          -115.1537682
+        ],
+        [
+          36.1575256,
+          -115.1537844
+        ],
+        [
+          36.1575296,
+          -115.1538992
+        ],
+        [
+          36.1575384,
+          -115.15406232
+        ],
+        [
+          36.1575296,
+          -115.1538992
+        ],
+        [
+          36.1575256,
+          -115.1537844
+        ],
+        [
+          36.1575112,
+          -115.1537897
+        ],
+        [
+          36.1574559,
+          -115.1537936
+        ],
+        [
+          36.1573644,
+          -115.1538
+        ],
+        [
+          36.1573128,
+          -115.1537755
+        ],
+        [
+          36.1573105,
+          -115.1537354
+        ],
+        [
+          36.1573071,
+          -115.1536926
+        ],
+        [
+          36.1573012,
+          -115.1536182
+        ],
+        [
+          36.1572986,
+          -115.1535738
+        ],
+        [
+          36.1573358,
+          -115.1535665
+        ],
+        [
+          36.15734,
+          -115.15352
+        ],
+        [
+          36.1573204,
+          -115.1530744
+        ],
+        [
+          36.1573076,
+          -115.153022
+        ],
+        [
+          36.157301520000004,
+          -115.15286036
+        ],
+        [
+          36.1573076,
+          -115.153022
+        ],
+        [
+          36.1573204,
+          -115.1530744
+        ],
+        [
+          36.15734,
+          -115.15352
+        ],
+        [
+          36.1573358,
+          -115.1535665
+        ],
+        [
+          36.1572986,
+          -115.1535738
+        ],
+        [
+          36.1573012,
+          -115.1536182
+        ],
+        [
+          36.1573071,
+          -115.1536926
+        ],
+        [
+          36.1573105,
+          -115.1537354
+        ],
+        [
+          36.1573128,
+          -115.1537755
+        ],
+        [
+          36.1562532,
+          -115.1538726
+        ],
+        [
+          36.1562001,
+          -115.1538946
+        ],
+        [
+          36.1561934,
+          -115.153895
+        ],
+        [
+          36.1561195,
+          -115.1538999
+        ],
+        [
+          36.156053,
+          -115.1539043
+        ],
+        [
+          36.1560246,
+          -115.1538855
+        ],
+        [
+          36.155353,
+          -115.1539282
+        ],
+        [
+          36.1549415,
+          -115.153972
+        ],
+        [
+          36.1548887,
+          -115.1539906
+        ],
+        [
+          36.1548788,
+          -115.1539913
+        ],
+        [
+          36.1548051,
+          -115.1539938
+        ],
+        [
+          36.1547354,
+          -115.1539962
+        ],
+        [
+          36.154685,
+          -115.153998
+        ],
+        [
+          36.1536209,
+          -115.1540632
+        ],
+        [
+          36.1536005,
+          -115.1540682
+        ],
+        [
+          36.1535886,
+          -115.154077
+        ],
+        [
+          36.1535733,
+          -115.1540934
+        ],
+        [
+          36.1535603,
+          -115.154094
+        ],
+        [
+          36.153493,
+          -115.154099
+        ],
+        [
+          36.1534226,
+          -115.1541042
+        ],
+        [
+          36.153403,
+          -115.1541049
+        ],
+        [
+          36.1533637,
+          -115.1541034
+        ],
+        [
+          36.1532333,
+          -115.1541039
+        ],
+        [
+          36.15303065,
+          -115.15411795
+        ]
+      ]
+    }
+  }
+}

@@ -2,6 +2,8 @@ import 'dart:async';
 import 'dart:convert';
 import 'dart:io';
 
+import '../preferences/story_preparation_preferences.dart';
+
 import 'ask_rover_models.dart';
 import 'adaptive_route_story_models.dart';
 import 'adaptation_models.dart';
@@ -28,16 +30,19 @@ class RoverApiClient {
   final RoverApiConfig config;
   final HttpClient _httpClient;
 
-  Future<Map<String, dynamic>> searchJourneyPlaces(String query) =>
-      _sendJson('GET', '/api/journey-lab/search?query=${Uri.encodeQueryComponent(query)}');
+  Future<Map<String, dynamic>> searchJourneyPlaces(String query) => _sendJson(
+    'GET',
+    '/api/journey-lab/search?query=${Uri.encodeQueryComponent(query)}',
+  );
 
   Future<Map<String, dynamic>> nearbyJourneyStops({
     required Map<String, double> location,
     required List<String> interests,
-  }) => _sendJson('POST', '/api/journey-lab/nearby', body: {
-    'location': location,
-    'interests': interests,
-  });
+  }) => _sendJson(
+    'POST',
+    '/api/journey-lab/nearby',
+    body: {'location': location, 'interests': interests},
+  );
 
   Future<Map<String, dynamic>> planJourney({
     required Map<String, double> start,
@@ -47,22 +52,37 @@ class RoverApiClient {
     required int minutes,
     required List<String> interests,
     String pace = 'Standard',
-  }) => _sendJson('POST', '/api/journey-lab/plan', body: {
-    'start': start,
-    'end': end,
-    'stops': stops,
-    'suggest': suggest,
-    'pace': pace,
-    'minutes': minutes,
-    'interests': interests,
-  }, responseTimeout: const Duration(seconds: 105));
+  }) => _sendJson(
+    'POST',
+    '/api/journey-lab/plan',
+    body: {
+      'start': start,
+      'end': end,
+      'stops': stops,
+      'suggest': suggest,
+      'pace': pace,
+      'minutes': minutes,
+      'interests': interests,
+    },
+    responseTimeout: const Duration(seconds: 105),
+  );
 
-  Future<Map<String, dynamic>> searchDrivePlaces(String query, double lat, double lng) =>
-    _sendJson('GET', '/api/drive-places?query=${Uri.encodeQueryComponent(query)}&lat=$lat&lng=$lng');
+  Future<Map<String, dynamic>> searchDrivePlaces(
+    String query,
+    double lat,
+    double lng,
+  ) => _sendJson(
+    'GET',
+    '/api/drive-places?query=${Uri.encodeQueryComponent(query)}&lat=$lat&lng=$lng',
+  );
 
   Future<Map<String, dynamic>> planScenicDrive(Map<String, dynamic> request) =>
-    _sendJson('POST', '/api/scenic-drives', body: request,
-      responseTimeout: const Duration(seconds: 210));
+      _sendJson(
+        'POST',
+        '/api/scenic-drives',
+        body: request,
+        responseTimeout: const Duration(seconds: 210),
+      );
 
   Future<StoryQuestionResponse> researchStoryQuestion(
     StoryQuestionRequest request,
@@ -222,10 +242,15 @@ class RoverApiClient {
     CreateWalkRequest request, {
     String? profileId,
   }) async {
-    final json = await _sendJson('POST', '/api/walks', body: {
-      ...request.toJson(),
-      if (request.profileId == null && profileId != null) 'profileId': profileId,
-    });
+    final json = await _sendJson(
+      'POST',
+      '/api/walks',
+      body: {
+        ...request.toJson(),
+        if (request.profileId == null && profileId != null)
+          'profileId': profileId,
+      },
+    );
     return WalkSession.fromJson(json);
   }
 
@@ -376,20 +401,54 @@ class RoverApiClient {
       'POST',
       '/api/location-story',
       body: request.toJson(),
+      responseTimeout: const Duration(seconds: 105),
     );
     return LocationStoryResponse.fromJson(json);
   }
 
+  Future<LocationStoryResponse> preparePlaceStory({
+    required String name,
+    required double latitude,
+    required double longitude,
+    required List<String> interests,
+    required String contentDepth,
+  }) async => LocationStoryResponse.fromJson(
+    await _sendJson(
+      'POST',
+      '/api/place-story',
+      body: {
+        'query': name,
+        'placeId': '',
+        'location': {'latitude': latitude, 'longitude': longitude},
+        'interests': interests,
+        'contentDepth': contentDepth,
+      },
+      responseTimeout: const Duration(seconds: 105),
+    ),
+  );
+
   Future<LocationStoryResponse> createDriveStopStory({
-    required String id, required String name, required double latitude, required double longitude, List<String>? interests, Map<String, double>? journeyStart, Map<String, double>? journeyEnd,
+    required String id,
+    required String name,
+    required double latitude,
+    required double longitude,
+    List<String>? interests,
+    Map<String, double>? journeyStart,
+    Map<String, double>? journeyEnd,
   }) async {
-    final json = await _sendJson('POST', '/api/drive-stop-story', body: {
-      if (interests != null) 'interests': interests,
-      if (journeyStart != null) 'journeyStart': journeyStart,
-      if (journeyEnd != null) 'journeyEnd': journeyEnd,
-      'placeId': id, 'query': name,
-      'location': {'latitude': latitude, 'longitude': longitude},
-    }, responseTimeout: const Duration(seconds: 105));
+    final json = await _sendJson(
+      'POST',
+      '/api/drive-stop-story',
+      body: {
+        if (interests != null) 'interests': interests,
+        if (journeyStart != null) 'journeyStart': journeyStart,
+        if (journeyEnd != null) 'journeyEnd': journeyEnd,
+        'placeId': id,
+        'query': name,
+        'location': {'latitude': latitude, 'longitude': longitude},
+      },
+      responseTimeout: const Duration(seconds: 105),
+    );
     return LocationStoryResponse.fromJson(json);
   }
 
@@ -583,10 +642,22 @@ class RoverApiClient {
     Map<String, Object?>? body,
     Duration? responseTimeout,
   }) async {
+    final isStoryPreparation =
+        method == 'POST' &&
+        (const {
+              '/api/location-story',
+              '/api/drive-stop-story',
+              '/api/place-story',
+              '/api/story-questions',
+              '/api/area-stories',
+            }.contains(path) ||
+            path.endsWith('/route-story-pack/generate'));
     final decoded = await _send(
       method,
       path,
-      body: body,
+      body: isStoryPreparation && body != null
+          ? StoryPreparationPreferences.apply(body)
+          : body,
       responseTimeout: responseTimeout,
     );
     if (decoded is Map<String, dynamic>) {

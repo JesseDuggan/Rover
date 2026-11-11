@@ -28,6 +28,7 @@ class _WalkaboutJourneyHostState extends State<WalkaboutJourneyHost> {
       final installationIds = InstallationIdRepository();
       _voice = RoverVoiceController(
         walkRepository: repository,
+        pictureLookup: WalkStoryPictures(),
         premiumVoice: RoverPremiumVoiceCoordinator(walkRepository: repository),
         onDeviceAiCoordinator: RoverOnDeviceAiScope.of(context),
         preferencesController: PreferencesScope.of(context),
@@ -641,27 +642,11 @@ class _WalkaboutWalkScreenState extends State<WalkaboutWalkScreen> with WidgetsB
             child: SingleChildScrollView(
               padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 4),
               child: AnimatedBuilder(
-                animation: journey.stories,
+                animation: journey.voice,
                 builder: (context, _) {
-                  final pack =
-                      journey.stories.pack?.walkSessionId ==
-                          session.apiWalkSessionId
-                      ? journey.stories.pack
-                      : null;
-                  final stop = session.arrivedAtCurrentStop
-                      ? session.recentNarrationStop ?? session.currentStop
-                      : session.currentStop;
-                  return StoryImages(
-                    compact: true,
-                    nearbyLocation: stop.coordinates,
-                    sourceUrls: [
-                      if (stop.sourceUrl != null) stop.sourceUrl!,
-                      for (final story
-                          in pack?.stories ?? <AdaptiveRouteStory>[])
-                        for (final source in story.sources)
-                          if (source.url != null) source.url!,
-                    ],
-                  );
+                  final pictures = journey.voice.currentPictures;
+                  return pictures.isEmpty ? const SizedBox.shrink()
+                      : PictureCarousel(pictures: pictures, compact: true);
                 },
               ),
             ),
@@ -991,9 +976,9 @@ class WalkaboutStoriesScreen extends StatelessWidget {
                                 IconButton(
                                   tooltip: 'Skip story',
                                   color: Colors.white,
-                                  onPressed: stories.isBusy
+                                  onPressed: stories.isBusy && !playing
                                       ? null
-                                      : () => stories.skipCurrent(session),
+                                      : () => stories.skipCurrent(session, voice),
                                   icon: const Icon(Icons.skip_next),
                                 ),
                                 IconButton(

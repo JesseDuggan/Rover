@@ -17,8 +17,11 @@ typedef Json = Map<String, dynamic>;
 
 class FakeJourneyApi extends RoverApiClient {
   @override
-  Future<Json> getStoryImages(List<String> sourceUrls, {double? latitude, double? longitude}) async =>
-      {'status': 'empty', 'images': <Json>[]};
+  Future<Json> getStoryImages(
+    List<String> sourceUrls, {
+    double? latitude,
+    double? longitude,
+  }) async => {'status': 'empty', 'images': <Json>[]};
 
   final requests = <List<Json>>[];
   final suggested = <bool>[];
@@ -79,12 +82,13 @@ class FakeJourneyApi extends RoverApiClient {
   ) async {
     if (disconnected) throw const HttpException('Connection aborted');
     return const StoryQuestionResponse(
-    status: 'empty',
-    scope: 'City',
-    format: 'Single',
-    answers: [],
-  );
+      status: 'empty',
+      scope: 'City',
+      format: 'Single',
+      answers: [],
+    );
   }
+
   @override
   Future<LocationStoryResponse> createDriveStopStory({
     required String id,
@@ -145,7 +149,7 @@ class FakeJourneyApi extends RoverApiClient {
 
 void main() {
   testWidgets(
-    'Symphony research keeps the sourced venue history when the follow-up is empty',
+    'Selected places play the shared server story without a city-specific replacement',
     (tester) async {
       final api = FakeJourneyApi();
       addTearDown(() => api.close(force: true));
@@ -193,7 +197,9 @@ void main() {
       await tester.pumpWidget(
         PreferencesScope(
           controller: PreferencesController(MemoryPreferencesRepository()),
-          child: MaterialApp(home: JourneyLabScreen(client: api)),
+          child: MaterialApp(
+            home: JourneyLabScreen(client: api, useTestMap: true),
+          ),
         ),
       );
       Future<void> press(String name) async {
@@ -208,8 +214,7 @@ void main() {
       await press('Open copied replay');
       await press('Generate journey stories');
       await press('Play story');
-      expect(spoken.last, contains('Roy Thomson Hall'));
-      expect(spoken.last, contains('Massey Hall'));
+      expect(spoken.last, 'Museum story.');
       expect(find.textContaining('Longest quiet stretch:'), findsOneWidget);
     },
   );
@@ -281,19 +286,22 @@ void main() {
       await tester.pumpWidget(
         PreferencesScope(
           controller: PreferencesController(MemoryPreferencesRepository()),
-          child: MaterialApp(home: JourneyLabScreen(client: api)),
+          child: MaterialApp(
+            home: JourneyLabScreen(client: api, useTestMap: true),
+          ),
         ),
       );
       Future<void> press(String name) async {
         final button = find.text(name);
         if (button.evaluate().isEmpty) {
-          await tester.scrollUntilVisible(
-            button,
-            350,
-            scrollable: find.byType(Scrollable).first,
-          );
+          final position = tester
+              .state<ScrollableState>(find.byType(Scrollable).first)
+              .position;
+          position.jumpTo(position.maxScrollExtent);
+          await tester.pump();
         }
-        await tester.ensureVisible(button);
+        await Scrollable.ensureVisible(tester.element(button), alignment: 0.5);
+        await tester.pump();
         await tester.tap(button);
         for (var i = 0; i < 8; i++) {
           await tester.pump(const Duration(milliseconds: 100));
@@ -327,12 +335,15 @@ void main() {
       await tester.pumpWidget(
         PreferencesScope(
           controller: PreferencesController(MemoryPreferencesRepository()),
-          child: MaterialApp(home: JourneyLabScreen(client: api)),
+          child: MaterialApp(
+            home: JourneyLabScreen(client: api, useTestMap: true),
+          ),
         ),
       );
       Future<void> press(String text) async {
         final finder = find.text(text);
-        await tester.ensureVisible(finder);
+        await Scrollable.ensureVisible(tester.element(finder), alignment: 0.5);
+        await tester.pump();
         await tester.tap(finder);
         await tester.pump();
         await tester.pump(const Duration(milliseconds: 500));
@@ -407,7 +418,10 @@ void main() {
       expect(spoken, isEmpty);
       api.disconnected = true;
       await press('Generate journey stories');
-      expect(find.textContaining('Story research was interrupted.'), findsOneWidget);
+      expect(
+        find.textContaining('Story research was interrupted.'),
+        findsOneWidget,
+      );
       expect(api.receivedJourney, isFalse);
       api.disconnected = false;
       await press('Generate journey stories');
@@ -424,6 +438,8 @@ void main() {
       spoken.clear();
       await press('Play story');
       expect(spoken, ['Museum story.']);
+      position.jumpTo(position.maxScrollExtent);
+      await tester.pump();
       expect(find.text('Story finished.'), findsOneWidget);
       await press('Check story gaps');
       await press('Why places were skipped');

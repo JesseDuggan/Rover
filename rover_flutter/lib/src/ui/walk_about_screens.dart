@@ -12,6 +12,7 @@ import '../maps/rover_map_view.dart';
 import '../preferences/preferences_controller.dart';
 import '../preferences/rover_preferences.dart';
 import 'walk_about_theme.dart';
+import 'explore_tours.dart';
 import 'placeholder_screens.dart' show WalkaboutJourneyScope;
 import 'tell_here_screen.dart';
 import '../drives/scenic_drive.dart';
@@ -385,6 +386,12 @@ class _WalkHomeScreenState extends State<WalkHomeScreen> {
             padding: const EdgeInsets.all(22),
             children: [
               const WalkHeading('Create your walk'),
+              Align(alignment: Alignment.centerLeft, child: FilledButton.icon(
+                icon: const Icon(Icons.explore_outlined),
+                label: const Text('Explore Tours'),
+                onPressed: () => Navigator.of(context).push(MaterialPageRoute<void>(
+                  builder: (_) => const ExploreToursScreen())),
+              )),
               Align(alignment: Alignment.centerLeft, child: OutlinedButton.icon(
                 onPressed: _busy ? null : _openDrive,
                 icon: const Icon(Icons.directions_car_outlined),

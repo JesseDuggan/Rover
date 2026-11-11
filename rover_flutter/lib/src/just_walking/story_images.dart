@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'package:flutter/material.dart';
 import 'package:url_launcher/url_launcher.dart';
 
@@ -71,6 +72,57 @@ class StoryPicture {
       provider: europeana ? 'Europeana' : 'Wikimedia Commons',
       isArchive: europeana,
     );
+  }
+}
+
+const storyPictureCue = 'There is a picture for this story on your phone.';
+
+bool illustratesStory(StoryPicture p, String title) {
+  if (!p.isNearby) return true;
+  String normalize(String text) => text.toLowerCase()
+      .replaceAll(RegExp(r'[^\p{L}\p{N}]+', unicode: true), ' ').trim();
+  final name = normalize(title);
+  return name.length >= 3 && (' ' + normalize(p.caption) + ' ').contains(' $name ');
+}
+
+Future<bool> storyPhotoReady(StoryPicture picture) async {
+  final stream = NetworkImage(picture.url).resolve(ImageConfiguration.empty);
+  final ready = Completer<bool>();
+  final listener = ImageStreamListener((image, _) {
+    image.dispose();
+    if (!ready.isCompleted) ready.complete(true);
+  }, onError: (Object _, StackTrace? __) {
+    if (!ready.isCompleted) ready.complete(false);
+  });
+  stream.addListener(listener);
+  try {
+    return await ready.future.timeout(const Duration(seconds: 8), onTimeout: () => false);
+  } finally {
+    stream.removeListener(listener);
+  }
+}
+
+class WalkStoryPictures {
+  final _pending = <Object, Future<List<StoryPicture>>>{};
+
+  Future<List<StoryPicture>> find(String title, List<String> urls,
+      double latitude, double longitude) {
+    final sources = urls.where(supportedPictureSource).toSet().take(6).toList();
+    final key = (title, sources.join(' '), latitude, longitude);
+    if (_pending.length >= 48 && !_pending.containsKey(key)) _pending.remove(_pending.keys.first);
+    return _pending.putIfAbsent(key, () async {
+      final api = RoverApiClient();
+      try {
+        final result = await api.getStoryImages(sources, latitude: latitude, longitude: longitude);
+        return (result['images'] as List? ?? []).whereType<Map<String, dynamic>>()
+            .map(StoryPicture.parse).whereType<StoryPicture>()
+            .where((p) => illustratesStory(p, title)).take(3).toList();
+      } catch (_) {
+        return [];
+      } finally {
+        api.close(force: true);
+      }
+    });
   }
 }
 

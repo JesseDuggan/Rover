@@ -14,6 +14,7 @@ import '../api/walk_repository.dart';
 import '../adventure/roam.dart';
 import '../diagnostics/field_diagnostics.dart';
 import '../location/rover_location.dart';
+import '../just_walking/story_images.dart';
 import '../on_device_ai/rover_on_device_ai_coordinator.dart';
 import '../preferences/preferences_controller.dart';
 import 'rover_audio_services.dart';
@@ -40,6 +41,7 @@ class RoverVoiceController extends ChangeNotifier {
 
   RoverVoiceController({
     required this.walkRepository,
+    this.pictureLookup,
     RoverTextToSpeech? textToSpeech,
     RoverSpeechRecognizer? speechRecognizer,
     RoverAudioSessionCoordinator? audioSession,
@@ -58,6 +60,35 @@ class RoverVoiceController extends ChangeNotifier {
        _interactionProfileIdResolver = interactionProfileIdResolver,
        _onArrivalNarrated = onArrivalNarrated,
        _adaptiveRouteStoriesEnabled = adaptiveRouteStoriesEnabled;
+
+  final WalkStoryPictures? pictureLookup;
+  List<StoryPicture> currentPictures = const [];
+  int _pictureTurn = 0;
+  RoverStop? _narrationPictureStop;
+
+  void _showPictures(Future<List<StoryPicture>>? request) {
+    final turn = ++_pictureTurn;
+    currentPictures = const [];
+    if (request == null) return;
+    unawaited(() async {
+      for (final picture in await request) {
+        if (_isDisposed || turn != _pictureTurn) return;
+        if (!await storyPhotoReady(picture)) continue;
+        if (_isDisposed || turn != _pictureTurn) return;
+        currentPictures = [picture];
+        _notify();
+        return;
+      }
+    }());
+  }
+
+  Future<List<StoryPicture>>? _stopPictures(RoverStop stop) =>
+      pictureLookup?.find(stop.name, [if (stop.sourceUrl != null) stop.sourceUrl!],
+          stop.coordinates.latitude, stop.coordinates.longitude);
+
+  Future<List<StoryPicture>>? _adaptivePictures(AdaptiveRouteStory story) =>
+      pictureLookup?.find(story.title, story.sources.map((s) => s.url).whereType<String>().toList(),
+          story.relevanceLatitude, story.relevanceLongitude);
 
   final WalkRepository walkRepository;
   final RoverTextToSpeech _textToSpeech;
@@ -307,6 +338,7 @@ class RoverVoiceController extends ChangeNotifier {
       );
     }
 
+    _stopPictures(session.currentStop);
     unawaited(_prefetchUpcomingNarration(session));
 
     if (arrivalStop != null && walkSessionId != null) {
@@ -663,6 +695,7 @@ class RoverVoiceController extends ChangeNotifier {
     _arrivalNarrationStopKey = null;
     _activeNarrationStopId = stop.id;
     _activeNarrationAudioCacheEligible = _stopAudioCacheEligible(stop);
+    _narrationPictureStop = stop;
     _narrationSegments = _segmentsFor(stop);
     _segmentIndex = 0;
     _captionText = _narrationSegments.join(' ');
@@ -763,6 +796,7 @@ class RoverVoiceController extends ChangeNotifier {
     await _textToSpeech.stop();
     _activeNarrationStopId = stop.id;
     _activeNarrationAudioCacheEligible = _stopAudioCacheEligible(stop);
+    _narrationPictureStop = stop;
     _narrationSegments = _segmentsFor(
       stop,
       withArrivalAnnouncement: withArrivalAnnouncement,
@@ -773,6 +807,7 @@ class RoverVoiceController extends ChangeNotifier {
   }
 
   Future<void> stopAll() async {
+    _showPictures(null);
     _pausedNarrationStopId = null;
     _playbackGeneration++;
     _activeScheduledStory = null;
@@ -1048,6 +1083,7 @@ class RoverVoiceController extends ChangeNotifier {
         (story.expiresUtc?.isAfter(DateTime.now().toUtc()) == false)) {
       return;
     }
+    _adaptivePictures(story);
     final variants = story.variants
         .where(
           (variant) =>
@@ -1125,6 +1161,7 @@ class RoverVoiceController extends ChangeNotifier {
     playback.userPaused = false;
     if (playback.segments.isEmpty) return AdaptiveStoryPlaybackResult.blocked;
     final cacheSuffix = playback.selection.fromPlannedWalk ? "-planned" : "";
+    _showPictures(_adaptivePictures(selection.story));
     final cancelled = playback.startAttempt();
     _activeAdaptiveStory = playback;
     _errorMessage = null;
@@ -1184,6 +1221,10 @@ class RoverVoiceController extends ChangeNotifier {
               : AdaptiveStoryPlaybackResult.interrupted;
         }
         playback.segmentIndex++;
+        if (currentPictures.isNotEmpty && playback.segmentIndex == playback.segments.length &&
+            playback.segments.last != storyPictureCue) {
+          playback.segments.add(storyPictureCue);
+        }
       }
       return AdaptiveStoryPlaybackResult.completed;
     } catch (_) {
@@ -1204,6 +1245,15 @@ class RoverVoiceController extends ChangeNotifier {
       if (identical(_activeAdaptiveStory, playback)) {
         _activeAdaptiveStory = null;
       }
+    }
+  }
+
+  Future<void> discardAdaptiveStory(String id) async {
+    if (_activeAdaptiveStory?.selection.story.storyId == id) {
+      await _interruptAdaptiveStory('stop skipped');
+    }
+    if (_interruptedAdaptiveStory?.selection.story.storyId == id) {
+      _interruptedAdaptiveStory = null;
     }
   }
 
@@ -1355,6 +1405,7 @@ class RoverVoiceController extends ChangeNotifier {
     }
 
     final playbackGeneration = ++_playbackGeneration;
+    if (_narrationPictureStop case final stop?) _showPictures(_stopPictures(stop));
     _activeAudioPriority = _arrivalPriority;
     _setState(RoverAudioState.preparingNarration);
     await _audioSession.configure();
@@ -1410,6 +1461,10 @@ class RoverVoiceController extends ChangeNotifier {
       }
       if (_state == RoverAudioState.speakingNarration) {
         _segmentIndex++;
+        if (currentPictures.isNotEmpty && _segmentIndex == _narrationSegments.length &&
+            _narrationSegments.last != storyPictureCue) {
+          _narrationSegments = [..._narrationSegments, storyPictureCue];
+        }
       }
     }
     if (_state == RoverAudioState.speakingNarration) {

@@ -331,6 +331,14 @@ class AdaptiveRouteStoryController extends ChangeNotifier {
   ) async {
     _latestSession = session;
     _walkingGap.observe(session, _nowUtc());
+    final current = _currentSelection;
+    if (!_disposed && _walkSessionId == session.apiWalkSessionId &&
+        current != null && _belongsToSkippedStop(current.story, session)) {
+      _currentSelection = null;
+      _manualSelection = false;
+      _lastSelectionProgressMeters = null;
+      await voiceController.discardAdaptiveStory(current.story.storyId);
+    }
     if (_disposed ||
         session.storyTimeExpired(_nowUtc()) ||
         !enabled ||
@@ -398,7 +406,10 @@ class AdaptiveRouteStoryController extends ChangeNotifier {
         return; // The walker explicitly paused this story.
       }
       final story = interruptedStory.story;
-      final stillRelevant = !session.isOffRoute || session.hasReliableStoryFix;
+      final stillRelevant = session.isOffRoute
+          ? session.hasReliableStoryFix && (interruptedStory.fromPlannedWalk ||
+              session.isNearStoryAnchor(story.relevanceLatitude, story.relevanceLongitude))
+          : progressMeters <= story.playbackWindowEnd + _catchUpMeters;
       if (!_isExcluded(story) &&
           (pack?.expiresUtc.isAfter(now) ?? false) &&
           (story.expiresUtc?.isAfter(now) ?? true) &&
@@ -410,6 +421,7 @@ class AdaptiveRouteStoryController extends ChangeNotifier {
         }
         return;
       }
+      await voiceController.discardAdaptiveStory(story.storyId);
       // A stale interruption must not monopolize future selection or research.
       _currentSelection = null;
       _manualSelection = false;
@@ -656,7 +668,12 @@ class AdaptiveRouteStoryController extends ChangeNotifier {
         : 'In playback window';
   }
 
+  bool _belongsToSkippedStop(AdaptiveRouteStory story, RoamSession session) =>
+      session.roam.stops.any((stop) => session.skippedStopIds.contains(stop.id) &&
+          (stop.id == story.placeId || stop.providerPlaceId == story.placeId));
+
   bool _isExcluded(AdaptiveRouteStory story) =>
+      (_latestSession != null && _belongsToSkippedStop(story, _latestSession!)) ||
       _completedStoryIds.contains(story.storyId) ||
       (_packState?.heardStoryIds.contains(story.storyId) ?? false) ||
       const {
@@ -739,11 +756,13 @@ class AdaptiveRouteStoryController extends ChangeNotifier {
             'story=${selection.story.storyId} intent=${selection.story.intent}',
       );
       await _record(walkSessionId, selection.story.storyId, 'Started');
+      if (!identical(_currentSelection, selection)) return;
       final result = await voiceController.playAdaptiveRouteStoryWithResult(
         selection,
         session,
         userRequested: userRequested,
       );
+      if (!identical(_currentSelection, selection)) return;
       if (result == AdaptiveStoryPlaybackResult.blocked) {
         _localPlaybackStates[selection.story.storyId] = 'Waiting';
       } else if (result == AdaptiveStoryPlaybackResult.paused) {
@@ -807,9 +826,15 @@ class AdaptiveRouteStoryController extends ChangeNotifier {
     await playCurrent(session, voiceController);
   }
 
-  Future<void> skipCurrent(RoamSession session) async {
+  Future<void> skipCurrent(RoamSession session, [RoverVoiceController? voice]) async {
     final selection = _currentSelection;
     if (selection == null) return;
+    _currentSelection = null;
+    _manualSelection = false;
+    _lastSelectionProgressMeters = null;
+    _localPlaybackStates[selection.story.storyId] = 'Skipped';
+    _notify();
+    await voice?.discardAdaptiveStory(selection.story.storyId);
     await _record(session.apiWalkSessionId, selection.story.storyId, 'Skipped');
     FieldDiagnostics.instance.record(
       'route-story',
@@ -817,7 +842,6 @@ class AdaptiveRouteStoryController extends ChangeNotifier {
           'offline=$_usingOfflinePack',
     );
     await _refreshStateAfterEvent(session);
-    _currentSelection = null;
     _notify();
   }
 
@@ -991,6 +1015,8 @@ class AdaptiveRouteStoryController extends ChangeNotifier {
       excludedStoryIds: {
         ..._completedStoryIds,
         ...?packState?.heardStoryIds,
+        for (final story in pack?.stories ?? const <AdaptiveRouteStory>[])
+          if (_isExcluded(story)) story.storyId,
       }.toList(),
     );
     AdaptiveRouteStorySelection? selection;

@@ -56,7 +56,7 @@ void main() {
     }
   });
 
-  test('map provider prefers Google and retains explicit Mapbox fallback', () {
+  test('map provider uses Google for all configured production maps', () {
     const mock = RoverMapProvider(
       google: GoogleMapsConfig(apiKey: ''),
       mapbox: MapboxConfig(publicToken: ''),
@@ -77,8 +77,8 @@ void main() {
 
     expect(mock.mockMode, isTrue);
     expect(googleBacked.mode, RoverMapMode.google);
-    expect(mapboxFallback.mode, RoverMapMode.mapbox);
-    expect(forcedMapbox.mode, RoverMapMode.mapbox);
+    expect(mapboxFallback.mode, RoverMapMode.development);
+    expect(forcedMapbox.mode, RoverMapMode.google);
     expect(mock.developmentMessage, contains('GOOGLE_MAPS_ANDROID_API_KEY'));
   });
 }

@@ -1,13 +1,16 @@
 import 'dart:async';
 
 import 'package:flutter/material.dart';
-import 'package:flutter_map/flutter_map.dart';
+import '../adventure/roam.dart';
+import 'journey_coverage.dart';
+import '../maps/rover_map_view.dart';
 import 'package:latlong2/latlong.dart';
 import 'package:url_launcher/url_launcher.dart';
 
 import '../location/rover_location.dart';
 import '../voice/rover_audio_services.dart';
 import '../voice/spoken_location.dart';
+import '../just_walking/story_images.dart';
 
 class WalkAnswer {
   const WalkAnswer(this.text, this.sources);
@@ -15,20 +18,86 @@ class WalkAnswer {
   final Map<String, String> sources;
 }
 
+class TourPhoto {
+  const TourPhoto({required this.asset, required this.caption, required this.author,
+    required this.license, required this.source, required this.licenseUrl});
+  final String asset, caption, author, license, source, licenseUrl;
+  String get cue => 'On your phone, you can see $caption.';
+
+  Future<void> open(BuildContext context) => showDialog<void>(
+    context: context,
+    builder: (ctx) => Dialog.fullscreen(child: Scaffold(
+      appBar: AppBar(automaticallyImplyLeading: false, title: const Text('Story photo'),
+        actions: [IconButton(tooltip: 'Close photo', icon: const Icon(Icons.close),
+          onPressed: () => Navigator.pop(ctx))]),
+      body: SafeArea(child: Column(children: [
+        Expanded(child: InteractiveViewer(child: Center(child: Image.asset(asset,
+          fit: BoxFit.contain, semanticLabel: caption)))),
+        Padding(padding: const EdgeInsets.symmetric(horizontal: 16),
+          child: Text(caption, textAlign: TextAlign.center)),
+        Wrap(alignment: WrapAlignment.center, children: [
+          TextButton(onPressed: () => launchUrl(Uri.parse(source)), child: Text(author)),
+          TextButton(onPressed: () => launchUrl(Uri.parse(licenseUrl)), child: Text(license)),
+        ]),
+      ])),
+    )),
+  );
+}
+
 class PreparedStop {
-  const PreparedStop(this.name, this.point, this.story, {this.answer});
+  const PreparedStop(this.name, this.point, this.story, {this.optional = false, this.answer, this.photo, this.pictures = const []});
   final String name;
   final LatLng point;
   final WalkAnswer story;
   final WalkAnswer? answer;
+  final bool optional;
+  final TourPhoto? photo;
+  final List<StoryPicture> pictures;
 }
 
 class PreparedWalk {
-  const PreparedWalk(this.title, this.path, this.stops, {this.theme});
+  const PreparedWalk(this.title, this.path, this.stops, {this.theme, this.orderedChapters = false});
   final String? theme;
+  final bool orderedChapters;
   final String title;
   final List<LatLng> path;
   final List<PreparedStop> stops;
+}
+
+RoverRoam preparedRoute(PreparedWalk walk, {String summary = '', String id = 'stop'}) {
+  RoverLatLng coordinate(LatLng point) =>
+      RoverLatLng(latitude: point.latitude, longitude: point.longitude);
+  final line = walk.path.map(coordinate).toList();
+  var meters = 0.0;
+  for (var i = 1; i < line.length; i++) {
+    meters += line[i - 1].distanceTo(line[i]);
+  }
+  return RoverRoam(
+      title: walk.title,
+      summary: summary,
+      walkingMinutes: (meters / 75).ceil(),
+      distanceMiles: meters / 1609.344,
+      startingPoint: walk.stops.first.name,
+      routeGeometry: line,
+      routeProvider: summary.isEmpty ? 'Prepared route' : 'OpenStreetMap contributors',
+      accessibilityNotes: const [],
+      warnings: const [],
+      stops: [
+        for (final (i, stop) in walk.stops.indexed)
+          RoverStop(
+            id: '$id-$i',
+            name: stop.name,
+            image: '',
+            shortDescription: stop.story.text,
+            estimatedVisitMinutes: 2,
+            coordinates: coordinate(stop.point),
+            category: 'Tour stop',
+            whySelected: walk.title,
+            narration: stop.story.text,
+            sourceUrl: stop.story.sources.values.firstOrNull,
+          ),
+      ],
+    );
 }
 
 // Fixed street-level rehearsal line. The trigger marks the theatre frontage.
@@ -102,10 +171,14 @@ class PreparedWalkScreen extends StatefulWidget {
     required this.walk,
     required this.research,
     this.followUp,
+    this.onMemories,
+    this.onCapture,
     this.voice,
     this.location = const GeolocatorLocationProvider(),
   });
   final PreparedWalk walk;
+  final VoidCallback? onMemories;
+  final VoidCallback? onCapture;
   final Future<WalkAnswer?> Function(PreparedStop) research;
   final Future<WalkAnswer?> Function(PreparedStop, String)? followUp;
   final RoverTextToSpeech? voice;
@@ -115,6 +188,7 @@ class PreparedWalkScreen extends StatefulWidget {
 }
 
 class _PreparedWalkState extends State<PreparedWalkScreen> {
+  late final mappedRoute = preparedRoute(widget.walk);
   late final voice = widget.voice ?? DeviceTextToSpeech();
   final distance = const Distance();
   _Phase phase = _Phase.ready;
@@ -126,7 +200,10 @@ class _PreparedWalkState extends State<PreparedWalkScreen> {
   final heard = <PreparedStop>{};
   final completed = <PreparedStop>[];
   final skipped = <PreparedStop>{};
-  int sentence = 0, speechTurn = 0;
+  final checkpoints = <PreparedStop, int>{};
+  final passages = <PreparedStop, List<String>>{};
+  late final coverage = JourneyCoverage(widget.walk.path);
+  int speechTurn = 0;
   bool get trail => widget.walk.theme != null;
   int segment = 0, epoch = 0;
   PreparedStop? subject;
@@ -159,6 +236,8 @@ class _PreparedWalkState extends State<PreparedWalkScreen> {
       segment = 0;
       approachedFinish = false;
       heard.clear();
+      checkpoints.clear();
+      passages.clear();
       completed.clear();
       skipped.clear();
       subject = null;
@@ -255,15 +334,32 @@ class _PreparedWalkState extends State<PreparedWalkScreen> {
   }
 
   void advance(LatLng position) {
-    if (phase != _Phase.walking) return;
+    if (phase != _Phase.walking && phase != _Phase.story && phase != _Phase.question) return;
     setState(() => point = position);
     if (distance(point, widget.walk.path.last) > 40) approachedFinish = true;
-    final stop = widget.walk.stops
-        .where((s) => !heard.contains(s) && distance(point, s.point) <= 40)
-        .firstOrNull;
+    final remaining = widget.walk.stops.where((s) => !heard.contains(s));
+    final eligible = widget.walk.orderedChapters ? remaining.take(1) : remaining;
+    final arrival = eligible.where((s) => distance(point, s.point) <= 40).firstOrNull;
+    if (phase != _Phase.walking) {
+      if (!live || subject == null) return;
+      if (phase == _Phase.question && approachedFinish && distance(point, widget.walk.path.last) <= 25) {
+        resumeWalk();
+        return;
+      }
+      if (distance(point, subject!.point) <= 55) return;
+      if (arrival != null || phase == _Phase.question) unawaited(changeStop());
+      return;
+    }
+    final interrupted = checkpoints.keys.where((s) =>
+        !skipped.contains(s) && distance(point, s.point) <= 250).lastOrNull;
+    PreparedStop? stop = arrival ?? interrupted;
+    if (stop == null && live && coverage.project(point).away >= 50) {
+      final nearby = eligible.where((s) => distance(point, s.point) <= 250).toList()
+        ..sort((a, b) => distance(point, a.point).compareTo(distance(point, b.point)));
+      stop = nearby.firstOrNull;
+    }
     if (stop != null) {
       heard.add(stop);
-      sentence = 0;
       unawaited(tell(stop));
     } else if (live
         ? approachedFinish && distance(point, widget.walk.path.last) <= 25
@@ -280,6 +376,15 @@ class _PreparedWalkState extends State<PreparedWalkScreen> {
     }
   }
 
+  Future<void> changeStop() async {
+    final ticket = epoch;
+    speechTurn++;
+    questionWindow?.cancel();
+    setState(() => phase = _Phase.locating);
+    await voice.stop();
+    if (valid(ticket)) resumeWalk();
+  }
+
   Future<void> tell(PreparedStop stop) async {
     final ticket = epoch;
     final turn = ++speechTurn;
@@ -289,25 +394,34 @@ class _PreparedWalkState extends State<PreparedWalkScreen> {
       phase = _Phase.story;
       notice = '';
     });
+    bool ready = false;
+    if (stop.pictures.isNotEmpty) {
+      unawaited(storyPhotoReady(stop.pictures.first).then((value) { ready = value; }));
+    }
     try {
-      if (trail) {
-        final parts = [
-          if (completed.isNotEmpty)
-            'From ${completed.last.name}, we move on to ${stop.name}.',
-          ...stop.story.text.split(RegExp(r'(?<=[.!?])\s+')),
-        ];
-        while (sentence < parts.length) {
-          await voice.speak(parts[sentence]);
-          if (!valid(ticket) || turn != speechTurn) return;
-          sentence++;
-        }
-        completed.add(stop);
-      } else {
-        await voice.speak(stop.story.text);
+      final parts = passages.putIfAbsent(stop, () => [
+        if (distance(point, stop.point) > 40)
+          'Nearby on your planned walk is ${stop.name}.'
+        else if (trail && completed.isNotEmpty)
+          'From ${completed.last.name}, we move on to ${stop.name}.',
+        if (stop.photo case final photo?) photo.cue,
+        ...stop.story.text.split(RegExp(r'(?<=[.!?])\s+')),
+      ]);
+      var sentence = checkpoints[stop] ?? 0;
+      checkpoints[stop] = sentence;
+      while (sentence < parts.length) {
+        await voice.speak(parts[sentence]);
+        if (!valid(ticket) || turn != speechTurn) return;
+        checkpoints[stop] = ++sentence;
       }
+      checkpoints.remove(stop);
+      completed.add(stop);
+      if (ready && valid(ticket) && turn == speechTurn) await voice.speak(storyPictureCue);
     } catch (_) {
-      if (valid(ticket) && phase == _Phase.story)
+      if (valid(ticket) && turn == speechTurn && phase == _Phase.story) {
+        checkpoints.remove(stop);
         setState(() => notice = 'Audio unavailable. The story is shown below.');
+      }
     }
     if (!valid(ticket) || turn != speechTurn || phase != _Phase.story) return;
     setState(() => phase = _Phase.question);
@@ -324,6 +438,7 @@ class _PreparedWalkState extends State<PreparedWalkScreen> {
     speechTurn++;
     questionWindow?.cancel();
     heard.add(stop);
+    checkpoints.remove(stop);
     if (!completed.contains(stop)) skipped.add(stop);
     setState(() => phase = _Phase.locating);
     await voice.stop();
@@ -386,7 +501,7 @@ class _PreparedWalkState extends State<PreparedWalkScreen> {
         setState(() => notice = 'Question lookup was unavailable.');
     } finally {
       if (valid(ticket)) {
-        if (interrupted) {
+        if (interrupted && (!live || distance(lastFix ?? point, stop.point) <= 250)) {
           unawaited(tell(stop));
         } else {
           resumeWalk();
@@ -400,6 +515,8 @@ class _PreparedWalkState extends State<PreparedWalkScreen> {
     if (stop == null || !(phase == _Phase.story || phase == _Phase.question))
       return;
     final ticket = epoch;
+    final interrupted = phase == _Phase.story;
+    speechTurn++;
     questionWindow?.cancel();
     setState(() {
       phase = _Phase.answer;
@@ -421,7 +538,13 @@ class _PreparedWalkState extends State<PreparedWalkScreen> {
       if (valid(ticket))
         setState(() => notice = 'The answer could not finish.');
     } finally {
-      if (valid(ticket)) resumeWalk();
+      if (valid(ticket)) {
+        if (interrupted && (!live || distance(lastFix ?? point, stop.point) <= 250)) {
+          unawaited(tell(stop));
+        } else {
+          resumeWalk();
+        }
+      }
     }
   }
 
@@ -437,52 +560,31 @@ class _PreparedWalkState extends State<PreparedWalkScreen> {
     final choosing = phase == _Phase.ready || phase == _Phase.done;
     final asking = phase == _Phase.story || phase == _Phase.question;
     return Scaffold(
-      appBar: AppBar(title: Text(walk.title)),
+      appBar: AppBar(title: Text(walk.title), actions: [
+        if (widget.onMemories != null)
+          IconButton(onPressed: widget.onMemories, tooltip: 'Walk Memories',
+            icon: const Icon(Icons.photo_library_outlined)),
+      ]),
+      bottomNavigationBar: widget.onCapture == null ? null : SafeArea(
+        child: Padding(padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 6),
+          child: FilledButton.icon(onPressed: widget.onCapture, icon: const Icon(Icons.add_a_photo_outlined),
+            label: const Text('Take photo or video')))),
       body: ListView(
         padding: const EdgeInsets.all(16),
         children: [
-          SizedBox(
-            height: 245,
-            child: FlutterMap(
-              options: MapOptions(
-                initialCameraFit: CameraFit.coordinates(
-                  coordinates: walk.path,
-                  padding: const EdgeInsets.all(30),
-                  maxZoom: 17,
-                ),
-              ),
-              children: [
-                TileLayer(
-                  urlTemplate: 'https://tile.openstreetmap.org/{z}/{x}/{y}.png',
-                  userAgentPackageName: 'ai.myrover.rover',
-                ),
-                PolylineLayer(
-                  polylines: [
-                    Polyline(
-                      points: walk.path,
-                      strokeWidth: 5,
-                      color: Colors.indigo,
-                    ),
-                  ],
-                ),
-                MarkerLayer(
-                  markers: [
-                    for (final s in walk.stops)
-                      Marker(
-                        point: s.point,
-                        child: const Icon(Icons.headphones),
-                      ),
-                    Marker(
-                      point: point,
-                      child: const Icon(Icons.navigation, color: Colors.blue),
-                    ),
-                  ],
-                ),
-                const SimpleAttributionWidget(
-                  source: Text('OpenStreetMap contributors'),
-                ),
-              ],
+          if (subject != null && subject!.pictures.isNotEmpty)
+            PictureCarousel(pictures: subject!.pictures, compact: true),
+          if ((asking || phase == _Phase.answer) && subject?.photo != null)
+            TextButton.icon(
+              icon: SizedBox(width: 110, height: 72, child: Image.asset(subject!.photo!.asset, fit: BoxFit.cover)),
+              label: Text('View photo · ${subject!.photo!.caption}'),
+              onPressed: () => subject!.photo!.open(context),
             ),
+          RoverMapView(
+            height: 245,
+            overview: choosing,
+            currentLocation: RoverLatLng(latitude: point.latitude, longitude: point.longitude),
+            routeGeometry: mappedRoute.routeGeometry, orderedStops: mappedRoute.orderedStops,
           ),
           if (identical(walk, bloorRehearsal))
             const ListTile(
@@ -502,6 +604,10 @@ class _PreparedWalkState extends State<PreparedWalkScreen> {
                 ListTile(
                   leading: Text('${i + 1}'),
                   title: Text(s.name),
+                  trailing: s.photo == null ? null : IconButton(
+                    tooltip: 'View photo of ${s.name}', icon: const Icon(Icons.image_outlined),
+                    onPressed: () => s.photo!.open(context)),
+
                   subtitle: Text(
                     s.story.text,
                     maxLines: 2,
@@ -521,7 +627,7 @@ class _PreparedWalkState extends State<PreparedWalkScreen> {
             ),
             OutlinedButton(
               onPressed: () => start(true),
-              child: const Text('Test on foot with GPS'),
+              child: Text(widget.onMemories == null ? 'Test on foot with GPS' : 'Start walking with GPS'),
             ),
           ] else ...[
             Text(switch (phase) {
@@ -533,7 +639,7 @@ class _PreparedWalkState extends State<PreparedWalkScreen> {
               _Phase.answer => 'Follow-up · ${subject?.name}',
               _ => 'Story · ${subject?.name}',
             }),
-            if (trail && (phase == _Phase.walking || asking))
+            if (phase == _Phase.walking || asking)
               TextButton(
                 onPressed: skipChapter,
                 child: Text(

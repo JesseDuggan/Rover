@@ -19,42 +19,11 @@ class RoverMapProvider {
   final String preferredProvider;
   final String routingProvider;
 
-  RoverMapMode get mode {
-    final preferred = preferredProvider.trim().toLowerCase();
-    if (preferred == 'development') {
-      return RoverMapMode.development;
-    }
-    if (preferred == 'mapbox') {
-      return mapbox.hasUsablePublicToken
-          ? RoverMapMode.mapbox
-          : RoverMapMode.development;
-    }
-    if (preferred == 'google') {
-      if (google.hasApiKey) {
-        return RoverMapMode.google;
-      }
-      return mapbox.hasUsablePublicToken
-          ? RoverMapMode.mapbox
-          : RoverMapMode.development;
-    }
-
-    if (google.hasApiKey) {
-      return RoverMapMode.google;
-    }
-    return mapbox.hasUsablePublicToken
-        ? RoverMapMode.mapbox
-        : RoverMapMode.development;
-  }
+  RoverMapMode get mode =>
+      google.hasApiKey && preferredProvider != 'development'
+      ? RoverMapMode.google
+      : RoverMapMode.development;
 
   bool get mockMode => mode == RoverMapMode.development;
-  String? get developmentMessage {
-    final preferred = preferredProvider.trim().toLowerCase();
-    if (preferred == 'mapbox') {
-      return mapbox.developmentMessage;
-    }
-    if (google.hasApiKey || mapbox.hasUsablePublicToken) {
-      return null;
-    }
-    return '${google.developmentMessage} Mapbox fallback is also unavailable.';
-  }
+  String? get developmentMessage => google.developmentMessage;
 }
