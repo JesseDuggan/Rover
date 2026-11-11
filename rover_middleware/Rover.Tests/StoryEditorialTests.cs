@@ -11,6 +11,7 @@ internal static class StoryEditorialTests
     public static async Task SafetyAndEvidence()
     {
         await Verify(false);
+        await Verify(false, crossSentenceQualifier: true);
         await EmptyClassificationRecovery(false);
         await EmptyClassificationRecovery(true);
         await MissingCitationsRemainRejected();
@@ -101,13 +102,14 @@ internal static class StoryEditorialTests
         finally { StoryInspection.Listener.Value = previous; }
     }
 
-    private static async Task Verify(bool question, bool relevant = true, bool recovery = false, bool foodOnly = false, string? scope = null, bool areaRecovery = false, string? coordinateCase = null, string? rejectedDraft = null, bool gap = false, bool mismatchedVenue = false)
+    private static async Task Verify(bool question, bool relevant = true, bool recovery = false, bool foodOnly = false, string? scope = null, bool areaRecovery = false, string? coordinateCase = null, string? rejectedDraft = null, bool gap = false, bool mismatchedVenue = false, bool crossSentenceQualifier = false)
     {
         var anchor = new GeoLocation(52.2946778, 4.7108732);
         var segment = new RouteStorySegment("area", 0, anchor, anchor, anchor, 0, 0, 0, 0, false, []);
         var passage = (rejectedDraft ?? "") + " This test archive describes a local workshop and the people who worked there. " +
             "Accounts disagree about its opening date. The workshop at 12 King Street preserves their tools and written records. " +
             "Those records explain how the workshop changed over time. The archive also documents the surrounding community. " +
+            "Apprentices learned to repair the tools here. The upper room stored finished work. " +
             "Location: test archive; latitude 52.295; longitude 4.711.";
         if (mismatchedVenue) passage = passage.Replace("test archive", "North Perth Town Hall");
         foreach (var audience in new string?[] { "family", "sensitive", "mature", null })
@@ -169,6 +171,9 @@ internal static class StoryEditorialTests
                         "Classification context must be an object, not double-encoded JSON.");
                     Check(body.RootElement.GetProperty("instructions").GetString()!.Contains("audienceSuitability"),
                         "Classifier must perform an audience review.");
+                    Check(body.RootElement.GetProperty("instructions").GetString()!.Contains("independently of factual confidence")
+                        && body.RootElement.GetProperty("instructions").GetString()!.Contains("deadly disaster remain sensitive"),
+                        "Benign disputes and distressing subject matter must be classified separately.");
                     if (!question)
                         Check(body.RootElement.GetProperty("instructions").GetString()!.Contains("geographicScope local, neighbourhood, city, county, region or country"),
                             "Scope policy must reach classifier instructions, not just untrusted evidence.");
@@ -181,7 +186,7 @@ internal static class StoryEditorialTests
                             ? "The archive also documents the surrounding community." : "Unsupported connection to a different city.",
                         locationEvidence = mismatchedVenue ? "North Perth Town Hall" : "test archive", startsUtc = (string?)null, endsUtc = (string?)null,
                         audienceSuitability = audience, sensitivityNotice = (string?)null,
-                        uncertainClaims = new[] { "Accounts disagree about its opening date.", "Invented dispute." },
+                        uncertainClaims = new[] { crossSentenceQualifier ? "worked there. Accounts disagree" : "Accounts disagree about its opening date.", "Invented dispute." },
                         answersQuestion = relevant
                     } } });
                     if (coordinateCase is not null && calls == 2)
@@ -246,9 +251,12 @@ internal static class StoryEditorialTests
                     "Every narration length must identify broader context.");
             }
             Check(story.CanAutoplay == (audience == "family"), "Only reviewed family material may autoplay.");
-            Check(story.UncertainClaims.SequenceEqual(new[] { "Accounts disagree about its opening date." }),
+            Check(story.UncertainClaims.SequenceEqual(new[] { crossSentenceQualifier ? "worked there. Accounts disagree" : "Accounts disagree about its opening date." }),
                 "Uncertainty must be grounded in the passage.");
             Check(story.Variants.Count == 4, "All four listening lengths must exist.");
+            Check(story.Variants.Select(v => v.Narration.Length).Zip(story.Variants.Skip(1).Select(v => v.Narration.Length),
+                (shorter, longer) => shorter < longer).All(increasing => increasing),
+                "Qualified stories with enough evidence must grow from Quick through Deep.");
             Check(story.Variants.All(v => v.Narration.Contains("Accounts disagree")),
                 "Short versions must not drop a disputed claim's qualification.");
             Check(story.Claims.All(c => c.SourceIds.Count > 0), "Every claim retains its citations.");
