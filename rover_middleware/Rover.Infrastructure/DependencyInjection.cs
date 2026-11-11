@@ -267,6 +267,7 @@ public static class DependencyInjection
             TimeoutSeconds = configuration.GetValue("Rover:Phase16:LocalResearch:TimeoutSeconds", 60),
             ClassificationTimeoutSeconds = configuration.GetValue("Rover:Phase16:LocalResearch:ClassificationTimeoutSeconds", 30),
             SearchMaxOutputTokens = configuration.GetValue("Rover:Phase16:LocalResearch:SearchMaxOutputTokens", 8192),
+            ClassificationModel = Environment.GetEnvironmentVariable("ROVER_STORY_EDIT_MODEL") ?? configuration["Rover:Phase16:LocalResearch:ClassificationModel"] ?? "gpt-5.4",
             ClassificationMaxOutputTokens = configuration.GetValue("Rover:Phase16:LocalResearch:ClassificationMaxOutputTokens", 4096),
             MaximumCollectionStories = configuration.GetValue("Rover:Phase16:LocalResearch:MaximumCollectionStories", 8),
             CaptureRejectedResponses = EnvironmentFlag("ROVER_LOCAL_RESEARCH_CAPTURE_REJECTIONS", false),

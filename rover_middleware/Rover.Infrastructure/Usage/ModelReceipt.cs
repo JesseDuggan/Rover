@@ -22,6 +22,7 @@ public sealed record ModelReceipt(string Model, long Input, long Cached, long Ou
                 t.ValueKind == JsonValueKind.String && t.GetString() == "web_search_call") : 0;
         // Standard USD per million tokens. Store the estimate with the event.
         (double input, double cached, double output)? rates = model switch {
+            var m when m == "gpt-5.4" || System.Text.RegularExpressions.Regex.IsMatch(m,@"^gpt-5\.4-\d{4}-\d{2}-\d{2}$") => (2.50,.25,15),
             var m when m == "gpt-5-mini" || m.StartsWith("gpt-5-mini-", StringComparison.Ordinal) => (.25,.025,2),
             var m when m == "gpt-4o-mini" || System.Text.RegularExpressions.Regex.IsMatch(m,@"^gpt-4o-mini-\d{4}-\d{2}-\d{2}$") => (.15,.075,.60),
             var m when m == "gpt-4.1-mini" || m.StartsWith("gpt-4.1-mini-", StringComparison.Ordinal) => (.40,.10,1.60),

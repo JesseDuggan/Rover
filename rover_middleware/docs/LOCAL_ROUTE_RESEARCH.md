@@ -9,8 +9,10 @@ existing story pack and does not change automatic playback or arrival priority.
 During pack generation, a web-search request asks for up to six cited passages
 covering history, culture, architecture, local people, and dated events. It favors
 primary local sources and searches in the local language. A second, tool-free
-request classifies those passages and locates their subjects; it cannot write new
-narration. Accepted passages become route stories with source links.
+request classifies those passages, locates their subjects, and adapts them into
+spoken narration without adding facts. Numbered evidence references, numeric
+checks and retained qualifications gate the edit; a rejected edit falls back to
+the original cited prose. These checks do not establish semantic entailment.
 
 ## Configuration
 
@@ -26,11 +28,20 @@ existing current-information model. `ROVER_LOCAL_RESEARCH_MODEL` optionally
 overrides it; the selected model must support Responses web search and structured
 outputs. Never put this API key in Flutter configuration.
 
+The tool-free classification/edit step defaults to `gpt-5.4` with reasoning
+`none`. Override with `ROVER_STORY_EDIT_MODEL` or
+`Rover:Phase16:LocalResearch:ClassificationModel`. Research keeps its existing
+model. The stronger editor has higher token prices; the usage page records its
+model and estimated cost separately. Changing models does not add a web search.
+
 The local `run_rover_api.ps1` and `run-rover-api-lan.ps1` launchers enable research
 with the other local story features. Their `-DisableRouteStories` switch disables
 it too. Other deployment paths default research to disabled.
 
-There are at most two Responses requests per research attempt. The combined
+Each attempt normally makes a search and a classification/edit request. A failed
+edit may receive one tool-free, 15-second correction attempt per classification
+response, within its remaining deadline. Existing evidence recovery and archive
+lookup may make additional calls. All are recorded in usage. The combined
 timeout defaults to 60 seconds and can be configured through
 `Rover:Phase16:LocalResearch:TimeoutSeconds` (clamped to 10-90 seconds). Search and
 model requests incur provider usage charges. Research runs within background pack

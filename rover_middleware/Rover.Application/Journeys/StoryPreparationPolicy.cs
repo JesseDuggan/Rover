@@ -4,7 +4,7 @@ namespace Rover.Application.Journeys;
 // deliberately not an input: it must not change the quality of the evidence.
 public static class StoryPreparationPolicy
 {
-    public const string Version = "shared-preparation-v6-spoken-evidence-refs";
+    public const string Version = "shared-preparation-v7-spoken-editor";
 
     public static string Depth(string? value) => value?.Trim().ToLowerInvariant() switch
     {

@@ -68,6 +68,15 @@ internal static class UsageTests
 
     public static async Task TracksProviderAndPrice()
     {
+        using (var priceRequest = new HttpRequestMessage()) {
+            ModelReceipt? captured = null;
+            priceRequest.Options.Set(ModelReceipt.Callback, receipt => captured = receipt);
+            using var editorReceipt = JsonDocument.Parse("""{"model":"gpt-5.4-2026-03-05","usage":{"input_tokens":1000,"input_tokens_details":{"cached_tokens":100},"output_tokens":100}}""");
+            ModelReceipt.Report(priceRequest, editorReceipt.RootElement);
+            if (captured?.EstimatedUsd is not double estimate || Math.Abs(estimate-.003775)>.0000001)
+                throw new Exception("Spoken editor token estimate must include discounted cached input.");
+        }
+
         var dir=Path.Combine(Path.GetTempPath(),"walkabout-usage-"+Guid.NewGuid().ToString("N"));
         var config=new ConfigurationBuilder().AddInMemoryCollection(new Dictionary<string,string?> { ["Usage:Directory"]=dir }).Build();
         using var store=new UsageStore(config,NullLogger<UsageStore>.Instance);

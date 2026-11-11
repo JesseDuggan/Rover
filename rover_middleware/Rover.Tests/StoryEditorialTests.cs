@@ -54,7 +54,7 @@ internal static class StoryEditorialTests
         }));
         var anchor = new GeoLocation(44.9, -76.25);
         var segment = new RouteStorySegment("area", 0, anchor, anchor, anchor, 0, 0, 0, 0, false, []);
-        var researcher = new OpenAILocalRouteResearcher(client, new() { Enabled = true, ApiKey = "test", Model = "test" }, TimeProvider.System);
+        var researcher = new OpenAILocalRouteResearcher(client, new() { Enabled = true, ApiKey = "test", Model = "test", ClassificationModel = "gpt-5.4" }, TimeProvider.System);
         var result = await researcher.ResearchAsync(new([segment], new ApproximateLiveLocation(null, null, null, null), [], ["history"], "en") { AreaFirst = true }, default);
         Check(calls == 2 && result.Failed && result.Stories.Count == 0,
             "Missing citations get only one bounded retry and never become narration.");
@@ -97,7 +97,7 @@ internal static class StoryEditorialTests
                 }
                 return new HttpResponseMessage(HttpStatusCode.OK) { Content = new StringContent(output) };
             }));
-            var researcher = new OpenAILocalRouteResearcher(client, new LocalRouteResearchOptions { Enabled = true, ApiKey = "test", Model = "test" }, TimeProvider.System);
+            var researcher = new OpenAILocalRouteResearcher(client, new LocalRouteResearchOptions { Enabled = true, ApiKey = "test", Model = "test", ClassificationModel = "gpt-5.4" }, TimeProvider.System);
             var segment = new RouteStorySegment("area", 0, anchor, anchor, anchor, 0, 0, 0, 0, false, []);
             var result = await researcher.ResearchAsync(new([segment], new ApproximateLiveLocation(null, null, null, null), [], ["history"], "en") { AreaFirst = true, MaximumStories = 2 }, default);
             Check(calls == 4, "Empty classification has exactly one bounded research recovery.");
@@ -152,6 +152,7 @@ internal static class StoryEditorialTests
                         "Every research path receives the shared narration address rule.");
                     Check(body.RootElement.GetProperty("instructions").GetString()!.Contains(SpokenStoryQuality.Instructions),
                         "Questions, gaps and automatic research receive the shared spoken-quality guidance.");
+                    Check(body.RootElement.GetProperty("model").GetString() == "test", "Editing must not change the research model.");
                     var input = body.RootElement.GetProperty("input").GetString()!;
                     var instructions = body.RootElement.GetProperty("instructions").GetString()!;
                     Check(instructions.Contains("warm, conversational") && instructions.Contains("family-safe")
@@ -185,6 +186,9 @@ internal static class StoryEditorialTests
                 }
                 else
                 {
+                    Check(body.RootElement.GetProperty("model").GetString() == "gpt-5.4"
+                        && body.RootElement.GetProperty("reasoning").GetProperty("effort").GetString() == "none",
+                        "The configured editor model uses its own supported reasoning setting.");
                     var input = body.RootElement.GetProperty("input").GetString()!;
                     var reader = new Utf8JsonReader(Encoding.UTF8.GetBytes(input));
                     using var payload = JsonDocument.ParseValue(ref reader);
@@ -192,6 +196,8 @@ internal static class StoryEditorialTests
                         "Classification context must be an object, not double-encoded JSON.");
                     Check(body.RootElement.GetProperty("instructions").GetString()!.Contains("audienceSuitability"),
                         "Classifier must perform an audience review.");
+                    Check(!body.RootElement.GetProperty("instructions").GetString()!.Contains("Append a final cited sentence"),
+                        "Classification must not inherit the research-only instruction to append coordinate metadata.");
                     Check(body.RootElement.GetProperty("instructions").GetString()!.Contains("independently of factual confidence")
                         && body.RootElement.GetProperty("instructions").GetString()!.Contains("deadly disaster remain sensitive"),
                         "Benign disputes and distressing subject matter must be classified separately.");
@@ -231,7 +237,7 @@ internal static class StoryEditorialTests
                 };
             }));
             var researcher = new OpenAILocalRouteResearcher(client,
-                new() { Enabled = true, ApiKey = "test", Model = "test" }, TimeProvider.System);
+                new() { Enabled = true, ApiKey = "test", Model = "test", ClassificationModel = "gpt-5.4" }, TimeProvider.System);
             var pendingResult = researcher.ResearchAsync(new([segment],
                 new ApproximateLiveLocation(null, null, null, null), [], foodOnly ? ["food"] : ["history"], "en") {
                     PublicPlaces = mismatchedVenue ? [new("Town Hall - Perth", null, anchor)] : null,
