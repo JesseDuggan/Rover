@@ -1,3 +1,4 @@
+using Rover.Application.Journeys;
 using System.Net.Http.Headers;
 using System.Net.Http.Json;
 using System.Text.Json;
@@ -26,7 +27,7 @@ public sealed class OpenAIStoryLedStopSelector(HttpClient client, StoryLedPlanni
         IReadOnlyList<WalkStop> candidates, int maximumStops, CancellationToken cancellationToken)
     {
         cancellationToken.ThrowIfCancellationRequested();
-        if (!Enabled) return new([], "disabled");
+        if (!Enabled) { StoryInspection.Record("Stop selection", "Skipped", "AI stop selection is disabled."); return new([], "disabled"); }
         if (string.IsNullOrWhiteSpace(options.ApiKey) || string.IsNullOrWhiteSpace(options.Model))
             return new([], "configuration missing");
         var verified = candidates.Where(stop =>
@@ -40,6 +41,7 @@ public sealed class OpenAIStoryLedStopSelector(HttpClient client, StoryLedPlanni
             .DistinctBy(stop => stop.ProviderPlaceId)
             .DistinctBy(stop => stop.StopId);
         var pool = WalkInterestPolicy.TakeBalanced(verified, 30, command.Interests, WalkInterestPolicy.Group);
+        StoryInspection.Record("Stop selection", "Candidates checked", $"{candidates.Count} incoming candidates; {pool.Length} verified and interest-balanced candidates.");
         if (pool.Length < 2) return new([], "insufficient verified candidates");
         maximumStops = Math.Clamp(maximumStops, 2, Math.Min(pool.Length, 12));
         using var budget = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
@@ -130,6 +132,7 @@ public sealed class OpenAIStoryLedStopSelector(HttpClient client, StoryLedPlanni
                 ids.Any(string.IsNullOrWhiteSpace) || ids.Distinct(StringComparer.Ordinal).Count() != ids.Length ||
                 ids.Any(id => !pool.Any(stop => stop.StopId == id)))
                 return new([], "invalid candidate selection");
+            StoryInspection.Record("Stop selection", "Selected", $"AI selected {ids.Length} stops from {pool.Length} verified candidates. Route constraints are applied separately.");
             return new(ids.Select(id => pool.Single(stop => stop.StopId == id)).ToArray(),
                 $"OpenAI selected {ids.Length} sourced stops; Wikipedia matches: {enrichedCount}");
         }

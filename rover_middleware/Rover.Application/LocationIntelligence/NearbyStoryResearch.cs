@@ -58,6 +58,7 @@ public static class NearbyStoryResearch
         var followUp = new StoryResearchQuestion(
             $"At {place.Name}, {place.Address}, what can the walker notice? {focus} Connect the subject back to the named stop using cited evidence. Develop the evidence into a complete, connected story at the requested content depth, not a directory summary. Keep the entire single story in one cited paragraph. Identify the stop by its supplied name in a supported claim. Do not relocate events or infer a connection from proximity.",
             StoryQuestionScope.Street, StoryQuestionFormat.Single, 1, 90);
+        StoryInspection.Record("Second research pass", "Started", "First result was missing, generic or shorter than the deep-story target; retry uses former names and local records.", title: place.Name);
         var recovered = await Search(query with { Question = followUp }, timeout.Token);
         return recovered.ResearchStatus == "ready" ? recovered : initial;
 
@@ -79,15 +80,16 @@ public static class NearbyStoryResearch
             cancellationToken.ThrowIfCancellationRequested();
             foreach (var story in result.Stories)
             {
-                if (!story.CanAutoplay) continue;
+                if (!story.CanAutoplay) { StoryInspection.Record("Selected-place gate", "Rejected", "Story is not eligible for autoplay.", story.StoryId, story.Title); continue; }
                 var variant = story.Variants.FirstOrDefault(v => v.Length == StoryPreparationPolicy.Length(request.ContentDepth))
                     ?? story.Variants.OrderByDescending(v => v.EstimatedDurationSeconds).FirstOrDefault();
                 if (variant is null || string.IsNullOrWhiteSpace(variant.Narration) || ReportsMissingEvidence(variant.Narration)
                     || variant.ClaimIds.Count == 0 || story.ExpiresUtc <= now
                     || !double.IsFinite(story.Anchor.Latitude) || !double.IsFinite(story.Anchor.Longitude)
                     || RouteMath.DistanceMeters(place.Coordinates, story.Anchor) > 150
-                    || !string.Join(" ", story.Claims.Select(c => c.Text)).Contains(place.Name, StringComparison.OrdinalIgnoreCase))
-                    continue;
+                    || !string.Join(" ", story.Claims.Select(c => c.Text)).Contains(place.Name, StringComparison.OrdinalIgnoreCase)) {
+                    StoryInspection.Record("Selected-place gate", "Rejected", "Narration, expiry, geographic proximity, selected-place identity or claim reference checks failed.", story.StoryId, story.Title); continue;
+                }
                 var claims = story.Claims.Where(c => variant.ClaimIds.Contains(c.ClaimId)).ToArray();
                 var sources = story.Sources.Where(s => claims.Any(c => c.SourceIds.Contains(s.SourceId))
                     && Uri.TryCreate(s.Url, UriKind.Absolute, out var uri)
@@ -96,6 +98,7 @@ public static class NearbyStoryResearch
                     || claims.Any(c => c.SourceIds.Count == 0
                         || c.SourceIds.Any(id => !sources.Any(s => s.SourceId == id))))
                     continue;
+                StoryInspection.Record("Selected-place gate", "Accepted", "Selected-place identity, proximity, expiry and claim/source references passed.", story.StoryId, story.Title, variant.Narration, sources.Select(s => s.Url).OfType<string>().ToArray(), StoryPreparationPolicy.Depth(request.ContentDepth));
                 // Research does not confer permission to persist third-party content.
                 return new LocationStoryResult(
                     story.Title, variant.Narration, null, place.CanonicalId,

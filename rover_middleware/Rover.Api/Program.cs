@@ -176,6 +176,7 @@ app.Use(async (context, next) =>
 app.UseRateLimiter();
 app.UseUsage();
 UsagePage.Map(app);
+JourneyInspectionPage.Map(app);
 
 if (app.Environment.IsDevelopment())
 {
@@ -610,11 +611,13 @@ speech.MapPost("/render", async (
 
     if (request is null || string.IsNullOrWhiteSpace(request.Text))
     {
+        StoryInspection.Record("Speech validation", "Rejected", "Speech text was missing.", request?.StoryId);
         return Results.ValidationProblem(new Dictionary<string, string[]> { ["text"] = new[] { "Speech text is required." } });
     }
 
     if (!Enum.TryParse<SpeechPurpose>(request.Purpose, ignoreCase: true, out var purpose) || !Enum.IsDefined(purpose))
     {
+        StoryInspection.Record("Speech validation", "Rejected", "Unrecognized speech purpose.", request.StoryId);
         return Results.ValidationProblem(new Dictionary<string, string[]> { ["purpose"] = new[] { "Speech purpose is required and must be StopNarration, AskRoverAnswer, WalkIntroduction, WalkRecap, DiscoveryDescription, or AdaptiveRouteStory." } });
     }
 
@@ -637,6 +640,8 @@ speech.MapPost("/render", async (
             correlationId,
             cancellationToken);
         httpContext.RequestServices.GetService<IBetaDiagnosticsService>()?.RecordAudioDownload(rendered.Audio.Length, rendered.CacheHit);
+        StoryInspection.Record("Speech ready", rendered.CacheHit ? "Cache hit" : rendered.UsedFallback ? "Fallback" : "Rendered",
+            $"{rendered.Audio.Length} audio bytes prepared for {purpose}. This does not prove the audio played.", request.StoryId);
         if (UsageScope.Current.Value is {} scope)
             httpContext.RequestServices.GetRequiredService<UsageStore>().Record(scope.Event("Speech", rendered.Provider, purpose.ToString(), rendered.CacheHit ? "Cache hit" : rendered.UsedFallback ? "Fallback" : "Rendered") with { Units = request.Text.Length });
         httpContext.Response.Headers["X-Rover-Speech-Provider"] = rendered.Provider;
@@ -651,6 +656,7 @@ speech.MapPost("/render", async (
     }
     catch (ArgumentException exception)
     {
+        StoryInspection.Record("Speech validation", "Rejected", "Speech service rejected text, locale, identifiers or cache metadata. See the API validation response for the specific field.", request.StoryId);
         return Results.ValidationProblem(new Dictionary<string, string[]> { ["text"] = new[] { exception.Message } });
     }
     catch (InvalidOperationException exception)
@@ -1402,7 +1408,8 @@ walks.MapPost("/{walkSessionId}/route-story-pack/playback-events", async (
             new AdaptiveStoryPlaybackEvent(request.StoryId, kind, request.OccurredUtc ?? timeProvider.GetUtcNow(), request.PositionSeconds),
             cancellationToken);
         if (UsageScope.Current.Value is {} scope)
-            usage.Record(scope.Event("Story playback","Walkabout","Route story",kind.ToString()));
+            usage.Record(InspectionDetails.Event(scope, new Rover.Application.Journeys.StoryInspectionEvent(
+                "Playback", kind.ToString(), "Reported by the app; absence of an event does not prove the story was not heard.", request.StoryId)) with { Kind = "Story playback" });
         return Results.NoContent();
     }
     catch (KeyNotFoundException exception)

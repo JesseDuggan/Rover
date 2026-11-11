@@ -44,6 +44,7 @@ if (args.Contains("--ontario-source-audit"))
 var tests = new List<(string Name, Func<Task> Run)>
 {
     ("API usage persists provider calls, private walk links and priced model receipts", UsageTests.TracksProviderAndPrice),
+    ("Story inspector migrates usage history, bounds data and links walk traces", UsageTests.InspectionMigration),
     ("Scenic Drive budgets include stops and return travel", ScenicDriveTests.BudgetAndReturn),
     ("Drive stop stories verify identity and preserve sourced evidence", ScenicDriveTests.StopStories),
     ("Scenic Drive searches all interests and respects driving preferences", ScenicDriveTests.ExpandedInterests),

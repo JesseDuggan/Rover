@@ -18,6 +18,7 @@ public sealed class LibraryLocalRouteResearcher(
 {
     public async Task<LocalRouteResearchResult> ResearchAsync(LocalRouteResearchQuery query, CancellationToken token)
     {
+        StoryInspection.Record("Preparation", "Requested", $"Interests: {string.Join(", ", query.Interests.Take(20))}; requested stories: {query.MaximumStories?.ToString() ?? "automatic"}. Question text and exact location are not stored.", depth: StoryPreparationPolicy.Depth(query.ContentDepth));
         if (!options.Enabled || query.Segments.Count == 0)
             return await researcher.ResearchAsync(query, token);
         if (!Path.IsPathFullyQualified(options.Directory))
@@ -74,6 +75,8 @@ public sealed class LibraryLocalRouteResearcher(
         // A partially cached collection is not a new answer to a multi-part question.
         if (query.Question is not null && reused.Length < target) reused = [];
         if (reused.Length > 0) metrics.Record("reused", reused.Length);
+        StoryInspection.Record("Story library", reused.Length >= target ? "Cache satisfied" : "Live research needed", $"Reused {reused.Length}; target {target}. Only matching, eligible library entries are reused.");
+        foreach (var story in reused) StoryInspection.Story(story, "Cached story");
         if (reused.Length >= target && CoversRequestedLiveTopics(reused, query.Interests))
         {
             metrics.Record("avoided");

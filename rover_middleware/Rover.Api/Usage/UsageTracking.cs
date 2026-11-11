@@ -1,4 +1,5 @@
 using System.Diagnostics;
+using Rover.Application.Journeys;
 using System.Security.Cryptography;
 using System.Text;
 using Microsoft.Extensions.Http;
@@ -73,12 +74,15 @@ public static class UsageTracking
             scope.Link(http.Request.RouteValues["walkSessionId"]?.ToString());
             var previous=UsageScope.Current.Value;
             UsageScope.Current.Value=scope;
+            var previousInspection = StoryInspection.Listener.Value;
+            StoryInspection.Listener.Value = item => store.Record(InspectionDetails.Event(scope, item));
             var watch=Stopwatch.StartNew();
             var outcome="Failed";
             try { await next(); outcome=http.Response.StatusCode.ToString(); }
             finally {
                 store.Record(scope.Event("API request","Walkabout",scope.Action,outcome,watch.ElapsedMilliseconds));
                 UsageScope.Current.Value=previous;
+                StoryInspection.Listener.Value=previousInspection;
             }
         });
     }

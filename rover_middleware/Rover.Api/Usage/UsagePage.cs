@@ -8,7 +8,7 @@ public static class UsagePage
 {
     public static void Map(WebApplication app) => app.MapGet("/admin/usage", Show);
 
-    static bool Authorized(HttpContext http,string? password)
+    internal static bool Authorized(HttpContext http,string? password)
     {
         if (string.IsNullOrEmpty(password) || password.Length < 24) return false;
         var header=http.Request.Headers.Authorization.ToString();
@@ -49,7 +49,7 @@ public static class UsagePage
             </style><main><header><small>Walkabout administration</small><h1>API and AI usage</h1><nav>
             """);
         foreach (var n in new[]{1,7,30}) html.Append($"<a {(days==n?"aria-current='page'":"")} href='?days={n}'>{(n==1?"Today":n+" days")}</a>");
-        html.Append("</nav></header>");
+        html.Append("</nav><p><a href='/admin/journeys'>Inspect journeys and stories →</a></p></header>");
         if (journey.Length+trace.Length>0) html.Append($"<p>Filtered to {(journey.Length>0?"walk "+Esc(journey):"request "+Esc(trace))}. <a href='?days={days}'>Show all activity</a></p>");
         void Table(string title,string[] headers,string sql) {
             html.Append($"<h2>{Esc(title)}</h2><section>");

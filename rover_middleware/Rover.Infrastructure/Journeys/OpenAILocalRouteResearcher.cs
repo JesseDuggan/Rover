@@ -83,6 +83,7 @@ public sealed class OpenAILocalRouteResearcher(HttpClient client, LocalRouteRese
         using var budget = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
         budget.CancelAfter(TimeSpan.FromSeconds(Math.Clamp(options.TimeoutSeconds, 10, 90)));
         var stage = "web search";
+        StoryInspection.Record("Research", "Started", neighbourhoodRetry ? "Geographic recovery search" : "Initial cited evidence search", depth: StoryPreparationPolicy.Depth(query.ContentDepth));
         try
         {
             var subjects = options.HistoricalDiscoveryEnabled && discovery is not null
@@ -106,6 +107,7 @@ public sealed class OpenAILocalRouteResearcher(HttpClient client, LocalRouteRese
                 || query is { AreaFirst: true, SearchRadiusMeters: 1000, ExcludedStoryTitles.Count: > 0, Question: null };
             var records = gapSearch && !neighbourhoodRetry
                 ? await FindLocalRecordsAsync(query, budget.Token) : [];
+            StoryInspection.Record("Archive discovery", gapSearch && !neighbourhoodRetry ? "Attempted" : "Integrated search", gapSearch && !neighbourhoodRetry ? $"Dedicated archive pass returned {records.Length} cited record URLs." : "Archive prompts may be included in the main evidence search; no separate archive pass was required.");
             if (gapSearch)
                 logger?.LogInformation("Gap research: public sites={Sites}; cited record leads={Records}", query.PublicPlaces?.Count ?? 0, records.Length);
             var context = JsonSerializer.Serialize(new
@@ -176,6 +178,7 @@ public sealed class OpenAILocalRouteResearcher(HttpClient client, LocalRouteRese
             }, budget.Token, neighbourhoodRetry ? "Retry neighbourhood research" : "Research local evidence");
             stage = "citation extraction";
             var passages = ReadPassages(research.RootElement, clock.GetUtcNow(), maximumStories, 220, out var extractionDetails);
+            StoryInspection.Record("Citation extraction", passages.Count > 0 ? "Passages found" : "No usable passages", $"{passages.Count} cited passages extracted.");
             if (passages.Count == 0)
             {
                 logger?.LogWarning("Route research citation failure: recovery={Recovery}; {Details}",
@@ -220,14 +223,14 @@ public sealed class OpenAILocalRouteResearcher(HttpClient client, LocalRouteRese
                 null or "local" => 0, "neighbourhood" => 1, "city" => 2,
                 "county" => 3, "region" => 4, "country" => 5, _ => 6 }))
             {
-                if (query.Question is not null && card?.AnswersQuestion != true) { invalidCards++; continue; }
+                if (query.Question is not null && card?.AnswersQuestion != true) { invalidCards++; StoryInspection.Record("Evidence gate", "Rejected", "Does not answer the requested question.", title: card?.Title); continue; }
                 if (card is null || card.EvidenceIndex < 0 || card.EvidenceIndex >= passages.Count || !used.Add(card.EvidenceIndex)
                     || string.IsNullOrWhiteSpace(card.Title) || card.Title.Length > 120
-                    ) { invalidCards++; continue; }
+                    ) { invalidCards++; StoryInspection.Record("Evidence gate", "Rejected", "Missing or duplicate evidence index, invalid card or title.", title: card?.Title); continue; }
                 var passage = passages[card.EvidenceIndex];
                 if (!usedText.Add(passage.Text)) continue;
                 if (string.IsNullOrWhiteSpace(card.LocationEvidence) || card.LocationEvidence.Length < 3
-                    || !passage.Text.Contains(card.LocationEvidence, StringComparison.OrdinalIgnoreCase)) { invalidCards++; continue; }
+                    || !passage.Text.Contains(card.LocationEvidence, StringComparison.OrdinalIgnoreCase)) { invalidCards++; StoryInspection.Record("Evidence gate", "Rejected", "No verbatim location evidence in the cited passage.", title: card?.Title); continue; }
                 // Only an unambiguous, verbatim venue match may replace model coordinates.
                 var matchedPlaces = (query.PublicPlaces ?? []).Where(place =>
                     string.Equals(place.Name, card.LocationEvidence, StringComparison.OrdinalIgnoreCase)).ToArray();
@@ -239,7 +242,7 @@ public sealed class OpenAILocalRouteResearcher(HttpClient client, LocalRouteRese
                 if (anchor is null || (anchor.Latitude == 0 && anchor.Longitude == 0
                     && query.Segments.All(s => RouteMath.DistanceMeters(s.Anchor, anchor) > searchRadius)))
                 {
-                    unresolvedCoordinates++;
+                    unresolvedCoordinates++; StoryInspection.Record("Geographic gate", "Rejected", "Missing or unresolved subject coordinates.", title: card.Title);
                     logger?.LogInformation("Route research unresolved coordinates: missing={Missing}; zeroPair={ZeroPair}; recovery={Recovery}",
                         anchor is null, anchor is { Latitude: 0, Longitude: 0 }, neighbourhoodRetry);
                     continue;
@@ -256,7 +259,7 @@ public sealed class OpenAILocalRouteResearcher(HttpClient client, LocalRouteRese
                 {
                     logger?.LogInformation("Route research geographic rejection: scope={Scope}; distanceMeters={Distance}; limitMeters={Limit}; recovery={Recovery}",
                         scopeLimit == 0 ? "invalid" : scope, (int)RouteMath.DistanceMeters(segment.Anchor, anchor), scopeLimit, neighbourhoodRetry);
-                    outsideRoute++; continue;
+                    outsideRoute++; StoryInspection.Record("Geographic gate", "Rejected", $"Subject falls outside the allowed {scope} area.", title: card.Title); continue;
                 }
                 if (scope != "local" && (string.IsNullOrWhiteSpace(card.GeographicArea)
                     || card.GeographicArea.Length > 120 || string.IsNullOrWhiteSpace(card.GeographicConnection)
@@ -265,24 +268,24 @@ public sealed class OpenAILocalRouteResearcher(HttpClient client, LocalRouteRese
                     || !passage.Text.Contains(card.GeographicConnection, StringComparison.OrdinalIgnoreCase)))
                 {
                     logger?.LogInformation("Route research rejected broader context: missing cited area or connection; scope={Scope}", scope);
-                    invalidCards++; continue;
+                    invalidCards++; StoryInspection.Record("Evidence gate", "Rejected", "Broader geographic context lacks a cited area or connection.", title: card?.Title); continue;
                 }
-                if (!StoryKinds.Contains(card.Kind, StringComparer.Ordinal)) { invalidCards++; continue; }
-                if (query.Question is null && !StoryInterestPolicy.Allows(card.Kind, query.Interests)) { invalidCards++; continue; }
+                if (!StoryKinds.Contains(card.Kind, StringComparer.Ordinal)) { invalidCards++; StoryInspection.Record("Evidence gate", "Rejected", "Unsupported story category.", title: card?.Title); continue; }
+                if (query.Question is null && !StoryInterestPolicy.Allows(card.Kind, query.Interests)) { invalidCards++; StoryInspection.Record("Evidence gate", "Rejected", "Category does not match the selected interests.", title: card?.Title); continue; }
                 var expires = card.Kind == "event" ? now.AddMinutes(30) : now.AddHours(6);
                 if (card.Kind == "news")
                 {
                     if (card.StartsUtc is null || card.StartsUtc > now || card.StartsUtc < now.AddDays(-7)
                         || !passage.Text.Contains(card.StartsUtc.Value.ToString("yyyy-MM-dd", CultureInfo.InvariantCulture), StringComparison.Ordinal))
-                    { invalidCards++; continue; }
+                    { invalidCards++; StoryInspection.Record("Evidence gate", "Rejected", "News lacks a recent, cited date.", title: card?.Title); continue; }
                     expires = now.AddMinutes(30);
                 }
                 if (card.Kind == "event")
                 {
                     if (card.StartsUtc is null || card.EndsUtc is null || card.EndsUtc <= now
-                        || card.StartsUtc >= card.EndsUtc || card.StartsUtc > now.AddDays(7)) { invalidCards++; continue; }
+                        || card.StartsUtc >= card.EndsUtc || card.StartsUtc > now.AddDays(7)) { invalidCards++; StoryInspection.Record("Evidence gate", "Rejected", "Event is expired, too far ahead, or has invalid dates.", title: card?.Title); continue; }
                     if (!passage.Text.Contains(card.StartsUtc.Value.ToString("yyyy-MM-dd", CultureInfo.InvariantCulture), StringComparison.Ordinal)
-                        || !passage.Text.Contains(card.EndsUtc.Value.ToString("yyyy-MM-dd", CultureInfo.InvariantCulture), StringComparison.Ordinal)) { invalidCards++; continue; }
+                        || !passage.Text.Contains(card.EndsUtc.Value.ToString("yyyy-MM-dd", CultureInfo.InvariantCulture), StringComparison.Ordinal)) { invalidCards++; StoryInspection.Record("Evidence gate", "Rejected", "Event dates are absent from the cited passage.", title: card?.Title); continue; }
                     expires = card.EndsUtc.Value < expires ? card.EndsUtc.Value : expires;
                 }
                 var id = Hash(passage.Text);
@@ -291,11 +294,11 @@ public sealed class OpenAILocalRouteResearcher(HttpClient client, LocalRouteRese
                 var claims = Regex.Split(passage.Text, @"(?<=[.!?])\s+")
                     .Where(text => text.Length > 0 && !Regex.IsMatch(text, @"^\s*(Subject|Location|Title|Summary)\s*:", RegexOptions.IgnoreCase))
                     .Select((text, index) => new AdaptiveStoryClaim($"{id}:{index}", text, passage.Sources.Select(s => s.SourceId).ToArray(), 0.75)).ToArray();
-                if (claims.Length == 0) { invalidCards++; continue; }
+                if (claims.Length == 0) { invalidCards++; StoryInspection.Record("Evidence gate", "Rejected", "No narratable claims remain.", title: card?.Title); continue; }
                 var audience = card.AudienceSuitability is "family" or "sensitive" or "mature"
                     ? card.AudienceSuitability : "unreviewed";
                 var notice = string.IsNullOrWhiteSpace(card.SensitivityNotice) ? null : card.SensitivityNotice.Trim();
-                if (notice?.Length > 240) { invalidCards++; continue; }
+                if (notice?.Length > 240) { invalidCards++; StoryInspection.Record("Evidence gate", "Rejected", "Sensitivity notice exceeds the supported length.", title: card?.Title); continue; }
                 if (audience is "sensitive" or "mature" && notice is null)
                     notice = "Content note: this story discusses potentially distressing material.";
                 var uncertainty = (card.UncertainClaims ?? []).Where(text => !string.IsNullOrWhiteSpace(text)
@@ -326,6 +329,8 @@ public sealed class OpenAILocalRouteResearcher(HttpClient client, LocalRouteRese
                     });
                 if (stories.Count == maximumStories) break;
             }
+            foreach (var story in stories) StoryInspection.Story(story, "Prepared story");
+            StoryInspection.Record("Validation", stories.Count > 0 ? "Stories accepted" : "No accepted stories", $"{passages.Count} passages; {cards.Stories.Length} cards; {stories.Count} accepted; {outsideRoute} outside area; {invalidCards} failed evidence or field checks; {unresolvedCoordinates} unresolved coordinates. Counts can omit duplicates and unprocessed cards after the requested limit.");
             logger?.LogInformation("Route research validation: passages={Passages}; cards={Cards}; accepted={Accepted}; outsideRoute={Outside}; invalidCards={Invalid}; recovery={Recovery}",
                 passages.Count, cards.Stories.Length, stories.Count, outsideRoute, invalidCards, neighbourhoodRetry);
             if (stories.Count == 0 && (outsideRoute > 0 || unresolvedCoordinates > 0) && !neighbourhoodRetry
@@ -340,7 +345,9 @@ public sealed class OpenAILocalRouteResearcher(HttpClient client, LocalRouteRese
                 ? $"Local research found no usable stories: {passages.Count} cited passages; {cards.Stories.Length} classified cards; {outsideRoute} outside route area; {invalidCards} failed evidence or field checks; {unresolvedCoordinates} unresolved coordinates."
                 : null);
         }
-        catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested) { throw; }
+        catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested) {
+            StoryInspection.Record(stage, "Cancelled", "Caller cancelled or overall preparation deadline elapsed."); throw;
+        }
         catch (Exception error) when (error is HttpRequestException or JsonException or OperationCanceledException or InvalidOperationException or ArgumentException)
         {
             var reason = error switch
@@ -353,6 +360,7 @@ public sealed class OpenAILocalRouteResearcher(HttpClient client, LocalRouteRese
                 ArgumentException => "invalid citation offsets or field values",
                 _ => "unexpected response structure"
             };
+            StoryInspection.Record(stage, "Failed", reason);
             logger?.LogWarning("Route research failed: stage={Stage}; reason={Reason}; recovery={Recovery}", stage, reason, neighbourhoodRetry);
             return new([], $"Local research failed during {stage}: {reason}.") { Failed = true };
         }

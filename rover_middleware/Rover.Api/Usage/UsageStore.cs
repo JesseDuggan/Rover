@@ -7,6 +7,7 @@ public sealed record UsageEvent(string Kind, string Provider, string Purpose, st
     string Action, string Trace, string Journey, long Ms = 0, long Input = 0, long Output = 0,
     double? Usd = null, string Model = "", long Units = 0)
 {
+    public string Details { get; init; } = "";
     public long At { get; } = DateTimeOffset.UtcNow.ToUnixTimeSeconds();
 }
 
@@ -41,6 +42,14 @@ public sealed class UsageStore(IConfiguration config, ILogger<UsageStore> logger
                     CREATE INDEX IF NOT EXISTS events_journey ON events(journey,at);
                     """;
                 setup.ExecuteNonQuery();
+                using (var columns = db.CreateCommand()) {
+                    columns.CommandText = "SELECT count(*) FROM pragma_table_info('events') WHERE name='details'";
+                    if (Convert.ToInt32(columns.ExecuteScalar()) == 0) {
+                        using var migration = db.CreateCommand();
+                        migration.CommandText = "ALTER TABLE events ADD COLUMN details TEXT NOT NULL DEFAULT ''";
+                        migration.ExecuteNonQuery();
+                    }
+                }
                 initialized = true;
                 var nextPrune = DateTimeOffset.MinValue;
                 while (await pending.Reader.WaitToReadAsync(token)) {
@@ -54,11 +63,11 @@ public sealed class UsageStore(IConfiguration config, ILogger<UsageStore> logger
                     }
                     using var insert = db.CreateCommand();
                     insert.Transaction = tx;
-                    insert.CommandText = "INSERT INTO events VALUES($at,$kind,$provider,$purpose,$outcome,$action,$trace,$journey,$ms,$input,$output,$usd,$model,$units)";
+                    insert.CommandText = "INSERT INTO events(at,kind,provider,purpose,outcome,action,trace,journey,ms,input,output,usd,model,units,details) VALUES($at,$kind,$provider,$purpose,$outcome,$action,$trace,$journey,$ms,$input,$output,$usd,$model,$units,$details)";
                     for (var i=0;i<256 && pending.Reader.TryRead(out var e);i++) {
                         insert.Parameters.Clear();
-                        object?[] values = [e.At,e.Kind,e.Provider,e.Purpose,e.Outcome,e.Action,e.Trace,e.Journey,e.Ms,e.Input,e.Output,e.Usd,e.Model,e.Units];
-                        string[] keys = ["at","kind","provider","purpose","outcome","action","trace","journey","ms","input","output","usd","model","units"];
+                        object?[] values = [e.At,e.Kind,e.Provider,e.Purpose,e.Outcome,e.Action,e.Trace,e.Journey,e.Ms,e.Input,e.Output,e.Usd,e.Model,e.Units,e.Details];
+                        string[] keys = ["at","kind","provider","purpose","outcome","action","trace","journey","ms","input","output","usd","model","units","details"];
                         for(int k=0;k<keys.Length;k++) insert.Parameters.AddWithValue("$"+keys[k], values[k] ?? DBNull.Value);
                         insert.ExecuteNonQuery();
                         if(e.Kind=="API request" && e.Journey.Length>0) {
