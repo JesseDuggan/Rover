@@ -88,6 +88,7 @@ class _WalkaboutAccountScreenState extends State<WalkaboutAccountScreen> {
           const Text(
             'Account sign-in is not enabled yet. Your guest walks are still available.',
           ),
+        if (library.sessionNotice != null) Text(library.sessionNotice!),
         if (library.signedIn) ...[
           const Text(
             'Signed in',
@@ -466,7 +467,9 @@ class _PersonalLibraryScreenState extends State<PersonalLibraryScreen> {
           const Text('Account saving is not enabled on the server yet.'),
         if (library.signedIn) ...[
           Text(
-            '${items.length} of $limit saved',
+            error != null
+                ? 'Saved items could not be loaded'
+                : '${items.length} of $limit saved',
             style: Theme.of(context).textTheme.titleMedium,
           ),
           const SizedBox(height: 16),

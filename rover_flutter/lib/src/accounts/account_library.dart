@@ -98,6 +98,9 @@ class AccountLibrary extends ChangeNotifier {
   int _sessionGeneration = 0;
   int get sessionGeneration => _sessionGeneration;
   bool get signedIn => _tokens != null;
+  String? sessionNotice;
+  static const expiredMessage =
+      'Your sign-in has expired. Sign in again to see your friends and saved walks.';
   bool get enabled => _settings?['enabled'] == true;
   String get publicBaseUrl => Uri.parse(_config.configuredBaseUrl).origin;
   int get profileLimit => (_settings?['profileLimit'] as int?) ?? 3;
@@ -206,6 +209,7 @@ class AccountLibrary extends ChangeNotifier {
       await _storage.write(key: _storageKey, value: jsonEncode(tokens));
       if (generation == _sessionGeneration) {
         _tokens = tokens;
+        sessionNotice = null;
         notifyListeners();
       }
     });
@@ -232,17 +236,28 @@ class AccountLibrary extends ChangeNotifier {
     final generation = _sessionGeneration;
     final refreshToken = _tokens?['refreshToken'] as String?;
     if (refreshToken == null) {
-      await signOut();
-      throw const LibraryException('Please sign in again.');
+      await _expireSession(generation);
+      throw const LibraryException(expiredMessage);
     }
-    final result = await _auth.token(
-      TokenRequest(
-        _clientId,
-        _redirect,
-        discoveryUrl: _discovery,
-        refreshToken: refreshToken,
-      ),
-    );
+    late final TokenResponse result;
+    try {
+      result = await _auth.token(
+        TokenRequest(
+          _clientId,
+          _redirect,
+          discoveryUrl: _discovery,
+          refreshToken: refreshToken,
+        ),
+      );
+    } on FlutterAppAuthPlatformException catch (error) {
+      if (error.platformErrorDetails.error == 'invalid_grant') {
+        await _expireSession(generation);
+        throw const LibraryException(expiredMessage);
+      }
+      throw const LibraryException(
+        'Could not renew your sign-in. Check your connection and try again.',
+      );
+    }
     await _saveTokens(result, generation, previousRefreshToken: refreshToken);
     return _tokens!['accessToken'] as String;
   }
@@ -251,11 +266,25 @@ class AccountLibrary extends ChangeNotifier {
     // No account data is cached in shared files. The next sign-in requires interactive login.
     _sessionGeneration++;
     _tokens = null;
+    sessionNotice = null;
     notifyListeners();
     _tokenWrites = _tokenWrites
         .catchError((Object _) {})
         .then((_) => _storage.delete(key: _storageKey));
     await _tokenWrites;
+  }
+
+  Future<void> _expireSession(int generation) async {
+    if (generation != _sessionGeneration) return;
+    // Clear only credentials, never local walks, memories or GPS recordings.
+    final clearing = signOut();
+    sessionNotice = expiredMessage;
+    notifyListeners();
+    await clearing;
+  }
+
+  Future<void> checkSession() async {
+    if (signedIn) await _accessToken();
   }
 
   Future<void> rememberGuest(RoverPreferences preferences) async {

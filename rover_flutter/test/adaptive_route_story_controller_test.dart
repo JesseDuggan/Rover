@@ -377,6 +377,14 @@ void main() {
       repository.stories = [_feedbackStory('one'), _feedbackStory('two')];
       await controller.refreshPack(session);
       expect(controller.refreshMessage, '1 new story added');
+      repository.stories = [];
+      await controller.refreshPack(session);
+      expect(controller.pack!.stories.map((story) => story.storyId), [
+        'one',
+        'two',
+      ]);
+      expect(controller.refreshMessage, contains('No new verified stories'));
+      repository.stories = [_feedbackStory('one'), _feedbackStory('two')];
       repository.statusOverride = 'Generating';
       await controller.refreshPack(session);
       expect(controller.isRefreshing, isTrue);
@@ -405,12 +413,14 @@ void main() {
       final directory = await Directory.systemTemp.createTemp('story-status');
       final repository = _StoryRepository()
         ..stories = [_feedbackStory('one', ahead: true)];
+      var now = DateTime.now().toUtc();
       final cache = AdaptiveRouteStoryDeviceCache(
         file: File('${directory.path}/cache.json'),
       );
       final controller = AdaptiveRouteStoryController(
         repository: repository,
         deviceCache: cache,
+        nowUtc: () => now,
       );
       final voice = _PlaybackVoice();
       final session = demoSession().copyWith(
@@ -422,8 +432,14 @@ void main() {
         await controller.syncWithSession(session, voice);
         expect(
           controller.listeningStatus(session),
-          'Stories ahead on your route',
+          'Next story: one — plays as you approach',
         );
+        expect(voice.announcements, ['one']);
+        now = now.add(const Duration(seconds: 6));
+        await controller.syncWithSession(session, voice);
+        expect(voice.announcements, [
+          'one',
+        ], reason: 'Do not repeat the upcoming cue on every poll.');
         repository.heard = ['one'];
         repository.outcomes = const AdaptiveStoryPlaybackOutcomes(
           skippedStoryIds: ['one'],
@@ -1612,6 +1628,13 @@ class _StoryRepository implements AdaptiveRouteStoryRepository {
 class _PlaybackVoice extends RoverVoiceController {
   _PlaybackVoice() : super(walkRepository: _WalkRepository());
   int plays = 0;
+  final List<String> announcements = [];
+  @override
+  Future<bool> announceUpcomingStory(String title, RoamSession session) async {
+    announcements.add(title);
+    return true;
+  }
+
   String? lastLength;
   int? maximumSeconds;
   AdaptiveStoryPlaybackResult result = AdaptiveStoryPlaybackResult.completed;

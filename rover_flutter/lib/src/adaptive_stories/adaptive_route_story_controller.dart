@@ -55,6 +55,7 @@ class AdaptiveRouteStoryController extends ChangeNotifier {
   DateTime? _lastSelectionCheckUtc;
   final Set<String> _prefetchedStoryIds = {};
   final Set<String> _completedStoryIds = {};
+  final Set<String> _announcedUpcomingStories = {};
   final StoryWalkingGap _walkingGap = StoryWalkingGap();
   RoamSession? _latestSession;
   final Set<String> _deferredStoryIds = {};
@@ -197,7 +198,10 @@ class AdaptiveRouteStoryController extends ChangeNotifier {
     }
     final progress = _routeProgressMeters(session);
     if (unheard.every((story) => story.playbackWindowStart > progress)) {
-      return 'Stories ahead on your route';
+      unheard.sort(
+        (a, b) => a.playbackWindowStart.compareTo(b.playbackWindowStart),
+      );
+      return 'Next story: ${unheard.first.title} — plays as you approach';
     }
     if (unheard.every(
       (story) =>
@@ -217,9 +221,10 @@ class AdaptiveRouteStoryController extends ChangeNotifier {
 
   void _acceptRefreshState(AdaptiveRouteStoryPackState result) {
     final previous = _packState;
-    // A pending/failed response must not blank a still-valid collection.
-    if (result.pack == null &&
-        previous?.pack != null &&
+    // Empty research is not a revocation of the existing sourced collection.
+    // Preserve it only for the same route and while it remains valid.
+    if ((result.pack == null || result.pack!.stories.isEmpty) &&
+        (previous?.pack?.stories.isNotEmpty ?? false) &&
         previous!.walkSessionId == result.walkSessionId &&
         previous.routeRevision == result.routeRevision &&
         previous.pack!.expiresUtc.isAfter(_nowUtc())) {
@@ -332,8 +337,10 @@ class AdaptiveRouteStoryController extends ChangeNotifier {
     _latestSession = session;
     _walkingGap.observe(session, _nowUtc());
     final current = _currentSelection;
-    if (!_disposed && _walkSessionId == session.apiWalkSessionId &&
-        current != null && _belongsToSkippedStop(current.story, session)) {
+    if (!_disposed &&
+        _walkSessionId == session.apiWalkSessionId &&
+        current != null &&
+        _belongsToSkippedStop(current.story, session)) {
       _currentSelection = null;
       _manualSelection = false;
       _lastSelectionProgressMeters = null;
@@ -407,8 +414,12 @@ class AdaptiveRouteStoryController extends ChangeNotifier {
       }
       final story = interruptedStory.story;
       final stillRelevant = session.isOffRoute
-          ? session.hasReliableStoryFix && (interruptedStory.fromPlannedWalk ||
-              session.isNearStoryAnchor(story.relevanceLatitude, story.relevanceLongitude))
+          ? session.hasReliableStoryFix &&
+                (interruptedStory.fromPlannedWalk ||
+                    session.isNearStoryAnchor(
+                      story.relevanceLatitude,
+                      story.relevanceLongitude,
+                    ))
           : progressMeters <= story.playbackWindowEnd + _catchUpMeters;
       if (!_isExcluded(story) &&
           (pack?.expiresUtc.isAfter(now) ?? false) &&
@@ -669,11 +680,15 @@ class AdaptiveRouteStoryController extends ChangeNotifier {
   }
 
   bool _belongsToSkippedStop(AdaptiveRouteStory story, RoamSession session) =>
-      session.roam.stops.any((stop) => session.skippedStopIds.contains(stop.id) &&
-          (stop.id == story.placeId || stop.providerPlaceId == story.placeId));
+      session.roam.stops.any(
+        (stop) =>
+            session.skippedStopIds.contains(stop.id) &&
+            (stop.id == story.placeId || stop.providerPlaceId == story.placeId),
+      );
 
   bool _isExcluded(AdaptiveRouteStory story) =>
-      (_latestSession != null && _belongsToSkippedStop(story, _latestSession!)) ||
+      (_latestSession != null &&
+          _belongsToSkippedStop(story, _latestSession!)) ||
       _completedStoryIds.contains(story.storyId) ||
       (_packState?.heardStoryIds.contains(story.storyId) ?? false) ||
       const {
@@ -826,7 +841,10 @@ class AdaptiveRouteStoryController extends ChangeNotifier {
     await playCurrent(session, voiceController);
   }
 
-  Future<void> skipCurrent(RoamSession session, [RoverVoiceController? voice]) async {
+  Future<void> skipCurrent(
+    RoamSession session, [
+    RoverVoiceController? voice,
+  ]) async {
     final selection = _currentSelection;
     if (selection == null) return;
     _currentSelection = null;
@@ -1079,6 +1097,27 @@ class AdaptiveRouteStoryController extends ChangeNotifier {
       }
     }
     if (selection == null) {
+      final upcoming =
+          _freshStories
+              .where(
+                (story) =>
+                    !_isExcluded(story) &&
+                    story.canAutoplay &&
+                    story.playbackWindowStart > progressMeters,
+              )
+              .toList()
+            ..sort(
+              (a, b) => a.playbackWindowStart.compareTo(b.playbackWindowStart),
+            );
+      if (upcoming.isNotEmpty) {
+        final next = upcoming.first;
+        final key =
+            '${session.apiWalkSessionId}:${session.routeRevision}:${next.storyId}';
+        if (!_announcedUpcomingStories.contains(key) &&
+            await voiceController.announceUpcomingStory(next.title, session)) {
+          _announcedUpcomingStories.add(key);
+        }
+      }
       FieldDiagnostics.instance.record(
         'route-story',
         'No eligible story at ${progressMeters.round()} m; '

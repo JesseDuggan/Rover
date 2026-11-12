@@ -1,4 +1,5 @@
 import 'dart:async';
+import 'dart:convert';
 
 import 'package:flutter/material.dart';
 import 'package:flutter_appauth/flutter_appauth.dart';
@@ -114,8 +115,52 @@ class ConfiguredTestLibrary extends AccountLibrary {
   };
 }
 
+class RefreshFailureAuth extends FlutterAppAuth {
+  RefreshFailureAuth(this.error);
+  final String error;
+  @override
+  Future<TokenResponse> token(TokenRequest request) async =>
+      throw FlutterAppAuthPlatformException(
+        code: 'token_failed',
+        platformErrorDetails: FlutterAppAuthPlatformErrorDetails(error: error),
+      );
+}
+
 void main() {
   TestWidgetsFlutterBinding.ensureInitialized();
+  for (final failure in ['invalid_grant', 'network_error']) {
+    test(
+      'Refresh $failure distinguishes expired login from connection loss',
+      () async {
+        FlutterSecureStorage.setMockInitialValues({
+          'walkabout.account.https://example.com': jsonEncode({
+            'issuer': 'https://cognito-idp.eu-west-1.amazonaws.com/test',
+            'clientId': 'public-client',
+            'accessToken': 'expired-test-token',
+            'refreshToken': 'test-refresh',
+            'expiresAt': DateTime.now()
+                .subtract(const Duration(hours: 2))
+                .toIso8601String(),
+          }),
+        });
+        final library = ConfiguredTestLibrary(RefreshFailureAuth(failure));
+        await library.load();
+        expect(library.signedIn, isTrue);
+        await expectLater(
+          library.checkSession(),
+          throwsA(isA<LibraryException>()),
+        );
+        expect(library.signedIn, failure != 'invalid_grant');
+        expect(
+          library.sessionNotice,
+          failure == 'invalid_grant' ? AccountLibrary.expiredMessage : null,
+        );
+        await library.load();
+        expect(library.signedIn, failure != 'invalid_grant');
+        library.dispose();
+      },
+    );
+  }
   for (final kind in ['profiles', 'walks']) {
     testWidgets('Guest sign-in resumes saving $kind with confirmation', (
       tester,

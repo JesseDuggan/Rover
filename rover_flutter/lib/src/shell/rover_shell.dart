@@ -5,6 +5,8 @@ import 'package:go_router/go_router.dart';
 
 import '../active_roam/active_roam_controller.dart';
 import '../active_roam/active_roam_session.dart';
+import '../accounts/account_library.dart';
+import '../accounts/account_session_banner.dart';
 import '../ui/placeholder_screens.dart';
 import '../ui/walk_about_theme.dart';
 
@@ -41,11 +43,36 @@ class RoverShell extends StatelessWidget {
             onPressed: () => context.push('/friends'),
           ),
           PopupMenuButton<String>(
-            tooltip: 'Walk menu',
+            tooltip: 'Walk and account menu',
             icon: const Icon(Icons.more_horiz),
             enabled: !active.isBusy,
             onSelected: (value) async {
-              if (value == 'create') {
+              if (value == 'account') {
+                context.push('/profile/account');
+              } else if (value == 'signout') {
+                try {
+                  await AccountLibrary.instance.signOut();
+                  if (context.mounted) {
+                    ScaffoldMessenger.of(context).showSnackBar(
+                      const SnackBar(
+                        content: Text(
+                          'You are signed out. Your walks and memories are kept.',
+                        ),
+                      ),
+                    );
+                  }
+                } catch (_) {
+                  if (context.mounted) {
+                    ScaffoldMessenger.of(context).showSnackBar(
+                      const SnackBar(
+                        content: Text(
+                          'Could not finish signing out. Please try again.',
+                        ),
+                      ),
+                    );
+                  }
+                }
+              } else if (value == 'create') {
                 context.go('/home/create');
               } else if (value == 'pause') {
                 final journey = WalkaboutJourneyScope.of(context);
@@ -107,12 +134,23 @@ class RoverShell extends StatelessWidget {
                   child: Text('Complete walk'),
                 ),
               const PopupMenuItem(value: 'just', child: Text('Just walking')),
+              const PopupMenuDivider(),
+              const PopupMenuItem(value: 'account', child: Text('Account')),
+              if (AccountLibrary.instance.signedIn)
+                const PopupMenuItem(value: 'signout', child: Text('Sign out'))
+              else
+                const PopupMenuItem(value: 'account', child: Text('Sign in')),
             ],
           ),
           const SizedBox(width: 12),
         ],
       ),
-      body: navigationShell,
+      body: Column(
+        children: [
+          const AccountSessionBanner(),
+          Expanded(child: navigationShell),
+        ],
+      ),
       bottomNavigationBar: Material(
         color: Colors.white,
         child: SafeArea(

@@ -83,12 +83,20 @@ class RoverVoiceController extends ChangeNotifier {
   }
 
   Future<List<StoryPicture>>? _stopPictures(RoverStop stop) =>
-      pictureLookup?.find(stop.name, [if (stop.sourceUrl != null) stop.sourceUrl!],
-          stop.coordinates.latitude, stop.coordinates.longitude);
+      pictureLookup?.find(
+        stop.name,
+        [if (stop.sourceUrl != null) stop.sourceUrl!],
+        stop.coordinates.latitude,
+        stop.coordinates.longitude,
+      );
 
   Future<List<StoryPicture>>? _adaptivePictures(AdaptiveRouteStory story) =>
-      pictureLookup?.find(story.title, story.sources.map((s) => s.url).whereType<String>().toList(),
-          story.relevanceLatitude, story.relevanceLongitude);
+      pictureLookup?.find(
+        story.title,
+        story.sources.map((s) => s.url).whereType<String>().toList(),
+        story.relevanceLatitude,
+        story.relevanceLongitude,
+      );
 
   final WalkRepository walkRepository;
   final RoverTextToSpeech _textToSpeech;
@@ -1059,6 +1067,32 @@ class RoverVoiceController extends ChangeNotifier {
     );
   }
 
+  /// A short local cue; never interrupt guidance, a question or paused audio.
+  Future<bool> announceUpcomingStory(String title, RoamSession session) async {
+    final idleAfterNarration =
+        _state == RoverAudioState.narrationPaused &&
+        _segmentIndex >= _narrationSegments.length;
+    if (_isDisposed ||
+        (_state != RoverAudioState.idle && !idleAfterNarration) ||
+        storiesAreQuiet ||
+        _questionInteractionActive ||
+        _pausedNarrationStopId != null ||
+        _interruptedAdaptiveStory != null ||
+        session.status != RoamSessionStatus.active ||
+        session.isOffRoute ||
+        session.storyTimeExpired(DateTime.now().toUtc()) ||
+        _pendingVerifiedArrival(session) != null ||
+        (session.storyNavigationGuidance?.distanceMeters ?? 9999) <= 45) {
+      return false;
+    }
+    return _speakAnswer(
+      'Your next story is $title. It will play automatically as you get closer.',
+      priority: _contextualPriority,
+      purpose: 'upcoming_story',
+      localOnly: true,
+    );
+  }
+
   Future<void> replayAnswer() async {
     final answer = _lastTurn?.answerText;
     if (answer == null || answer.isEmpty) {
@@ -1221,7 +1255,8 @@ class RoverVoiceController extends ChangeNotifier {
               : AdaptiveStoryPlaybackResult.interrupted;
         }
         playback.segmentIndex++;
-        if (currentPictures.isNotEmpty && playback.segmentIndex == playback.segments.length &&
+        if (currentPictures.isNotEmpty &&
+            playback.segmentIndex == playback.segments.length &&
             playback.segments.last != storyPictureCue) {
           playback.segments.add(storyPictureCue);
         }
@@ -1405,7 +1440,8 @@ class RoverVoiceController extends ChangeNotifier {
     }
 
     final playbackGeneration = ++_playbackGeneration;
-    if (_narrationPictureStop case final stop?) _showPictures(_stopPictures(stop));
+    if (_narrationPictureStop case final stop?)
+      _showPictures(_stopPictures(stop));
     _activeAudioPriority = _arrivalPriority;
     _setState(RoverAudioState.preparingNarration);
     await _audioSession.configure();
@@ -1461,7 +1497,8 @@ class RoverVoiceController extends ChangeNotifier {
       }
       if (_state == RoverAudioState.speakingNarration) {
         _segmentIndex++;
-        if (currentPictures.isNotEmpty && _segmentIndex == _narrationSegments.length &&
+        if (currentPictures.isNotEmpty &&
+            _segmentIndex == _narrationSegments.length &&
             _narrationSegments.last != storyPictureCue) {
           _narrationSegments = [..._narrationSegments, storyPictureCue];
         }
