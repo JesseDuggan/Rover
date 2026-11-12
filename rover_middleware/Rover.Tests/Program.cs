@@ -3374,7 +3374,7 @@ static async Task LivePlanningRefusesSyntheticFallback()
             AssertTrue(exception.Message.Contains(expected) && exception.Message.Contains("No fallback waypoints"), "Planning must expose the failure instead of inventing stops: " + scenario);
             AssertTrue(!exception.Message.Contains("private-provider-response"), "Raw provider failures must not leak into app errors.");
         }
-        AssertEqual(scenario switch { "disabled" or "missing-key" => 0, "success" => 6, _ => 1 }, calls);
+        AssertEqual(scenario switch { "disabled" or "missing-key" => 0, "success" => 9, "filtered" => 2, _ => 1 }, calls);
     }
 }
 

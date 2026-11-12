@@ -125,6 +125,33 @@ internal static class StoryLedPlanningTests
             "A leisurely Lab route must reserve more walking time.");
         await InterestBalance();
         await DiscoveryBalance();
+        await RegularLandmarkDiscovery();
+    }
+
+    private static async Task RegularLandmarkDiscovery()
+    {
+        var rankings = new List<string>();
+        using var client = new HttpClient(new RoutingHttpMessageHandler(request =>
+        {
+            using var body = JsonDocument.Parse(request.Content!.ReadAsStringAsync().GetAwaiter().GetResult());
+            var ranking = body.RootElement.GetProperty("rankPreference").GetString()!;
+            rankings.Add(ranking);
+            var major = ranking == "POPULARITY";
+            var places = new[] { new { id = major ? "landmark" : "nearby", displayName = new { text = major ? "Historic Grand Hotel" : "Local Monument" },
+                location = new { latitude = 43.65 + (major ? .008 : .001), longitude = -79.4 },
+                primaryType = major ? "historical_landmark" : "monument" } };
+            return new HttpResponseMessage(HttpStatusCode.OK) { Content = new StringContent(JsonSerializer.Serialize(new { places })) };
+        }));
+        var provider = new GooglePlacesLocationContextProvider(new SingleHttpClientFactory(client),
+            new InMemoryLocationContextCache(TimeProvider.System), TimeProvider.System,
+            new LocationProviderOptions { Enabled = true, AccessToken = "test" });
+        var discovery = new GooglePlacesLocalDiscoveryProvider(provider,
+            Microsoft.Extensions.Options.Options.Create(new LocalDiscoveryOptions { Enabled = true, MaximumDistanceMeters = 2500 }));
+        var stops = await discovery.FindCandidateStopsAsync(Command, default, 6);
+        Check(rankings.SequenceEqual(new[] { "DISTANCE", "POPULARITY" }),
+            "Regular history walks must search beyond nearest-first listings for nearby landmarks.");
+        Check(stops.Any(stop => stop.ProviderPlaceId == "landmark") && stops.Any(stop => stop.ProviderPlaceId == "nearby"),
+            "Both major and smaller discoveries must reach the route planner.");
     }
 
     private static async Task DiscoveryBalance()

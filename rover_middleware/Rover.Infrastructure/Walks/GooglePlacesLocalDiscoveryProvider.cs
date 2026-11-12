@@ -76,11 +76,21 @@ public sealed class GooglePlacesLocalDiscoveryProvider : ILocalDiscoveryProvider
             places = places.Concat(nonFood.Places);
             warnings = warnings.Concat(nonFood.Warnings);
         }
-        if (command.LimitLabDetours && command.SearchProminentPlaces && other.Length > 0 && result.Enabled && !warnings.Any())
+        var regularLandmarkSearch = !command.LimitLabDetours && other.Any(interest =>
+            WalkInterestPolicy.Group(interest) is "history" or "architecture");
+        if (((command.LimitLabDetours && command.SearchProminentPlaces) || regularLandmarkSearch)
+            && other.Length > 0 && result.Enabled && !warnings.Any() && result.Places.Count > 0)
         {
             // Include prominent places regardless of how a map provider classifies their primary business.
-            var landmarks = await _placesProvider.GetContextAsync(query with { RadiusMeters = 500, SearchProminentPlaces = true }, cancellationToken);
+            // Regular walks need this too: nearest-first results can fill up with
+            // small listings before a nearby major landmark ever reaches selection.
+            var landmarks = await _placesProvider.GetContextAsync(query with
+            {
+                RadiusMeters = regularLandmarkSearch ? Math.Min(query.RadiusMeters, 1500) : 500,
+                SearchProminentPlaces = true
+            }, cancellationToken);
             places = landmarks.Places.Concat(places);
+            warnings = warnings.Concat(landmarks.Warnings);
         }
         else if (command.LimitLabDetours && other.Length > 0)
         {
