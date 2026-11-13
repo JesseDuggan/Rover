@@ -109,6 +109,10 @@ void main() {
     testWidgets('add stop to active walk requires confirmation: $accept', (
       tester,
     ) async {
+      tester.view.physicalSize = const Size(390, 844);
+      tester.view.devicePixelRatio = 1;
+      addTearDown(tester.view.resetPhysicalSize);
+      addTearDown(tester.view.resetDevicePixelRatio);
       final api = RecordingWalkRepository();
       await tester.pumpWidget(
         RoverTestApp(
@@ -129,6 +133,7 @@ void main() {
       await tester.pumpAndSettle();
       await tester.tap(find.text('Add stop'));
       await tester.enterText(find.byType(TextField), 'Hotel');
+      tester.testTextInput.hide();
       await tester.tap(find.widgetWithIcon(TextButton, Icons.search));
       await tester.pumpAndSettle();
       await tester.ensureVisible(find.text('Vocal Hotel'));
@@ -229,6 +234,14 @@ void main() {
       expect(find.text('Start walking'), findsOneWidget);
       expect(find.byTooltip('Save walk'), findsOneWidget);
       expect(tester.takeException(), isNull);
+      await tester.ensureVisible(find.text('Try another'));
+      await tester.tap(find.text('Try another'));
+      await tester.pumpAndSettle();
+      await tester.ensureVisible(find.text('Create my walk'));
+      await tester.tap(find.text('Create my walk'));
+      await tester.pumpAndSettle();
+      expect(api.request!.previousStopIds, isNotEmpty);
+      expect(api.request!.interests, containsAll(['history', 'architecture']));
       await tester.tap(find.text('Start walking'));
       await tester.pump();
       await tester.pump(const Duration(seconds: 1));

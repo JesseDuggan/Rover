@@ -304,6 +304,7 @@ class _WalkHomeScreenState extends State<WalkHomeScreen> {
           request: request,
           location: result.location!,
           selectedPlace: selectedPlace,
+          preferDifferentStops: GoRouterState.of(context).uri.queryParameters['alternative'] == 'true',
         );
       }
       if (!mounted) return;
@@ -845,7 +846,7 @@ class _WalkPreviewScreenState extends State<WalkPreviewScreen> {
                   TextButton(
                     onPressed: _starting
                         ? null
-                        : () => context.go('/home/create'),
+                        : () => context.go('/home/create?alternative=true'),
                     child: const Text('Try another'),
                   ),
                 ],

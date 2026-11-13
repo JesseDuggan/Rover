@@ -43,7 +43,10 @@ class FakeJourneyApi extends RoverApiClient {
     required List<String> interests,
     required List<String> excludedTitles,
     int searchRadiusMeters = 1000,
+    String? contentDepth,
+    bool neighbourhoodContext = false,
   }) async {
+    if (disconnected) throw const HttpException('Connection aborted');
     researchCalls++;
     return {
       'stories': [

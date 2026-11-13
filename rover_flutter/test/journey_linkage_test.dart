@@ -1,4 +1,5 @@
 import 'dart:io';
+import 'dart:convert';
 
 import 'package:flutter_test/flutter_test.dart';
 import 'package:rover/src/api/journey_identity.dart';
@@ -20,9 +21,13 @@ void main() {
     () async {
       final server = await HttpServer.bind(InternetAddress.loopbackIPv4, 0);
       final received = <String?>[];
+      Map<String, dynamic>? areaRequest;
       server.listen((request) async {
         received.add(request.headers.value('X-Walkabout-Journey'));
-        await request.drain<void>();
+        final body = await utf8.decoder.bind(request).join();
+        if (request.uri.path == '/api/area-stories') {
+          areaRequest = jsonDecode(body) as Map<String, dynamic>;
+        }
         request.response.headers.contentType = ContentType.json;
         request.response.write('{"stories": []}');
         await request.response.close();
@@ -39,6 +44,8 @@ void main() {
           longitude: -76.2,
           interests: ['history'],
           excludedTitles: [],
+          contentDepth: 'deep',
+          neighbourhoodContext: true,
         );
         client.journeyId = second;
         await pending;
@@ -46,6 +53,9 @@ void main() {
         client.journeyId = null;
         await client.getHealth();
         expect(received, [first, second, null]);
+        expect(areaRequest?['contentDepth'], 'deep');
+        expect(areaRequest?['neighbourhoodContext'], true);
+        expect(areaRequest?['interests'], ['history']);
       } finally {
         client.close(force: true);
         await server.close(force: true);

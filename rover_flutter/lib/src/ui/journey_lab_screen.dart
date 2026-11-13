@@ -723,7 +723,7 @@ class _JourneyLabState extends State<JourneyLabScreen> {
       'interests': selectedInterests.map((s) => s.toLowerCase()).toList()
         ..sort(),
       'depth': selectedDepth,
-      'policy': 'shared-preparation-v1',
+      'policy': 'shared-preparation-v2-neighbourhood',
     });
     if (preparedFor != profileKey) {
       stories.clear();
@@ -736,13 +736,15 @@ class _JourneyLabState extends State<JourneyLabScreen> {
     if (area == null) {
       try {
         final _Json result;
-        if (scope == 'Region') {
+        if (scope == 'Region' || scope == 'Neighbourhood') {
           result = await api.researchAreaStories(
             latitude: start!.latitude,
             longitude: start!.longitude,
             interests: selectedInterests,
             excludedTitles: [],
-            searchRadiusMeters: 20000,
+            searchRadiusMeters: scope == 'Region' ? 20000 : 1000,
+            contentDepth: selectedDepth,
+            neighbourhoodContext: true,
           );
         } else {
           final response = await api.researchStoryQuestion(
@@ -815,7 +817,11 @@ class _JourneyLabState extends State<JourneyLabScreen> {
         if (area != null && introduction(area!) != null)
           introduction(area!)!.title,
       };
-      final nearby = <AdaptiveRouteStory>[];
+      // Reuse the other prepared area chapters between stops; do not research
+      // them again or repeat the introduction.
+      final nearby = <AdaptiveRouteStory>[
+        if (area != null) ...AreaStoryCollection.fromJson(area!).stories,
+      ];
       var eventQueries = 0;
       LatLng? searchedAt;
       var failed = false;
@@ -830,7 +836,25 @@ class _JourneyLabState extends State<JourneyLabScreen> {
         final metres = (gap.start + gap.end) / 2;
         final point = path.at(metres);
         const distance = Distance();
-        if (searchedAt == null || distance(searchedAt, point) >= 750) {
+        final hasPreparedContext = nearby.any(
+          (s) =>
+              s.canAutoplay &&
+              s.sources.isNotEmpty &&
+              s.claims.isNotEmpty &&
+              s.expiresUtc?.isAfter(DateTime.now().toUtc()) == true &&
+              s.variants.any((v) => v.narration.trim().isNotEmpty) &&
+              !covered.any(
+                (title) =>
+                    title.trim().toLowerCase() == s.title.trim().toLowerCase(),
+              ) &&
+              distance(
+                    point,
+                    LatLng(s.relevanceLatitude, s.relevanceLongitude),
+                  ) <=
+                  1000,
+        );
+        if (!hasPreparedContext &&
+            (searchedAt == null || distance(searchedAt, point) >= 750)) {
           searchedAt = point;
           setState(() => working = 'Looking for a neighbourhood story');
           if (eventQueries < 3) {
@@ -897,6 +921,7 @@ class _JourneyLabState extends State<JourneyLabScreen> {
               latitude: point.latitude,
               longitude: point.longitude,
               interests: interests,
+              contentDepth: selectedDepth,
               excludedTitles: covered
                   .where((t) => t.length <= 160)
                   .take(120)
@@ -1265,6 +1290,8 @@ class _JourneyLabState extends State<JourneyLabScreen> {
       AreaStoryCollection.fromJson(result).stories
           .where(
             (s) =>
+                s.canAutoplay &&
+                s.expiresUtc?.isAfter(DateTime.now().toUtc()) == true &&
                 s.sources.isNotEmpty &&
                 s.variants.any((v) => v.narration.trim().isNotEmpty),
           )
@@ -1455,7 +1482,10 @@ class _JourneyLabState extends State<JourneyLabScreen> {
         depth: prefs.contentDepth,
       );
       if (!mounted) return;
-      final tourApi = RoverApiClient(config: api.config, journeyId: JourneyIdentity.create());
+      final tourApi = RoverApiClient(
+        config: api.config,
+        journeyId: JourneyIdentity.create(),
+      );
       try {
         await Navigator.push<void>(
           context,
@@ -1482,14 +1512,22 @@ class _JourneyLabState extends State<JourneyLabScreen> {
   }
 
   Future<void> openPrepared(PreparedWalk walk, {String? journeyId}) async {
-    final preparedApi = RoverApiClient(config: api.config, journeyId: journeyId ?? api.journeyId);
+    final preparedApi = RoverApiClient(
+      config: api.config,
+      journeyId: journeyId ?? api.journeyId,
+    );
     try {
       await Navigator.of(context).push(
         MaterialPageRoute<void>(
           builder: (_) => PreparedWalkScreen(
             walk: walk,
-            research: (stop) => askTourQuestion(preparedApi, stop, 'What occupies this site today?'),
-            followUp: (stop, question) => askTourQuestion(preparedApi, stop, question),
+            research: (stop) => askTourQuestion(
+              preparedApi,
+              stop,
+              'What occupies this site today?',
+            ),
+            followUp: (stop, question) =>
+                askTourQuestion(preparedApi, stop, question),
           ),
         ),
       );
@@ -1731,7 +1769,12 @@ class _JourneyLabState extends State<JourneyLabScreen> {
               label: const Text('Fremont Past to Present'),
             ),
             FilledButton.icon(
-              onPressed: busy ? null : () => openPrepared(kingStreetTrail, journeyId: JourneyIdentity.create()),
+              onPressed: busy
+                  ? null
+                  : () => openPrepared(
+                      kingStreetTrail,
+                      journeyId: JourneyIdentity.create(),
+                    ),
               icon: const Icon(Icons.theater_comedy),
               label: const Text('King Street Story Trail'),
             ),
@@ -1754,12 +1797,22 @@ class _JourneyLabState extends State<JourneyLabScreen> {
                     ),
             ),
             OutlinedButton.icon(
-              onPressed: busy ? null : () => openPrepared(bloorRehearsal, journeyId: JourneyIdentity.create()),
+              onPressed: busy
+                  ? null
+                  : () => openPrepared(
+                      bloorRehearsal,
+                      journeyId: JourneyIdentity.create(),
+                    ),
               icon: const Icon(Icons.headphones),
               label: const Text('Bloor West rehearsal'),
             ),
             OutlinedButton.icon(
-              onPressed: busy ? null : () => openPrepared(perthFieldTest, journeyId: JourneyIdentity.create()),
+              onPressed: busy
+                  ? null
+                  : () => openPrepared(
+                      perthFieldTest,
+                      journeyId: JourneyIdentity.create(),
+                    ),
               icon: const Icon(Icons.directions_walk),
               label: const Text('Perth field test'),
             ),

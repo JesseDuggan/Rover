@@ -69,6 +69,7 @@ class ActiveRoamController extends ChangeNotifier {
   final Set<String> _deviceArrivalAttempts = <String>{};
   final Set<String> _insideGeofenceStopIds = <String>{};
   String? _lastAdaptationInterest;
+  final List<String> _recentSuggestedStops = [];
 
   RoamSession get session => _session ?? RoamSession.empty();
   WalkRepository get walkRepository => _walkRepository;
@@ -107,8 +108,15 @@ class ActiveRoamController extends ChangeNotifier {
     required RoverLatLng location,
     WalkPlaceSelection? selectedPlace,
     String? profileId,
+    bool preferDifferentStops = false,
   }) async {
     await _runApiAction(() async {
+      final previousStops = preferDifferentStops
+          ? <String>{..._recentSuggestedStops, ...session.roam.stops.map((s) => s.providerPlaceId ?? s.id)}.toList()
+          : <String>[];
+      final recentStops = previousStops.length > 36
+          ? previousStops.sublist(previousStops.length - 36)
+          : previousStops;
       await stopLocationTracking();
       recordGpsTrail = false;
       _deviceArrivalAttempts.clear();
@@ -129,9 +137,13 @@ class ActiveRoamController extends ChangeNotifier {
           surpriseMe: request.surpriseMe,
           selectedPlace: selectedPlace,
           profileId: profileId,
+          previousStopIds: recentStops,
         ),
       );
       await _save(_sessionFromWalk(walk));
+      _recentSuggestedStops
+        ..clear()
+        ..addAll(recentStops);
     });
   }
 

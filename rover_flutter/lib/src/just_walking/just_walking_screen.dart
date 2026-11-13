@@ -61,6 +61,9 @@ class _JustWalkingScreenState extends State<JustWalkingScreen>
               latitude: location.latitude,
               longitude: location.longitude,
               interests: PreferencesScope.of(context).preferences.interests,
+              contentDepth: PreferencesScope.of(context)
+                  .preferences
+                  .contentDepth,
               excludedTitles: excluded,
               searchRadiusMeters: _walk.searchRadiusMeters,
             ),

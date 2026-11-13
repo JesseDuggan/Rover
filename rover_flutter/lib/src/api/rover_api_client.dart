@@ -23,9 +23,12 @@ import 'story_question_models.dart';
 import 'walk_models.dart';
 
 class RoverApiClient {
-  RoverApiClient({RoverApiConfig? config, HttpClient? httpClient, this.journeyId})
-    : config = config ?? RoverApiConfig.fromEnvironment(),
-      _httpClient = httpClient ?? HttpClient();
+  RoverApiClient({
+    RoverApiConfig? config,
+    HttpClient? httpClient,
+    this.journeyId,
+  }) : config = config ?? RoverApiConfig.fromEnvironment(),
+       _httpClient = httpClient ?? HttpClient();
 
   // Owned by a journey screen; captured before asynchronous I/O so an old
   // request cannot be attributed to a newly opened journey.
@@ -104,6 +107,8 @@ class RoverApiClient {
     required List<String> interests,
     required List<String> excludedTitles,
     int searchRadiusMeters = 1000,
+    String? contentDepth,
+    bool neighbourhoodContext = false,
   }) => _sendJson(
     'POST',
     '/api/area-stories',
@@ -113,6 +118,8 @@ class RoverApiClient {
       'interests': interests,
       'excludedTitles': excludedTitles,
       'searchRadiusMeters': searchRadiusMeters,
+      if (contentDepth != null) 'contentDepth': contentDepth,
+      'neighbourhoodContext': neighbourhoodContext,
     },
     responseTimeout: const Duration(seconds: 105),
   );

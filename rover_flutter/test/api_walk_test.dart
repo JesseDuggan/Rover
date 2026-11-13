@@ -27,6 +27,24 @@ import 'package:rover/src/maps/google_maps_config.dart';
 import 'package:rover/src/maps/mapbox_config.dart';
 
 void main() {
+  test('alternative request sends last shown IDs and normal creation resets them', () async {
+    final repository = FakeWalkRepository();
+    final controller = ActiveRoamController(
+      repository: MemoryActiveRoamRepository(),
+      walkRepository: repository,
+      screenAwakeController: MemoryScreenAwakeController(),
+    );
+    await controller.load();
+    const location = RoverLatLng(latitude: 37.7879, longitude: -122.4075);
+    await controller.createWalk(request: _adventureRequest(), location: location);
+    expect(repository.lastCreateRequest!.toJson().containsKey('previousStopIds'), false);
+    final ids = controller.session.roam.stops.map((s) => s.providerPlaceId ?? s.id).toList();
+    await controller.createWalk(request: _adventureRequest(), location: location, preferDifferentStops: true);
+    expect(repository.lastCreateRequest!.toJson()['previousStopIds'], ids);
+    await controller.createWalk(request: _adventureRequest(), location: location);
+    expect(repository.lastCreateRequest!.previousStopIds, isEmpty);
+    controller.dispose();
+  });
   test('live map moves while a location request is still pending', () async {
     final locations = StreamController<RoverLocationReading>();
     final repository = _DelayedLocationRepository();
@@ -997,6 +1015,7 @@ class FakeWalkRepository implements WalkRepository {
   final Duration delay;
   final bool offRoute;
   final calls = <String>[];
+  CreateWalkRequest? lastCreateRequest;
   int visited = 0;
   WalkStatus status = WalkStatus.ready;
 
@@ -1045,6 +1064,7 @@ class FakeWalkRepository implements WalkRepository {
 
   @override
   Future<WalkSession> createWalk(CreateWalkRequest request) async {
+    lastCreateRequest = request;
     calls.add('createWalk');
     await _wait();
     status = WalkStatus.ready;

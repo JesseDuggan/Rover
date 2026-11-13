@@ -90,6 +90,7 @@ class CreateWalkRequest {
     this.surpriseMe = false,
     this.selectedPlace,
     this.profileId,
+    this.previousStopIds = const [],
   });
 
   final double latitude;
@@ -106,6 +107,7 @@ class CreateWalkRequest {
   final bool surpriseMe;
   final WalkPlaceSelection? selectedPlace;
   final String? profileId;
+  final List<String> previousStopIds;
 
   Map<String, Object?> toJson() {
     return {
@@ -123,6 +125,7 @@ class CreateWalkRequest {
       'surpriseMe': surpriseMe,
       if (selectedPlace != null) 'selectedPlace': selectedPlace!.toJson(),
       if (profileId != null) 'profileId': profileId,
+      if (previousStopIds.isNotEmpty) 'previousStopIds': previousStopIds,
     };
   }
 }
