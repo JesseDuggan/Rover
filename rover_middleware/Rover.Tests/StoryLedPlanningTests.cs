@@ -186,8 +186,10 @@ internal static class StoryLedPlanningTests
             && !WalkInterestPolicy.IsCommercialListing("Art Gallery"), "Classify ordinary shops and tour sellers separately from cultural sites.");
         searches.Clear();
         await discovery.FindCandidateStopsAsync(command with { Interests = ["nature", "culture"] }, default, 3);
-        Check(searches.Count == 1 && searches[0].Contains("park") && searches[0].Contains("museum"),
-            "Nature and culture should use the mixed interests without an extra performance search.");
+        Check(searches.Count == 2 && searches[0].Contains("park") && searches[0].Contains("museum")
+            && searches[1].Contains("museum") && !searches[1].Contains("park")
+            && searches.All(types => !types.Contains("concert_hall")),
+            "Missing culture should get one targeted search, without forcing an unrequested performance-only search.");
     }
 
     private static async Task InterestBalance()

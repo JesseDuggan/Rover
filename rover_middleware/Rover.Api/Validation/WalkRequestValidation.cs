@@ -68,6 +68,8 @@ public static class WalkRequestValidation
             break;
         }
 
+        if (request.PreviousStopIds is { } previous && (previous.Count > 36 || previous.Any(id => string.IsNullOrWhiteSpace(id) || id.Length > 256)))
+            errors["previousStopIds"] = ["Provide at most 36 nonempty place IDs, each up to 256 characters."];
         if (errors.Count > 0)
         {
             return false;
@@ -81,6 +83,7 @@ public static class WalkRequestValidation
             accessibilityPreferences)
         {
             ProfileId = request.ProfileId,
+            PreviousStopIds = request.PreviousStopIds?.Distinct(StringComparer.Ordinal).ToArray() ?? [],
             NaturalRequest = request.NaturalRequest?.Trim() ?? "",
             Companions = request.Companions,
             RouteShape = request.SelectedPlace?.IsDestination == true ? "Different destination" : request.RouteShape,

@@ -774,7 +774,14 @@ public sealed class AdaptiveRouteStoryPackService : IAdaptiveRouteStoryPackServi
                 new ApproximateLiveLocation(areaPlace?.City, areaPlace?.Region, areaPlace?.CountryCode, null),
                 publicPlaces.Select(place => place.Name).ToArray(), session.Interests.ToArray(), language, publicPlaces,
                 _options.JourneyCollectionsEnabled ? JourneyCollectionBuilder.Brief(session, plan, existingStories.Concat(stories).ToArray()) : null)
-                { ContentDepth = StoryPreparationPolicy.Depth(contentDepth), LibraryCandidates = stories.ToArray(), Audience = audience }, cancellationToken);
+                { ContentDepth = StoryPreparationPolicy.Depth(contentDepth), LibraryCandidates = stories.ToArray(), Audience = audience,
+                    IncludeNeighbourhoodStories = true }, cancellationToken);
+            var contextStories = research.Stories.Where(story => story.Intent is RouteStoryIntent.NeighbourhoodHistory
+                or RouteStoryIntent.CityHistory or RouteStoryIntent.StreetHistory || story.GeographicScope != "local").ToArray();
+            StoryInspection.Record("Neighbourhood preparation", contextStories.Length > 0 ? "Ready" : "No area chapter returned",
+                $"Requested context alongside POIs using {session.Interests.Count} selected interests, within the same research call. Returned {contextStories.Length} area chapters. Missing chapters are not proof that local history is absent.",
+                depth: StoryPreparationPolicy.Depth(contentDepth));
+            foreach (var contextStory in contextStories) StoryInspection.Story(contextStory, "Neighbourhood story");
             var known = stories.SelectMany(story => story.Claims).Select(claim => claim.Text.Trim())
                 .ToHashSet(StringComparer.OrdinalIgnoreCase);
             stories.AddRange(research.Stories.Where(story => !story.Claims.Any(claim => known.Contains(claim.Text.Trim()))));

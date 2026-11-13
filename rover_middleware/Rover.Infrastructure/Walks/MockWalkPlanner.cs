@@ -1,6 +1,7 @@
 using Microsoft.Extensions.Logging;
 using Rover.Application.Walks;
 using Rover.Domain.Walks;
+using Rover.Application.Journeys;
 
 namespace Rover.Infrastructure.Walks;
 
@@ -31,6 +32,8 @@ public sealed class MockWalkPlanner : IWalkPlanner
     public async Task<WalkSession> PlanWalkAsync(CreateWalkCommand command, CancellationToken cancellationToken)
     {
         cancellationToken.ThrowIfCancellationRequested();
+        StoryInspection.Record("Journey preferences", "Received",
+            $"Interests: {string.Join(", ", command.Interests)}. Pace: {command.WalkingPace}. Budget: {command.AvailableMinutes} min. Shape: {command.RouteShape}. Previously shown places: {command.PreviousStopIds.Count}. Story lenses remain research preferences, not assumed facts.");
         if (command.SelectedPlace is not null)
             return await PlanSelectedPlaceAsync(command, cancellationToken);
 
@@ -60,7 +63,11 @@ public sealed class MockWalkPlanner : IWalkPlanner
         var selection = storyPlanning
             ? await _storySelector!.SelectAsync(command, discoveredStops, desiredStops, cancellationToken)
             : null;
-        var stops = isUnionSquareStart
+        var useConnectedSelection = _localDiscoveryProvider.RequiresRealPlaces && !command.LimitLabDetours;
+        var stops = useConnectedSelection
+            ? CreateEfficientStopPlan(command, PersonalizedStopPlan.Select(command, discoveredStops,
+                selection?.Stops ?? [], desiredStops), desiredStops)
+            : isUnionSquareStart
             ? Resequence(command.StartingLocation, CreateUnionSquareStops().Where(stop => WalkInterestPolicy.Allows(stop, command.Interests)).ToArray())
             : selection?.Stops.Count >= 2
             ? CreateEfficientStopPlan(command, WalkInterestPolicy.TakeBalanced(
@@ -74,6 +81,19 @@ public sealed class MockWalkPlanner : IWalkPlanner
         // optional stop, so this loop is bounded by the original stop count.
         while (stops.Count > 2 && route.DurationMinutes + stops.Sum(stop => stop.EstimatedVisitMinutes) > command.AvailableMinutes)
         {
+            if (useConnectedSelection)
+            {
+                var removal = stops.Select((stop, index) => new { stop, index,
+                    Saving = RemovalSaving(command, stops, index) /
+                        (1 + WalkInterestPolicy.MatchedInterests(stop, command.Interests).Length
+                         + (selection?.Stops.Any(s => s.StopId == stop.StopId) == true ? 1 : 0)) })
+                    .OrderByDescending(x => x.Saving).First();
+                StoryInspection.Record("Route planning", "Removed for time",
+                    "Verified walking directions exceeded the budget; this optional stop had the highest extra travel cost relative to its interest match.", removal.stop.StopId, removal.stop.Name);
+                stops = Resequence(command.StartingLocation, stops.Where((_, i) => i != removal.index).ToArray());
+                route = await _routeProvider.CreateRouteAsync(command, stops, cancellationToken);
+                continue;
+            }
             var total = route.DurationMinutes + stops.Sum(stop => stop.EstimatedVisitMinutes);
             var count = Math.Clamp((int)Math.Floor(stops.Count * command.AvailableMinutes / (double)total), 2, stops.Count - 1);
             var retainedIds = stops.Select(stop => stop.StopId).ToHashSet();
@@ -89,6 +109,18 @@ public sealed class MockWalkPlanner : IWalkPlanner
             (stops, route) = await RefillShortRouteAsync(command, route, stops, route, cancellationToken);
         var estimatedDurationMinutes = route.DurationMinutes + stops.Sum(stop => stop.EstimatedVisitMinutes);
         var estimatedDistanceMeters = route.DistanceMeters;
+        foreach (var candidate in discoveredStops.Concat(stops).DistinctBy(s => s.StopId))
+        {
+            var retained = stops.Any(s => s.StopId == candidate.StopId);
+            var matches = WalkInterestPolicy.MatchedInterests(candidate, command.Interests);
+            StoryInspection.Record("Route candidates", retained ? "Included" : "Not retained",
+                $"Category: {candidate.Category}. Matched interests: {(matches.Length == 0 ? "no direct category/evidence match" : string.Join(", ", matches))}. AI selected: {selection?.Stops.Any(s => s.StopId == candidate.StopId) == true}. Previously shown: {PersonalizedStopPlan.WasShown(command, candidate)}. " +
+                (retained ? "Included in the final pedestrian route." : "Not in the final combination after interest, spacing, novelty and budget checks; see any time-removal event."), candidate.StopId, candidate.Name);
+        }
+        StoryInspection.Record("Route result", "Ready",
+            $"{stops.Count} stops; {route.DistanceMeters} m; {route.DurationMinutes} min walking + {stops.Sum(s => s.EstimatedVisitMinutes)} min visiting. " +
+            $"First stop: {stops.FirstOrDefault()?.Name}. Longest straight-line gap: {LongestGap(command, stops):F0} m (not pedestrian travel time). " +
+            $"Repeats from previous options: {stops.Count(s => PersonalizedStopPlan.WasShown(command, s))}. Order: {string.Join(" → ", stops.Select(s => s.Name))}.");
         var summary = isUnionSquareStart
             ? "A compact Union Square loop with architecture, public art, shopping history, and one clearly disclosed sponsored stop."
             : discoveredStops.Count >= 2
@@ -125,6 +157,17 @@ public sealed class MockWalkPlanner : IWalkPlanner
     {
         return Math.Clamp((int)Math.Round(availableMinutes / 8d), 3, 12);
     }
+
+    private static double RemovalSaving(CreateWalkCommand command, IReadOnlyList<WalkStop> stops, int i)
+    {
+        var before = i == 0 ? command.StartingLocation : stops[i - 1].Location;
+        var after = i + 1 < stops.Count ? stops[i + 1].Location : null;
+        return RouteMath.DistanceMeters(before, stops[i].Location) + (after is null ? 0 :
+            RouteMath.DistanceMeters(stops[i].Location, after) - RouteMath.DistanceMeters(before, after));
+    }
+
+    private static double LongestGap(CreateWalkCommand command, IReadOnlyList<WalkStop> stops) =>
+        stops.Select((s, i) => RouteMath.DistanceMeters(i == 0 ? command.StartingLocation : stops[i - 1].Location, s.Location)).DefaultIfEmpty(0).Max();
 
     private static IReadOnlyList<WalkStop> CreateEfficientStopPlan(
         CreateWalkCommand command,
@@ -169,6 +212,24 @@ public sealed class MockWalkPlanner : IWalkPlanner
             ordered.Insert(bestIndex, stop);
         }
 
+        // Remove crossing/backtracking orderings without another external routing call.
+        // Preserve the nearest first stop and any explicitly ordered Lab itinerary.
+        if (!command.LimitLabDetours)
+        {
+            for (var pass = 0; pass < ordered.Count; pass++)
+            {
+                var improved = false;
+                for (var a = 1; a < ordered.Count - 1; a++)
+                for (var b = a + 1; b < ordered.Count; b++)
+                {
+                    var trial = ordered.ToList();
+                    trial.Reverse(a, b - a + 1);
+                    if (PlannedDistance(command.StartingLocation, trial) + 1 < PlannedDistance(command.StartingLocation, ordered))
+                    { ordered = trial; improved = true; }
+                }
+                if (!improved) break;
+            }
+        }
         return Resequence(command.StartingLocation, ordered);
     }
 
@@ -299,7 +360,7 @@ public sealed class MockWalkPlanner : IWalkPlanner
                 .SelectMany(section => WalkInterestPolicy.TakeBalanced(section.OrderBy(stop =>
                     RouteMath.DistanceFromRouteMeters(stop.Location, direct.Coordinates)), 4, command.Interests, WalkInterestPolicy.Group)).ToArray();
             uncheckedPlaces.AddRange(unique.Except(shortlist));
-            foreach (var stop in unique) command.RecordLabDecision?.Invoke(stop, "Other candidates filled this section�s shortlist");
+            foreach (var stop in unique) command.RecordLabDecision?.Invoke(stop, "Other candidates filled this section’s shortlist");
             var verified = new List<WalkStop>();
             foreach (var batch in shortlist.Chunk(4))
             {
@@ -432,7 +493,7 @@ public sealed class MockWalkPlanner : IWalkPlanner
         var anchors = stops.Select(stop => stop.Location).Append(geometry[0]).ToList();
         var probes = CorridorCenters(geometry, 250, 21).Skip(1).SkipLast(1).ToList();
         if (probes.Count == 0) probes.Add(geometry[geometry.Count / 2]);
-        var groups = command.Interests.Select(WalkInterestPolicy.Group).Distinct().ToArray();
+        var groups = command.Interests.Where(i => !WalkInterestPolicy.IsStoryLens(i)).Select(WalkInterestPolicy.Group).Distinct().ToArray();
         if (groups.Length == 0) groups = ["local"];
         string SearchText(int section, int tier)
         {
@@ -573,8 +634,14 @@ public sealed class MockWalkPlanner : IWalkPlanner
                 }
                 return (candidate, bestIndex, minutes: bestDistance * minutesPerMetre + candidate.EstimatedVisitMinutes);
             });
-            var ranked = options.OrderBy(option => Math.Abs(command.AvailableMinutes - total - option.minutes));
-            var next = balanceInterests
+            // Add low-detour discoveries instead of using up time with a distant waypoint.
+            var personalize = _localDiscoveryProvider.RequiresRealPlaces && !command.LimitLabDetours && command.SelectedPlace is null;
+            var ranked = options.OrderBy(option => personalize ? option.minutes
+                + (PersonalizedStopPlan.WasShown(command, option.candidate) ? 15 : 0)
+                + (WalkInterestPolicy.MatchedInterests(option.candidate, command.Interests).Length == 0 ? 8 : 0)
+                + (balanceInterests ? 4 * stops.Count(s => WalkInterestPolicy.Group(s) == WalkInterestPolicy.Group(option.candidate)) : 0)
+                : Math.Abs(command.AvailableMinutes - total - option.minutes));
+            var next = balanceInterests && !personalize
                 ? WalkInterestPolicy.TakeBalanced(ranked, 1, command.Interests, option => WalkInterestPolicy.Group(option.candidate),
                     stops.Select(WalkInterestPolicy.Group)).FirstOrDefault()
                 : ranked.First();
@@ -589,7 +656,9 @@ public sealed class MockWalkPlanner : IWalkPlanner
             {
                 stops = ordered;
                 route = directions;
+                StoryInspection.Record("Route refill", "Added", $"Verified walking route plus visits: {newTotal} min; previously {total} min.", next.candidate.StopId, next.candidate.Name);
             }
+            else StoryInspection.Record("Route refill", "Rejected", $"Trial: {newTotal} min; budget: {command.AvailableMinutes} min; previous: {total} min. Provider unchanged: {directions.Provider == route.Provider}.", next.candidate.StopId, next.candidate.Name);
         }
         return (stops, route);
     }

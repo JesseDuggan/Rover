@@ -109,6 +109,7 @@ var tests = new List<(string Name, Func<Task> Run)>
     ("Photo identification requires confirmation and minimizes location disclosure", PhotoIdentificationTests.ConfirmationAndPrivacy),
     ("Photo identification handles failures and cancellation", PhotoIdentificationTests.Failures),
     ("Runtime providers never silently select test fixtures", MockDataIsolationTests.ProductionNeverEnablesFixtures),
+    ("Personalized planning respects interests, spacing and alternatives", PersonalizedPlanningTests.InterestSpacingAndAlternatives),
     ("Story-led planning validates sourced IDs and structured responses", StoryLedPlanningTests.SelectionValidation),
     ("Story-led planning fails gracefully and preserves cancellation", StoryLedPlanningTests.FailureAndCancellation),
     ("Story-led planning matches only fresh same-place Wikipedia evidence", StoryLedPlanningTests.EvidenceMatching),
@@ -1419,6 +1420,7 @@ static async Task Phase16RoutePacksSelectCompleteAndSaveStories()
                 "Shared preparation also receives the selected route stops, not only incidental discoveries.");
             AssertTrue(query.PublicPlaceNames.Contains(place.Name), "Research names match supplied public subjects.");
             AssertTrue(query.Interests.SequenceEqual(session.Interests), "Route research must preserve listener interests.");
+            AssertTrue(query.IncludeNeighbourhoodStories, "Regular route preparation requests area chapters alongside POIs in the same call.");
             AssertEqual(1000, query.SearchRadiusMeters);
             return new LocalRouteResearchResult([], null);
         }));

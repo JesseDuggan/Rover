@@ -8,6 +8,7 @@ public sealed record CreateWalkRequest(
     string? WalkingPace,
     IReadOnlyCollection<string>? AccessibilityPreferences)
 {
+    public IReadOnlyCollection<string>? PreviousStopIds { get; init; }
     public Guid? ProfileId { get; init; }
     public string NaturalRequest { get; init; } = "";
     public string Companions { get; init; } = "Solo";

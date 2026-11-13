@@ -7,7 +7,8 @@ using Rover.Domain.Walks;
 namespace Rover.Application.Journeys;
 
 public sealed record AreaStoryRequest(double Latitude, double Longitude,
-    IReadOnlyList<string>? Interests, IReadOnlyList<string>? ExcludedTitles, int SearchRadiusMeters = 1000, string? ContentDepth = null);
+    IReadOnlyList<string>? Interests, IReadOnlyList<string>? ExcludedTitles, int SearchRadiusMeters = 1000, string? ContentDepth = null,
+    bool NeighbourhoodContext = false);
 public sealed record AreaStoryCollection(string Status, IReadOnlyList<AdaptiveRouteStory> Stories, int SearchRadiusMeters = 1000);
 
 public sealed class AreaStoryService(ILocalRouteResearcher researcher, TimeProvider clock,
@@ -26,10 +27,13 @@ public sealed class AreaStoryService(ILocalRouteResearcher researcher, TimeProvi
             || (request.ExcludedTitles ?? []).Any(x => string.IsNullOrWhiteSpace(x) || x.Length > 160))
             throw new ArgumentException("Story interests or exclusions exceed the allowed size.");
         var center = new GeoLocation(request.Latitude, request.Longitude);
+        StoryInspection.Record("Neighbourhood preparation", "Started",
+            $"Area research; interests: {string.Join(", ", request.Interests ?? [])}; radius {request.SearchRadiusMeters} m; excluding {request.ExcludedTitles?.Count ?? 0} already covered titles.",
+            depth: StoryPreparationPolicy.Depth(request.ContentDepth));
         // Adapter to the citation researcher: this is a search anchor, not a saved route.
         var anchor = new RouteStorySegment("area", 0, center, center, center, 0, 0, 0, 0, false, []);
         List<LocalResearchPublicPlace> leads = [];
-        if (request is { SearchRadiusMeters: 1000, ExcludedTitles.Count: > 0 } && places is not null)
+        if (!request.NeighbourhoodContext && request is { SearchRadiusMeters: 1000, ExcludedTitles.Count: > 0 } && places is not null)
         {
             leads.AddRange(await places.NearbyStoryPlacesAsync(center, 1000, request.Interests ?? [], cancellationToken));
         }
@@ -38,6 +42,7 @@ public sealed class AreaStoryService(ILocalRouteResearcher researcher, TimeProvi
         {
             ContentDepth = StoryPreparationPolicy.Depth(request.ContentDepth),
             AreaFirst = true, MaximumStories = 3,
+            IncludeNeighbourhoodStories = request.NeighbourhoodContext,
             SearchRadiusMeters = request.SearchRadiusMeters,
             ExcludedStoryTitles = request.ExcludedTitles ?? []
         };
@@ -50,6 +55,7 @@ public sealed class AreaStoryService(ILocalRouteResearcher researcher, TimeProvi
         catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested) { throw; }
         catch (Exception exception) {
             logger.LogWarning("Area research failed: {Kind}", exception.GetType().Name);
+            StoryInspection.Record("Neighbourhood preparation", "Failed", "Research did not finish: " + exception.GetType().Name);
             return new("failed", [], request.SearchRadiusMeters);
         }
         cancellationToken.ThrowIfCancellationRequested();
@@ -67,6 +73,14 @@ public sealed class AreaStoryService(ILocalRouteResearcher researcher, TimeProvi
                     && uri.Scheme is "http" or "https"))))
             .DistinctBy(s => s.Title.Trim().ToLowerInvariant()).Take(3).ToArray();
         var status = stories.Length > 0 ? "ready" : result.Failed ? "failed" : "empty";
+        foreach (var story in stories) StoryInspection.Story(story, "Neighbourhood story");
+        foreach (var rejected in result.Stories.Except(stories))
+            StoryInspection.Record("Neighbourhood story", "Not retained",
+                excluded.Contains(rejected.Title.Trim()) ? "Already covered title." :
+                "Did not pass freshness, location, narration or claim/source checks, or exceeded the three-story limit.", rejected.StoryId, rejected.Title);
+        StoryInspection.Record("Neighbourhood preparation", status,
+            $"Retained {stories.Length} of {result.Stories.Count} researched area chapters. POI narration is prepared separately; an empty result does not establish absence of local history.",
+            depth: StoryPreparationPolicy.Depth(request.ContentDepth));
         logger.LogInformation("Area story research: {Status}; stories={Count}; radiusMeters={Radius}", status, stories.Length, request.SearchRadiusMeters);
         return new(status, stories, request.SearchRadiusMeters);
     }

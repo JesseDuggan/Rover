@@ -9,13 +9,14 @@ public sealed record CreateWalkCommand(
     WalkingPace WalkingPace,
     IReadOnlyCollection<AccessibilityPreference> AccessibilityPreferences)
 {
+    public IReadOnlyCollection<string> PreviousStopIds { get; init; } = [];
     public Action<WalkStop, string>? RecordLabDecision { get; init; }
-    public double WalkingSecondsAtPace(double seconds) => LimitLabDetours ? WalkingPace switch
+    public double WalkingSecondsAtPace(double seconds) => WalkingPace switch
     {
         WalkingPace.Leisurely => seconds * 1.35,
         WalkingPace.Brisk => seconds * (1.35 / 1.7),
         _ => seconds
-    } : seconds;
+    };
     public string? AdditionalPlaceQuery { get; init; }
     public bool SearchProminentPlaces { get; init; }
     public bool LimitLabDetours { get; init; }

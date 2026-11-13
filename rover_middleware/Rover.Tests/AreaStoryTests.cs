@@ -17,8 +17,16 @@ internal static class AreaStoryTests
             [source], .9, now.AddHours(6));
         var fake = new Researcher(new([story], null));
         var service = new AreaStoryService(fake, TimeProvider.System, NullLogger<AreaStoryService>.Instance);
-        var request = new AreaStoryRequest(center.Latitude, center.Longitude, ["history"], []);
+        var request = new AreaStoryRequest(center.Latitude, center.Longitude, ["history"], [], ContentDepth: "deeper stories", NeighbourhoodContext: true);
+        var inspections = new List<StoryInspectionEvent>();
+        StoryInspection.Listener.Value = inspections.Add;
         var result = await service.ResearchAsync(request, default);
+        StoryInspection.Listener.Value = null;
+        Check(fake.Query!.ContentDepth == "deep", "Area research must preserve content depth.");
+        Check(fake.Query.IncludeNeighbourhoodStories, "Explicit area context must not become POI gap discovery.");
+        Check(inspections.Any(e => e.Stage == "Neighbourhood story" && e.Title == story.Title)
+            && inspections.Any(e => e.Stage == "Neighbourhood preparation" && e.Outcome == "ready"),
+            "Inspector must expose the area story and preparation result.");
         Check(result.Status == "ready" && result.Stories.Count == 1, "Fresh city must produce area stories.");
         Check(fake.Query is { AreaFirst: true, MaximumStories: 3 }
             && fake.Query.PublicPlaceNames.Count == 0 && fake.Query.Journey is null

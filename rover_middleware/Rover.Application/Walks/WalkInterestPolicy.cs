@@ -4,6 +4,21 @@ namespace Rover.Application.Walks;
 
 public static class WalkInterestPolicy
 {
+    public static bool IsStoryLens(string value) => value.Trim().ToLowerInvariant() is
+        "hidden gems" or "notable people" or "unusual facts" or "current events" or "events" or "weather";
+
+    // Story lenses guide research; they do not establish that a place has a particular history.
+    public static string[] MatchedInterests(WalkStop stop, IEnumerable<string> interests)
+    {
+        var text = $"{stop.Name} {stop.ShortDescription} {stop.Category}".ToLowerInvariant();
+        return interests.Where(interest => (!IsStoryLens(interest) && Group(interest) == Group(stop))
+            || (IsStoryLens(interest) && (interest.ToLowerInvariant() switch
+            {
+                "notable people" => text.Contains("birthplace") || text.Contains("memorial") || text.Contains("lived"),
+                "current events" or "events" => text.Contains("festival") || text.Contains("exhibition"),
+                _ => false
+            }))).Distinct(StringComparer.OrdinalIgnoreCase).ToArray();
+    }
     public static bool WantsFood(IEnumerable<string> interests) => interests.Any(IsFood);
 
     public static bool IsFood(string category)
@@ -67,7 +82,7 @@ public static class WalkInterestPolicy
         IReadOnlyCollection<string> interests, Func<T, string> groupFor,
         IEnumerable<string>? existingGroups = null)
     {
-        var counts = interests.Select(Group).Distinct().ToDictionary(group => group, _ => 0);
+        var counts = interests.Where(i => !IsStoryLens(i)).Select(Group).Distinct().ToDictionary(group => group, _ => 0);
         var totalSlots = limit;
         foreach (var group in existingGroups ?? [])
         {
@@ -101,5 +116,5 @@ public static class WalkInterestPolicy
     public static bool IsCoffee(string value) =>
         value.Contains("coffee", StringComparison.OrdinalIgnoreCase) ||
         value.Contains("cafe", StringComparison.OrdinalIgnoreCase) ||
-        value.Contains("café", StringComparison.OrdinalIgnoreCase);
+        value.Contains("cafÃ©", StringComparison.OrdinalIgnoreCase);
 }

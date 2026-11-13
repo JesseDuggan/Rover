@@ -3,6 +3,7 @@ using Rover.Application.LocationIntelligence;
 using Rover.Application.Walks;
 using Rover.Domain.Walks;
 using Rover.Infrastructure.LocationIntelligence;
+using Rover.Application.Journeys;
 
 namespace Rover.Infrastructure.Walks;
 
@@ -102,7 +103,25 @@ public sealed class GooglePlacesLocalDiscoveryProvider : ILocalDiscoveryProvider
                 command.StartingLocation, null, null, 650, null, []), cancellationToken);
             places = landmarks.Places.Concat(places);
         }
-        var uniquePlaces = places.DistinctBy(place => place.CanonicalId).ToArray();
+        var gathered = places.DistinctBy(place => place.CanonicalId).ToList();
+        // A combined nearest-first response can be full of churches/parks while
+        // missing other requested interests. Probe up to two absent groups.
+        if (!command.LimitLabDetours && result.Enabled && gathered.Count > 0 && !warnings.Any())
+        {
+            var present = gathered.Select(p => WalkInterestPolicy.Group(DisplayCategory(p))).ToHashSet();
+            foreach (var group in other.Where(i => !WalkInterestPolicy.IsStoryLens(i))
+                .Select(WalkInterestPolicy.Group).Distinct().Where(g => !present.Contains(g)).Take(2))
+            {
+                if (group is not ("history" or "architecture" or "art" or "culture" or "nature")) continue;
+                var found = await _placesProvider.GetContextAsync(query with
+                {
+                    Interests = [group], RadiusMeters = Math.Min(query.RadiusMeters, 1500)
+                }, cancellationToken);
+                gathered.AddRange(found.Places);
+                StoryInspection.Record("Interest coverage", "Searched missing group", $"Requested {group} was absent from nearby results; supplemental search returned {found.Places.Count} places. All still require distance, interest and route checks.");
+            }
+        }
+        var uniquePlaces = gathered.DistinctBy(place => place.CanonicalId).ToArray();
         var wantsCommercialStops = command.Interests.Any(i => WalkInterestPolicy.Group(i) == "shopping"
             || i.Contains("tour agency", StringComparison.OrdinalIgnoreCase));
         var ranked = uniquePlaces

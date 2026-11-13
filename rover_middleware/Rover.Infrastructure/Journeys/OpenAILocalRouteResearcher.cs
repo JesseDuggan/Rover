@@ -88,9 +88,11 @@ public sealed class OpenAILocalRouteResearcher(HttpClient client, LocalRouteRese
         StoryInspection.Record("Research", "Started", neighbourhoodRetry ? "Geographic recovery search" : "Initial cited evidence search", depth: StoryPreparationPolicy.Depth(query.ContentDepth));
         try
         {
-            var subjects = options.HistoricalDiscoveryEnabled && discovery is not null
+            // Building/monument leads bias an area overview back towards POIs.
+            var areaContextOnly = query.AreaFirst && query.IncludeNeighbourhoodStories;
+            var subjects = !areaContextOnly && options.HistoricalDiscoveryEnabled && discovery is not null
                 ? await discovery.FindAsync(query, budget.Token) : [];
-            var archiveLeads = europeana is not null
+            var archiveLeads = !areaContextOnly && europeana is not null
                 ? await europeana.FindResearchLeadsAsync(query, subjects, budget.Token) : [];
             var collection = query.Journey is not null;
             var maximumStories = collection
@@ -106,7 +108,7 @@ public sealed class OpenAILocalRouteResearcher(HttpClient client, LocalRouteRese
                  || topic.Contains("former or local names", StringComparison.OrdinalIgnoreCase)
                  || topic.Contains("what used to be here", StringComparison.OrdinalIgnoreCase));
             var gapSearch = query.Question?.Text.Contains("Research this block or landscape", StringComparison.Ordinal) == true
-                || query is { AreaFirst: true, SearchRadiusMeters: 1000, ExcludedStoryTitles.Count: > 0, Question: null };
+                || query is { AreaFirst: true, IncludeNeighbourhoodStories: false, SearchRadiusMeters: 1000, ExcludedStoryTitles.Count: > 0, Question: null };
             var records = gapSearch && !neighbourhoodRetry
                 ? await FindLocalRecordsAsync(query, budget.Token) : [];
             StoryInspection.Record("Archive discovery", gapSearch && !neighbourhoodRetry ? "Attempted" : "Integrated search", gapSearch && !neighbourhoodRetry ? $"Dedicated archive pass returned {records.Length} cited record URLs." : "Archive prompts may be included in the main evidence search; no separate archive pass was required.");
@@ -116,6 +118,9 @@ public sealed class OpenAILocalRouteResearcher(HttpClient client, LocalRouteRese
             {
                 area = query.Area,
                 areaFirst = query.AreaFirst,
+                areaContextOnly,
+                areaContextInstructions = areaContextOnly ? "This pass prepares ONLY neighbourhood context. Individual POI stories are prepared separately. Establish the neighbourhood from cited geography, then explain what makes the area distinctive through selected interests: community origins, local traditions, street life, landscape, cultural identity or documented festivals. Prefer BIA/BID/local association histories, municipal neighbourhood profiles and local archives. Do not return standalone building histories or substitute a theatre, church or monument. A building may illustrate the wider neighbourhood story, but cannot be its sole subject. Classify the story as neighbourhood or street context and name the documented area. Distinguish historical festival traditions from current scheduled events; use current verified dates only for the latter. Use the existing evidence search for local sources; no preliminary POI discovery is needed." : null,
+                neighbourhoodPreparation = query.IncludeNeighbourhoodStories && !areaContextOnly ? "Prepare two complementary layers in this collection: individual place stories AND distinct neighbourhood context. Reserve part of the existing search and story budget for one to three area chapters fitting the selected interests. Establish the local area from sources, then research what makes it distinctive: its development, communities, landscape, people or traditions as relevant. Search local community organisations and official festival calendars when culture or events are selected. A past festival can be cultural history; only confirmed current dates justify calling it upcoming. Place area chapters along suitable stretches of the supplied route without adding waypoints. Do not repeat a POI story, force unrelated topics or invent content to fill a quota. Use neighbourhood/street/city intent and the actual geographic scope for contextual chapters. If no area evidence survives verification, return the supported POI stories." : null,
                 geographicFallback = query.Question is null ? GeographicFallbackInstructions : null,
                 recoveryInstructions = neighbourhoodRetry
                     ? "The initial search found no usable local stories. Establish the actual named neighbourhood or community from the supplied routeAreas using cited geographic evidence, not the city centre. Search local-language municipal archives, heritage organisations and landscape history. Follow the geographic fallback policy in order, requiring a cited local connection for broader context. Keep actual subject coordinates and all citation requirements. Do not repeat an unrelated landmark or replace history with POI directory facts."

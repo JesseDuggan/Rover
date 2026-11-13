@@ -17,6 +17,8 @@ public sealed record LocalRouteResearchQuery(
     public string Audience { get; init; } = "GeneralTraveller";
     public StoryResearchQuestion? Question { get; init; }
     public bool AreaFirst { get; init; }
+    // Collections need context as well as individual landmarks, within one research budget.
+    public bool IncludeNeighbourhoodStories { get; init; }
     public int SearchRadiusMeters { get; init; } = 1000;
     public IReadOnlyList<string> ExcludedStoryTitles { get; init; } = [];
     // Internal provider-built stories only; never included in model input.
