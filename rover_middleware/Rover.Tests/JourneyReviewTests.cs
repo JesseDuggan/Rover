@@ -21,6 +21,18 @@ internal static class JourneyReviewTests
         if(JourneyReviewAgent.Analyze([accepted,accepted with {Story="",Narration="",Stage="Spoken edit"}]).Count!=0)
             throw new Exception("Legacy edit record was counted as a missing story despite a uniquely linked final draft");
         if(!JourneyReviewAgent.Analyze([rejected,accepted]).Any(x=>x.Code=="latest-attempt-failed"))throw new Exception("Later failure hidden by old draft");
+        var delivered = accepted with { Stage="Delivered story", Outcome="Returned" };
+        var discarded = rejected with {Story="discarded",Title="Rejected earlier draft",Narration="Rich in history."};
+        var retry = accepted with {Story="",Title="Search place name",Narration="",Stage="Second research pass",Outcome="Started"};
+        var returnedSummary = JourneyReviewAgent.Summarize([delivered,discarded,retry,accepted],4,false);
+        if (!returnedSummary.DeliveryRecorded || returnedSummary.StoriesChecked!=1 || returnedSummary.StoriesWithoutDrafts!=0
+            || returnedSummary.IntermediateStoryGroups!=2 || returnedSummary.RejectedEvents!=1)
+            throw new Exception("Intermediate attempts inflated returned story count");
+        if (JourneyReviewAgent.Analyze([delivered,discarded,retry]).Any(x=>x.Code is "missing-draft" or "editorial-review"))
+            throw new Exception("Rejected draft or retry was editorially reviewed as delivered narration");
+        var noReturn = JourneyReviewAgent.Summarize([retry with {Stage="Delivery contract",Title=""},discarded],2,false);
+        if (!noReturn.DeliveryRecorded || noReturn.StoriesChecked!=0 || noReturn.Sufficiency!="Insufficient")
+            throw new Exception("New failed request was miscounted as legacy returned narration");
         var weak=accepted with { Narration="Nestled in the heart of town, rich in history.",Sources=[] };
         var summary=JourneyReviewAgent.Summarize([accepted,rejected,accepted with {Story="",Narration="",Stage="Spoken edit"}],3,false);
         if(summary.StoriesChecked!=1 || summary.IdentifiedStories!=1 || summary.DraftsWithSourceLinks!=1 || summary.Sufficiency!="Enough for recorded-draft editorial checks")

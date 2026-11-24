@@ -110,6 +110,11 @@ public sealed record AdaptiveRouteStory(
     public string? SensitivityNotice { get; init; }
     public IReadOnlyList<string> UncertainClaims { get; init; } = [];
     public string TemporalClassification { get; init; } = "evergreen";
+    public bool StoryValueVerified { get; init; }
+    public string? EditorialPolicyVersion { get; init; }
+    public string? SubjectScale { get; init; }
+    public string? ChapterRole { get; init; }
+    public string? StoryValueKind { get; init; }
     public string ResearchDepth { get; init; } = "standard";
     public string GeographicScope { get; init; } = "local";
     public string? GeographicArea { get; init; }
@@ -495,7 +500,10 @@ public sealed class AdaptiveRouteStoryPackService : IAdaptiveRouteStoryPackServi
                 UpdatedUtc = _timeProvider.GetUtcNow(),
                 Pack = pack
             };
-            return await StoreGenerationStateAsync(ready, generationToken);
+            var storedReady = await StoreGenerationStateAsync(ready, generationToken);
+            StoryInspection.Record("Delivery contract", "Tracked", "Final stored route pack; playback is not confirmed.");
+            foreach (var story in stories) StoryInspection.Story(story, "Delivered story");
+            return storedReady;
         }
         catch (OperationCanceledException)
         {
@@ -775,7 +783,7 @@ public sealed class AdaptiveRouteStoryPackService : IAdaptiveRouteStoryPackServi
                 publicPlaces.Select(place => place.Name).ToArray(), session.Interests.ToArray(), language, publicPlaces,
                 _options.JourneyCollectionsEnabled ? JourneyCollectionBuilder.Brief(session, plan, existingStories.Concat(stories).ToArray()) : null)
                 { ContentDepth = StoryPreparationPolicy.Depth(contentDepth), LibraryCandidates = stories.ToArray(), Audience = audience,
-                    IncludeNeighbourhoodStories = true }, cancellationToken);
+                    IncludeNeighbourhoodStories = true, RequireStoryValue = true }, cancellationToken);
             var contextStories = research.Stories.Where(story => story.Intent is RouteStoryIntent.NeighbourhoodHistory
                 or RouteStoryIntent.CityHistory or RouteStoryIntent.StreetHistory || story.GeographicScope != "local").ToArray();
             StoryInspection.Record("Neighbourhood preparation", contextStories.Length > 0 ? "Ready" : "No area chapter returned",

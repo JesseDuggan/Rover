@@ -18,6 +18,18 @@ internal static class SharedStoryLibraryTests
             Check(fake.Calls == 2, "A standard cached story cannot satisfy deeper preparation.");
             await service.ResearchAsync(query with { ContentDepth = "deep" }, default);
             Check(fake.Calls == 2, "Equivalent depth labels reuse prepared evidence.");
+            await service.ResearchAsync(query with { ContentDepth = "deep", RequireStoryValue = true }, default);
+            Check(fake.Calls == 3, "Legacy cached narration without story-value assessment must be researched again.");
+        });
+        await WithLibrary(async (options, clock) => {
+            var query = Query("area") with {AreaFirst=true,MaximumStories=1,SearchRadiusMeters=1000};
+            var distant = Story("distant",clock.Now) with {Anchor=new(49.46,8.7105),
+                ContextOrigin=query.Segments[0].Anchor,GeographicScope="neighbourhood",GeographicArea="Other district"};
+            await new FileSharedStoryLibrary(options,clock).StoreAsync("en",[distant],default);
+            var fake = new Researcher(clock);
+            var result = await Service(fake,options,clock,new()).ResearchAsync(query,default);
+            Check(fake.Calls==1 && result.Stories.All(s=>s.StoryId!="distant"),
+                "Saved broader context cannot bypass the requested area radius via its origin.");
         });
     }
     public static async Task QuestionIsolation()

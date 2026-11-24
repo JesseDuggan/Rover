@@ -33,6 +33,7 @@ internal static class StoryEditorialTests
         {
             await Verify(false, scope: scope);
             await Verify(false, relevant: false, scope: scope);
+            await Verify(false, scope: scope, areaBound: true);
         }
     }
     public static async Task QuestionEvidence()
@@ -109,7 +110,7 @@ internal static class StoryEditorialTests
         finally { StoryInspection.Listener.Value = previous; }
     }
 
-    private static async Task Verify(bool question, bool relevant = true, bool recovery = false, bool foodOnly = false, string? scope = null, bool areaRecovery = false, string? coordinateCase = null, string? rejectedDraft = null, bool gap = false, bool mismatchedVenue = false, bool crossSentenceQualifier = false, bool briefEvidence = false, bool edited = false, bool repairEdit = false, bool repairFails = false, string? repairFailure = null)
+    private static async Task Verify(bool question, bool relevant = true, bool recovery = false, bool foodOnly = false, string? scope = null, bool areaRecovery = false, string? coordinateCase = null, string? rejectedDraft = null, bool gap = false, bool mismatchedVenue = false, bool crossSentenceQualifier = false, bool briefEvidence = false, bool edited = false, bool repairEdit = false, bool repairFails = false, string? repairFailure = null, bool areaBound = false)
     {
         var anchor = new GeoLocation(52.2946778, 4.7108732);
         var segment = new RouteStorySegment("area", 0, anchor, anchor, anchor, 0, 0, 0, 0, false, []);
@@ -155,6 +156,10 @@ internal static class StoryEditorialTests
                     Check(body.RootElement.GetProperty("model").GetString() == "test", "Editing must not change the research model.");
                     var input = body.RootElement.GetProperty("input").GetString()!;
                     var instructions = body.RootElement.GetProperty("instructions").GetString()!;
+                    if (areaBound) {
+                        Check(instructions.Contains("Area research boundary:"), "Area research must receive its bounded geographic policy.");
+                        Check(!instructions.Contains("expand in order:"), "Area research must not also receive instructions to expand beyond its boundary.");
+                    }
                     Check(instructions.Contains("warm, conversational") && instructions.Contains("family-safe")
                         && instructions.Contains("political movements") && instructions.Contains("source disagreements"),
                         "Editorial instructions must reach route-free research.");
@@ -172,7 +177,7 @@ internal static class StoryEditorialTests
                             == Math.Round(anchor.Latitude, 3), "Automatic research preserves neighbourhood-scale precision.");
                     }
                     if (calls == 3)
-                        Check(input.Contains("Follow the geographic fallback policy in order"),
+                        Check(input.Contains("Follow the supplied geographic policy"),
                             "Retry must research neighbourhood evidence without widening eligibility.");
                     if (question)
                         Check(input.Contains("workshop") && instructions.Contains("actual question")
@@ -204,6 +209,7 @@ internal static class StoryEditorialTests
                     if (!question)
                         Check(body.RootElement.GetProperty("instructions").GetString()!.Contains("geographicScope local, neighbourhood, city, county, region or country"),
                             "Scope policy must reach classifier instructions, not just untrusted evidence.");
+                    Check(body.RootElement.GetProperty("instructions").GetString()!.Contains(StoryPreparationPolicy.NarrationFocus), "Spoken editor receives the local-guide rule, not just the search model.");
                     var cards = JsonSerializer.Serialize(new { stories = new[] { new {
                         evidenceIndex = 0, title = "Workshop records", kind = "history",
                         latitude = mismatchedVenue ? anchor.Latitude + 1 : scope is not null ? anchor.Latitude + 0.03 : recovery && calls == 2 ? anchor.Latitude + 1 : anchor.Latitude, longitude = anchor.Longitude,
@@ -242,6 +248,7 @@ internal static class StoryEditorialTests
                 new ApproximateLiveLocation(null, null, null, null), [], foodOnly ? ["food"] : ["history"], "en") {
                     PublicPlaces = mismatchedVenue ? [new("Town Hall - Perth", null, anchor)] : null,
                     AreaFirst = !recovery || areaRecovery,
+                    SearchRadiusMeters = scope is not null && !areaBound ? 5000 : 1000,
                     Question = question ? new(gap ? "Research this block or landscape and its workshop." : "How did the workshop change?", StoryQuestionScope.Neighbourhood,
                         StoryQuestionFormat.ThenAndNow, 1, 180) : null
                 }, caller.Token);
@@ -253,6 +260,10 @@ internal static class StoryEditorialTests
                 continue;
             }
             var result = await pendingResult;
+            if (areaBound) {
+                Check(result.Stories.Count == 0, "Broader labels cannot override an explicit area radius, including after recovery.");
+                continue;
+            }
             if (mismatchedVenue)
             {
                 Check(result.Stories.Count == 0, "A longer name must not inherit a selected place pin and bypass geographic rejection.");

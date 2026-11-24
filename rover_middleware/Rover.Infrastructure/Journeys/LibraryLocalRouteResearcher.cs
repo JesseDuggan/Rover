@@ -4,6 +4,7 @@ using System.Text;
 using System.Text.Json;
 using Microsoft.Extensions.Logging;
 using Rover.Application.Journeys;
+using Rover.Application.Drives;
 using Rover.Application.Walks;
 
 namespace Rover.Infrastructure.Journeys;
@@ -34,7 +35,7 @@ public sealed class LibraryLocalRouteResearcher(
             {
                 policy = StoryPreparationPolicy.Version, depth = StoryPreparationPolicy.Depth(query.ContentDepth),
                 interests = query.Interests.Select(Normalize).Distinct().Order().ToArray(),
-                query.Question, language, query.SearchRadiusMeters,
+                query.Question, language, query.SearchRadiusMeters, query.RequireStoryValue,
                 areas = query.Segments.Select(s => new {
                     startLat = Math.Round(s.Start.Latitude, 4), startLon = Math.Round(s.Start.Longitude, 4),
                     endLat = Math.Round(s.End.Latitude, 4), endLon = Math.Round(s.End.Longitude, 4)
@@ -72,6 +73,7 @@ public sealed class LibraryLocalRouteResearcher(
             .OrderByDescending(story => InterestMatch(story.Category, query.Interests))
             .ThenBy(story => story.OpensAtRouteMeters)
             .DistinctBy(story => Normalize(story.Title)).Take(target).ToArray();
+        if (query.Question is null) reused = StoryEditorialPolicy.DistinctChapters(reused, query.AreaFirst && query.IncludeNeighbourhoodStories).ToArray();
         // A partially cached collection is not a new answer to a multi-part question.
         if (query.Question is not null && reused.Length < target) reused = [];
         if (reused.Length > 0) metrics.Record("reused", reused.Length);
@@ -111,15 +113,19 @@ public sealed class LibraryLocalRouteResearcher(
         }
         logger.LogInformation("Shared story library reused {Reused}; researched {New}; requested {Requested}.",
             reused.Length, fresh.Stories.Count, missing);
-        return new(reused.Concat(fresh.Stories)
+        var combined = reused.Concat(fresh.Stories)
             .Where(story => !excluded.Contains(Normalize(story.Title)))
-            .DistinctBy(story => story.StoryId).DistinctBy(story => Normalize(story.Title)).ToArray(), fresh.Warning) { Failed = fresh.Failed };
+            .DistinctBy(story => story.StoryId).DistinctBy(story => Normalize(story.Title)).ToArray();
+        return new(query.Question is null ? StoryEditorialPolicy.DistinctChapters(combined, query.AreaFirst && query.IncludeNeighbourhoodStories) : combined, fresh.Warning) { Failed = fresh.Failed };
     }
 
     private static AdaptiveRouteStory? Rebase(AdaptiveRouteStory story, LocalRouteResearchQuery query)
     {
+        if (query.RequireStoryValue && (!story.StoryValueVerified || story.EditorialPolicyVersion != StoryPreparationPolicy.Version)) return null;
         // Regional relevance was established for this origin, not every visitor near the subject.
         if (story.GeographicScope != "local" && query.Question is not null) return null;
+        if (query.AreaFirst && (!ScenicDriveService.ValidLocation(story.Anchor) || query.Segments.All(segment =>
+            RouteMath.DistanceMeters(segment.Anchor, story.Anchor) > query.SearchRadiusMeters))) return null;
         var relevanceAnchor = story.ContextOrigin ?? story.Anchor;
         var segment = query.Segments.MinBy(segment =>
             RouteMath.DistanceToSegmentMeters(relevanceAnchor, segment.Start, segment.End))!;

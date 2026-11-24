@@ -288,6 +288,13 @@ public static class DependencyInjection
         services.AddSingleton(sharedStories);
         services.AddSingleton<FileSharedStoryLibrary>();
         services.AddSingleton<SharedStoryLibraryMetrics>();
+        services.AddSingleton(new ResearchGeographyOptions { ApiKey = configuration["Rover:ResearchGeography:ApiKey"]
+            ?? Environment.GetEnvironmentVariable("GOOGLE_GEOCODING_API_KEY")
+            ?? Environment.GetEnvironmentVariable("GOOGLE_MAPS_SERVER_API_KEY")
+            ?? Environment.GetEnvironmentVariable("GOOGLE_PLACES_API_KEY")
+            ?? Environment.GetEnvironmentVariable("GOOGLE_MAPS_API_KEY") });
+        // Geocoding uses a query-string key; retain usage metrics without URL logging.
+        services.AddHttpClient<ResearchGeography>().RemoveAllLoggers();
         services.AddHttpClient<OpenAILocalRouteResearcher>();
         services.AddHttpClient("HistoricalDiscovery", client =>
         {

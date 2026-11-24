@@ -49,6 +49,21 @@ internal static class AreaStoryTests
         Check(broader.Stories.Count == 1 && broader.SearchRadiusMeters == 5000
             && fake.Query!.SearchRadiusMeters == 5000, "Regional scope must be explicit and passed to researcher.");
         Check(broader.Stories[0].Anchor == regional.Anchor, "Do not relocate regional subjects to the walker.");
+        // Origin metadata must never make a distant subject local, at any latitude.
+        foreach (var latitude in new[] { -33.8, 0, 35.6, 51.5 }) {
+            var localCenter = new GeoLocation(latitude, 12);
+            var wrong = story with { Anchor = new GeoLocation(latitude + .05, 12),
+                ContextOrigin = localCenter, GeographicScope = "neighbourhood", GeographicArea = "Other district" };
+            fake.Result = new([wrong], null);
+            var localRequest = request with { Latitude=latitude, Longitude=12 };
+            Check((await service.ResearchAsync(localRequest,default)).Stories.Count==0,
+                "A matching context origin cannot bypass the subject radius.");
+            Check((await service.ResearchAsync(localRequest with {SearchRadiusMeters=20000},default)).Stories.Count==1,
+                "An explicitly selected larger area remains supported.");
+            fake.Result = new([wrong with {Anchor=localCenter}],null);
+            Check((await service.ResearchAsync(localRequest,default)).Stories.Count==1,
+                "Nearby neighbourhood context remains available.");
+        }
         try {
             await service.ResearchAsync(request with { SearchRadiusMeters = 50000 }, default);
             throw new Exception("Unbounded search accepted.");

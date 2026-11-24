@@ -16,6 +16,7 @@ public sealed class AreaStoryService(ILocalRouteResearcher researcher, TimeProvi
 {
     public async Task<AreaStoryCollection> ResearchAsync(AreaStoryRequest request, CancellationToken cancellationToken)
     {
+        StoryInspection.Record("Delivery contract", "Tracked", "Final returned stories are recorded separately from research drafts; playback is not confirmed.");
         cancellationToken.ThrowIfCancellationRequested();
         if (request.SearchRadiusMeters is not (1000 or 5000 or 20000))
             throw new ArgumentException("Search radius must be 1000, 5000 or 20000 metres.");
@@ -41,7 +42,7 @@ public sealed class AreaStoryService(ILocalRouteResearcher researcher, TimeProvi
             leads.Select(p => p.Name).ToArray(), (request.Interests ?? []).Distinct(StringComparer.OrdinalIgnoreCase).ToArray(), "en", leads)
         {
             ContentDepth = StoryPreparationPolicy.Depth(request.ContentDepth),
-            AreaFirst = true, MaximumStories = 3,
+            AreaFirst = true, MaximumStories = 3, RequireStoryValue = true,
             IncludeNeighbourhoodStories = request.NeighbourhoodContext,
             SearchRadiusMeters = request.SearchRadiusMeters,
             ExcludedStoryTitles = request.ExcludedTitles ?? []
@@ -64,19 +65,24 @@ public sealed class AreaStoryService(ILocalRouteResearcher researcher, TimeProvi
         var stories = result.Stories.Where(s => !excluded.Contains(s.Title.Trim())
             && s.ExpiresUtc > now && s.Claims.Count > 0 && s.Sources.Count > 0
             && s.Variants.Any(v => !string.IsNullOrWhiteSpace(v.Narration))
-            && double.IsFinite(s.Anchor.Latitude) && double.IsFinite(s.Anchor.Longitude)
-            && (s.ContextOrigin is { } origin && s.GeographicScope != "local"
-                ? RouteMath.DistanceMeters(center, origin) <= 1000
-                : RouteMath.DistanceMeters(center, s.Anchor) <= request.SearchRadiusMeters)
+            && ScenicDriveService.ValidLocation(s.Anchor)
+            // ContextOrigin is the search origin, not evidence of where the subject is.
+            && RouteMath.DistanceMeters(center, s.Anchor) <= request.SearchRadiusMeters
             && s.Claims.All(c => c.SourceIds.Count > 0 && c.SourceIds.All(id =>
                 s.Sources.Any(source => source.SourceId == id && Uri.TryCreate(source.Url, UriKind.Absolute, out var uri)
                     && uri.Scheme is "http" or "https"))))
             .DistinctBy(s => s.Title.Trim().ToLowerInvariant()).Take(3).ToArray();
         var status = stories.Length > 0 ? "ready" : result.Failed ? "failed" : "empty";
-        foreach (var story in stories) StoryInspection.Story(story, "Neighbourhood story");
+        foreach (var story in stories) {
+            StoryInspection.Story(story, "Neighbourhood story");
+            StoryInspection.Story(story, "Delivered story");
+        }
         foreach (var rejected in result.Stories.Except(stories))
             StoryInspection.Record("Neighbourhood story", "Not retained",
                 excluded.Contains(rejected.Title.Trim()) ? "Already covered title." :
+                !ScenicDriveService.ValidLocation(rejected.Anchor) ? "Invalid subject coordinates." :
+                RouteMath.DistanceMeters(center, rejected.Anchor) > request.SearchRadiusMeters
+                    ? $"Subject location is outside the requested {request.SearchRadiusMeters} m area; search origin does not establish geographic relevance." :
                 "Did not pass freshness, location, narration or claim/source checks, or exceeded the three-story limit.", rejected.StoryId, rejected.Title);
         StoryInspection.Record("Neighbourhood preparation", status,
             $"Retained {stories.Length} of {result.Stories.Count} researched area chapters. POI narration is prepared separately; an empty result does not establish absence of local history.",

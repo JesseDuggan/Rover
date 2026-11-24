@@ -11,6 +11,7 @@ public static class NearbyStoryResearch
         LocationStoryRequest request, DateTimeOffset now, CancellationToken cancellationToken,
         bool selectedDriveStop = false)
     {
+        StoryInspection.Record("Delivery contract", "Tracked", "Final returned stories are recorded separately from research drafts; playback is not confirmed.");
         LocationStoryResult Empty(string status) => new(
             place?.Name ?? "Nearby story", "", null, place?.CanonicalId,
             [], [], 0, [], []) { ResearchStatus = status };
@@ -31,7 +32,7 @@ public static class NearbyStoryResearch
             [new LocalResearchPublicPlace(place.Name, place.Address, place.Coordinates)])
         {
             ContentDepth = StoryPreparationPolicy.Depth(request.ContentDepth),
-            MaximumStories = 1,
+            MaximumStories = 1, RequireStoryValue = true,
             Question = new StoryResearchQuestion(
                 $"What is distinctive about {place.Name} at {place.Address}? Listed place types: {string.Join(", ", place.Categories)}. Verify its identity and choose a research angle appropriate to this exact site. " +
                 (request.RouteGeometry.Count >= 2 ? FormattableString.Invariant($"This walking journey starts at {request.RouteGeometry[0].Latitude:F4},{request.RouteGeometry[0].Longitude:F4} and ends at {request.RouteGeometry[^1].Latitude:F4},{request.RouteGeometry[^1].Longitude:F4}. ") : "") +
@@ -47,20 +48,27 @@ public static class NearbyStoryResearch
         var commemorative = System.Text.RegularExpressions.Regex.IsMatch(subjectTypes,
             @"\b(plaque|marker|memorial|monument|stolperstein|mémorial|denkmal|placa|targa)\b",
             System.Text.RegularExpressions.RegexOptions.IgnoreCase | System.Text.RegularExpressions.RegexOptions.CultureInvariant);
-        var retry = true; // Every kind of place gets the same bounded recovery opportunity.
+        var candidateIds = new Dictionary<LocationStoryResult, string>();
+        LocationStoryResult Finish(LocationStoryResult result) {
+            if (result.ResearchStatus == "ready")
+                StoryInspection.Record("Delivered story", "Returned", "Final selected POI narration returned after story-value checks; playback is not confirmed.", candidateIds.GetValueOrDefault(result), result.StoryTitle, result.ShortSpokenNarration,
+                    result.SourceReferences.Select(source => source.SourceUrl).OfType<string>().ToArray(), StoryPreparationPolicy.Depth(request.ContentDepth));
+            else StoryInspection.Record("Delivery outcome", "Map only", "No worthwhile verified narration survived the bounded research attempts. The POI is not removed from the map or route.", title: place.Name);
+            return result;
+        }
         using var first = CancellationTokenSource.CreateLinkedTokenSource(timeout.Token);
-        if (retry) first.CancelAfter(TimeSpan.FromSeconds(45));
+        first.CancelAfter(TimeSpan.FromSeconds(45));
         var initial = await Search(query, first.Token);
-        if (!retry || (initial.ResearchStatus == "ready" && !IsGeneric(initial.ShortSpokenNarration) && (StoryPreparationPolicy.Depth(request.ContentDepth) != "deep" || initial.ShortSpokenNarration.Split(' ', StringSplitOptions.RemoveEmptyEntries).Length >= 80)) || timeout.IsCancellationRequested) return initial;
+        if (initial.ResearchStatus == "ready" || timeout.IsCancellationRequested) return Finish(initial);
         var focus = commemorative
             ? "Look for an inscription, marker inventory or photograph identifying what is commemorated. Follow that person, object, image or event into archives. Explain one visible detail, distinguishing later replicas or approximate positions when evidence supports it."
             : "Search local-language archives, collections and primary histories under alternate or former names. Trace one specific person, event, natural feature or change documented at this exact attraction.";
         var followUp = new StoryResearchQuestion(
             $"At {place.Name}, {place.Address}, what can the walker notice? {focus} Connect the subject back to the named stop using cited evidence. Develop the evidence into a complete, connected story at the requested content depth, not a directory summary. Keep the entire single story in one cited paragraph. Identify the stop by its supplied name in a supported claim. Do not relocate events or infer a connection from proximity.",
             StoryQuestionScope.Street, StoryQuestionFormat.Single, 1, 90);
-        StoryInspection.Record("Second research pass", "Started", "First result was missing, generic or shorter than the deep-story target; retry uses former names and local records.", title: place.Name);
+        StoryInspection.Record("Second research pass", "Started", "First result had no accepted, worthwhile story; one targeted follow-up uses former names and local records. Length alone does not trigger a retry.", title: place.Name);
         var recovered = await Search(query with { Question = followUp }, timeout.Token);
-        return recovered.ResearchStatus == "ready" ? recovered : initial;
+        return Finish(recovered.ResearchStatus == "ready" ? recovered : Empty(recovered.ResearchStatus == "failed" || initial.ResearchStatus == "failed" ? "failed" : "empty"));
 
         async Task<LocationStoryResult> Search(LocalRouteResearchQuery searchQuery, CancellationToken token)
         {
@@ -98,7 +106,7 @@ public static class NearbyStoryResearch
                     StoryInspection.Record("Spoken quality", "Review suggested", quality, story.StoryId, story.Title);
                 StoryInspection.Record("Selected-place gate", "Accepted", "Selected-place identity, proximity, expiry and claim/source references passed.", story.StoryId, story.Title, variant.Narration, sources.Select(s => s.Url).OfType<string>().ToArray(), StoryPreparationPolicy.Depth(request.ContentDepth));
                 // Research does not confer permission to persist third-party content.
-                return new LocationStoryResult(
+                var response = new LocationStoryResult(
                     story.Title, variant.Narration, null, place.CanonicalId,
                     claims.Select(c => c.ClaimId).ToArray(),
                     sources.Select(s => new LocationSource(s.ProviderName, s.SourceId, s.Url,
@@ -106,13 +114,12 @@ public static class NearbyStoryResearch
                         { SourceTitle = s.Title, ExpiresUtc = story.ExpiresUtc }).ToArray(),
                     story.EvidenceScore, sources.Select(s => s.Attribution).Distinct().ToArray(), [])
                     { ResearchStatus = "ready" };
+                candidateIds[response] = story.StoryId;
+                return response;
             }
             return Empty(result.Failed ? "failed" : "empty");
         }
     }
-
-    private static bool IsGeneric(string text) =>
-        System.Text.RegularExpressions.Regex.IsMatch(text, @"\b(rich in history|nestled in the heart|something for everyone)\b", System.Text.RegularExpressions.RegexOptions.IgnoreCase);
 
     internal static bool ReportsMissingEvidence(string text) =>
         System.Text.RegularExpressions.Regex.IsMatch(text,

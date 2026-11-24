@@ -12,6 +12,8 @@ public sealed record LocalRouteResearchQuery(
     IReadOnlyList<LocalResearchPublicPlace>? PublicPlaces = null,
     JourneyBrief? Journey = null)
 {
+    public bool RequireStoryValue { get; init; }
+    public ResearchAreaContext? ResolvedArea { get; init; }
     public string ContentDepth { get; init; } = "standard";
     public int? MaximumStories { get; init; }
     public string Audience { get; init; } = "GeneralTraveller";
@@ -36,3 +38,5 @@ public interface ILocalRouteResearcher
 {
     Task<LocalRouteResearchResult> ResearchAsync(LocalRouteResearchQuery query, CancellationToken cancellationToken);
 }
+
+public sealed record ResearchAreaContext(string? Neighbourhood, string? Street, string? City, string? Region, string? Country, string Provider, string? District = null);

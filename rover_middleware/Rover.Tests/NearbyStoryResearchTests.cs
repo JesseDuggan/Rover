@@ -35,11 +35,22 @@ internal static class NearbyStoryResearchTests
         Check(brief.ShortSpokenNarration.Contains("short fixture"), "Standard preparation selects standard narration.");
         var calls = 0;
         var recovery = new CapturingRouteResearcher(_ => ++calls == 1
-            ? new([story with { Variants = [new(AdaptiveStoryLength.Deep, 40, "Perth test site is rich in history.", ["claim"])] }], null)
+            ? new([], "Directory-only evidence rejected by story-value assessment.")
             : new([story], null));
         var richer = await NearbyStoryResearch.CreateAsync(recovery, place, request, now, default);
         Check(calls == 2 && richer.ShortSpokenNarration.Contains("deeper fixture"),
-            "Generic narration receives one bounded targeted recovery pass.");
+            "Rejected directory evidence receives one bounded targeted recovery pass.");
+        Check(regular.Query!.RequireStoryValue && lab.Query!.RequireStoryValue,
+            "Both automatic preparation paths require the story-value assessment.");
+        calls = 0;
+        var usefulShort = new CapturingRouteResearcher(_ => { calls++; return new([story], null); });
+        await NearbyStoryResearch.CreateAsync(usefulShort, place, request, now, default);
+        Check(calls == 1, "A useful accepted story does not trigger another search merely because it is short.");
+        calls = 0;
+        var noValue = new CapturingRouteResearcher(_ => { calls++; return new([], "No worthwhile local detail."); });
+        var quiet = await NearbyStoryResearch.CreateAsync(noValue, place, request, now, default);
+        Check(calls == 2 && quiet.ResearchStatus == "empty" && quiet.ShortSpokenNarration == "",
+            "Two unsuccessful research passes leave no generic automatic narration.");
     }
 
     public static async Task Validation()

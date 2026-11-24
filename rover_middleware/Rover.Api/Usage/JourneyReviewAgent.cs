@@ -30,7 +30,12 @@ public sealed record JourneyReviewReport(string Id, string Walk, DateTimeOffset 
 public sealed record ReviewedDraft(string Story, string Title, string Narration, int Words, string[] Sources);
 public sealed record ReviewEvidenceSummary(int InspectionRecordsRead, int DecodedRecords, bool Truncated,
     int IdentifiedStories, int StoriesChecked, int StoriesWithoutDrafts, int DraftsWithSourceLinks,
-    string Sufficiency, string Explanation, IReadOnlyList<ReviewedDraft> Drafts);
+    string Sufficiency, string Explanation, IReadOnlyList<ReviewedDraft> Drafts)
+{
+    public bool DeliveryRecorded { get; init; }
+    public int IntermediateStoryGroups { get; init; }
+    public int RejectedEvents { get; init; }
+}
 
 // A bounded investigation, not an editor: no route, narration, profile or playback repositories.
 public sealed class JourneyReviewAgent(UsageStore store, ILocalRouteResearcher researcher)
@@ -57,7 +62,9 @@ public sealed class JourneyReviewAgent(UsageStore store, ILocalRouteResearcher r
 
     public static ReviewEvidenceSummary Summarize(IReadOnlyList<ReviewObservation> observations, int recordsRead, bool truncated)
     {
-        var groups = StoryGroups(observations).ToArray();
+        var delivered = observations.Where(x => x.Stage == "Delivered story").ToArray();
+        var deliveryRecorded = delivered.Length > 0 || observations.Any(x => x.Stage == "Delivery contract");
+        var groups = StoryGroups(deliveryRecorded ? delivered : observations).ToArray();
         var drafts = groups.Select(g => g.FirstOrDefault(x => !string.IsNullOrWhiteSpace(x.Narration)))
             .OfType<ReviewObservation>().Select(x => new ReviewedDraft(x.Story,x.Title,x.Narration,
                 x.Narration.Split((char[]?)null,StringSplitOptions.RemoveEmptyEntries).Length,
@@ -69,14 +76,28 @@ public sealed class JourneyReviewAgent(UsageStore store, ILocalRouteResearcher r
             ? "No narration drafts were available to judge. Pipeline events and successful API responses are not stories."
             : "Checks cover the latest recorded narration per story, not every version or every story in the walk. Source links are recorded references, not independent factual verification.";
         if(partial) explanation += " Some drafts, source links or inspection records are missing, unreadable or outside the record limit.";
+        if (deliveryRecorded) explanation = "Checks cover the latest API-returned narration per recorded story, excluding intermediate and rejected drafts. Returned does not mean played. Source links do not constitute independent fact verification. The record window may omit other stories.";
+        else explanation += " Legacy evidence has no explicit delivery markers: these are draft checks, not a count of stories returned to the user.";
         return new(recordsRead,observations.Count,truncated,groups.Length,drafts.Length,groups.Length-drafts.Length,
-            withSources,sufficiency,explanation,drafts);
+            withSources,sufficiency,explanation,drafts) {
+                DeliveryRecorded = deliveryRecorded,
+                IntermediateStoryGroups = deliveryRecorded ? StoryGroups(observations).Count(g => !g.Any(x => x.Stage == "Delivered story")) : 0,
+                RejectedEvents = observations.Count(x => x.Outcome is "Rejected" or "Failed" or "No accepted stories")
+            };
     }
 
     public static IReadOnlyList<ReviewFinding> Analyze(IReadOnlyList<ReviewObservation> newestFirst)
     {
         var findings = new List<ReviewFinding>();
-        foreach (var group in StoryGroups(newestFirst))
+        var delivered = newestFirst.Where(x => x.Stage == "Delivered story").ToArray();
+        var deliveryRecorded = delivered.Length > 0 || newestFirst.Any(x => x.Stage == "Delivery contract");
+        if (deliveryRecorded) {
+            foreach (var failure in newestFirst.Where(x => x.Outcome is "Rejected" or "Failed" or "No accepted stories")
+                .DistinctBy(x => (x.Title, x.Stage, x.Reason)).Take(30))
+                findings.Add(new("research-attempt-rejected", failure.Title.Length > 0 ? failure.Title : failure.Stage,
+                    $"{failure.Stage}: {failure.Reason}", "This is an intermediate attempt, not a count of missing delivered stories. Compare the final response and later attempts before retrying."));
+        }
+        foreach (var group in StoryGroups(deliveryRecorded ? delivered : newestFirst))
         {
             var final = group.First();
             var draft = group.FirstOrDefault(x => !string.IsNullOrWhiteSpace(x.Narration));
@@ -101,6 +122,10 @@ public sealed class JourneyReviewAgent(UsageStore store, ILocalRouteResearcher r
                 .Any(s => draft.Narration.Contains(s, StringComparison.OrdinalIgnoreCase)))
                 findings.Add(new("editorial-review", draft.Title, "The draft contains a generic opening or research-status language.",
                     "Review in context, then replace generic wording with a verified detail or omit the failed-search commentary."));
+            if (StoryEditorialPolicy.IsDirectoryLanguage(draft.Narration) || new[] { "helps verify", "exact site rather than", "records identify the business", "clearest site-specific angle", "the source presents", "source describes", "the passage says", "the passage identifies", "verified local identity" }
+                .Any(term => draft.Narration.Contains(term, StringComparison.OrdinalIgnoreCase)))
+                findings.Add(new("research-process-narration", draft.Title, "Narration contains evidence-administration or identity-verification language.",
+                    "Keep verification on the evidence card. Replace it with a supported local detail or shorten the story; do not invent an episode."));
             var listingTerms=new[]{"records", "heritage", "designated", "inventory", "inventories", "municipal", "historic site"}
                 .Where(s=>draft.Narration.Contains(s,StringComparison.OrdinalIgnoreCase)).ToArray();
             if(listingTerms.Length>=3)
@@ -126,6 +151,10 @@ public sealed class JourneyReviewAgent(UsageStore store, ILocalRouteResearcher r
             } catch(JsonException) { /* reported below, never sent as a model instruction */ }
         }
         var findings = Analyze(observations).ToList();
+        foreach (var item in observations.Where(x => x.Stage == "Delivery outcome" && x.Outcome == "Map only").DistinctBy(x => x.Title))
+            findings.Add(new("map-only-discovery", item.Title, item.Reason, "Retain the map discovery. Investigate a stronger local angle before preparing narration; do not pad the description or repeat the same search."));
+        foreach (var item in observations.Where(x => x.Stage == "Story overlap" && x.Outcome == "Not retained").DistinctBy(x => x.Title))
+            findings.Add(new("overlapping-chapter", item.Title, item.Reason, "Review the retained chapter and look for a genuinely different supported angle. Do not restore a repeated overview just to increase the story count."));
         if (rows.Count > 500) findings.Add(new("truncated", "Evidence window", "Only the latest 500 inspection events were analyzed.", "Use the full inspector to check earlier attempts."));
         if (observations.Count < Math.Min(rows.Count,500)) findings.Add(new("unreadable", "Evidence window", "Some records could not be decoded.", "Check legacy record formats before drawing conclusions."));
         var calls = store.Rows("SELECT provider,purpose,count(*),sum(ms) FROM events WHERE at >= $since AND journey=$journey AND kind='Provider call' GROUP BY provider,purpose HAVING count(*)>1 ORDER BY count(*) DESC LIMIT 20",31,request.Walk);

@@ -50,6 +50,8 @@ if (args.Contains("--ontario-source-audit"))
 var tests = new List<(string Name, Func<Task> Run)>
 {
     ("Research paragraph evidence bounds preserve qualifications and citation validation", ResearchParagraphTests.EvidenceLength),
+    ("Story value rejects directory narration and bounds recovery", StoryValueTests.Evaluate),
+    ("Research geography resolves worldwide area context without guessed districts", ResearchGeographyTests.Resolve),
     ("Journey review analyzes latest evidence and validates research bounds", JourneyReviewTests.Analysis),
     ("Journey review research preserves profiles, scopes and original evidence", JourneyReviewTests.BoundedResearch),
     ("Journey review page protects access, escapes content and reuses completed reviews", JourneyReviewTests.ProtectedPage),
@@ -1067,7 +1069,7 @@ static async Task LocalRouteResearchValidation()
                 using var researchContext = JsonDocument.ParseValue(ref reader);
                 AssertEqual(1000, researchContext.RootElement.GetProperty("maximumStoryDistanceMeters").GetInt32());
                 if (calls == 3)
-                    AssertTrue(input.Contains("Follow the geographic fallback policy in order"),
+                    AssertTrue(input.Contains("Follow the supplied geographic policy"),
                         "Recovery must follow the ordered fallback with cited local relevance.");
                 var publicPlace = researchContext.RootElement.GetProperty("publicPlaces")[0];
                 AssertEqual("Museum street, Paris", publicPlace.GetProperty("address").GetString());

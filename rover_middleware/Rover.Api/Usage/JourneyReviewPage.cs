@@ -39,6 +39,9 @@ public static class JourneyReviewPage
             html.Append("<article><h3>Stories checked and evidence available</h3><p>Complete describes the review run, not story quality or journey completeness.</p>");
             if(report.Evidence is {} evidence) {
                 html.Append($"<p><strong>{evidence.StoriesChecked} stories checked</strong> · {evidence.IdentifiedStories} distinct story records · {evidence.StoriesWithoutDrafts} without narration · {evidence.DraftsWithSourceLinks} checked drafts with source links.</p><p><strong>Evidence: {E(evidence.Sufficiency)}</strong></p><p>{E(evidence.Explanation)}</p><p>{evidence.DecodedRecords} decoded of {evidence.InspectionRecordsRead} inspection records read; 31-day window; 500-record limit. Truncated: {evidence.Truncated}. New research proposals are separate from these counts. Playback is not assessed.</p>");
+                html.Append(evidence.DeliveryRecorded
+                    ? $"<p>Basis: API-returned stories. {evidence.IntermediateStoryGroups} intermediate story groups and {evidence.RejectedEvents} rejected/failed events are separate from the story count. Returned does not mean heard.</p>"
+                    : "<p>Basis: legacy drafts; delivery was not recorded. This is not a delivered-story count.</p>");
                 foreach(var draft in evidence.Drafts) {
                     html.Append($"<details><summary>{E(draft.Title)} · {draft.Words} words · {draft.Sources.Length} source links</summary><p>{E(draft.Narration)}</p>");
                     foreach(var source in draft.Sources) if(InspectionDetails.Source(source) is {} url)
@@ -112,7 +115,7 @@ public static class JourneyReviewPage
         try {
             Directory.CreateDirectory(Folder(c));
             var revision=store.Rows("SELECT coalesce(max(rowid),0),count(*) FROM events WHERE at >= $since AND journey=$journey",31,request!.Walk);
-            var fingerprint=Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes("evidence-summary-v1:"+JsonSerializer.Serialize(request)+JsonSerializer.Serialize(revision))));
+            var fingerprint=Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes("delivered-summary-v2:"+JsonSerializer.Serialize(request)+JsonSerializer.Serialize(revision))));
             var cache=Path.Combine(Folder(c),fingerprint+".cache");
             if(File.Exists(cache) && File.GetLastWriteTimeUtc(cache)>DateTime.UtcNow.AddMinutes(-15)) {
                 var cachedId=File.ReadAllText(cache);

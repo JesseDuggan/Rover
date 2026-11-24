@@ -2,7 +2,7 @@ using System.Text.RegularExpressions;
 
 namespace Rover.Application.Journeys;
 
-public sealed record SpokenStorySentence(string Text, string[]? EvidenceQuotes = null, int[]? EvidenceSentenceIndices = null);
+public sealed record SpokenStorySentence(string Text, string[]? EvidenceQuotes = null, int[]? EvidenceSentenceIndices = null, string? NarrativePurpose = null);
 
 // Checks provenance and presentation, not semantic entailment or historical truth.
 public static class SpokenStoryDraft
