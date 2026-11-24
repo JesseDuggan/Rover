@@ -91,6 +91,7 @@ builder.Services.AddSingleton(new LocationTrackingOptions
 });
 
 builder.Services.AddUsage();
+builder.Services.AddScoped<JourneyReviewAgent>();
 builder.Services.AddApplication();
 builder.Services.AddInfrastructure(builder.Configuration);
 
@@ -177,6 +178,7 @@ app.UseRateLimiter();
 app.UseUsage();
 UsagePage.Map(app);
 JourneyInspectionPage.Map(app);
+JourneyReviewPage.Map(app);
 
 if (app.Environment.IsDevelopment())
 {

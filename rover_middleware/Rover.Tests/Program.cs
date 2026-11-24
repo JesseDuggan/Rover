@@ -35,6 +35,12 @@ using Rover.Infrastructure.Profiles;
 using Rover.Infrastructure.Speech;
 using Rover.Infrastructure.Walks;
 
+if (args.Contains("--research-review-fixture"))
+{
+    await JourneyReviewFixture.Run();
+    return 0;
+}
+
 if (args.Contains("--ontario-source-audit"))
 {
     await OntarioFieldTestTests.Audit();
@@ -43,6 +49,10 @@ if (args.Contains("--ontario-source-audit"))
 
 var tests = new List<(string Name, Func<Task> Run)>
 {
+    ("Research paragraph evidence bounds preserve qualifications and citation validation", ResearchParagraphTests.EvidenceLength),
+    ("Journey review analyzes latest evidence and validates research bounds", JourneyReviewTests.Analysis),
+    ("Journey review research preserves profiles, scopes and original evidence", JourneyReviewTests.BoundedResearch),
+    ("Journey review page protects access, escapes content and reuses completed reviews", JourneyReviewTests.ProtectedPage),
     ("Narration omits routine addresses and preserves historical facts", NarrationAddressTests.PresentationOnly),
     ("Client journey linkage spans requests without merging separate walks", UsageTests.ClientJourneyLinkage),
     ("API usage persists provider calls, private walk links and priced model receipts", UsageTests.TracksProviderAndPrice),

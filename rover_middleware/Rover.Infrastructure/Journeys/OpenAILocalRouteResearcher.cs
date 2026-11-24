@@ -184,9 +184,12 @@ public sealed class OpenAILocalRouteResearcher(HttpClient client, LocalRouteRese
                 max_output_tokens = Math.Clamp(options.SearchMaxOutputTokens, 1024, 16384)
             }, budget.Token, neighbourhoodRetry ? "Retry neighbourhood research" : "Research local evidence");
             stage = "citation extraction";
-            var passages = ReadPassages(research.RootElement, clock.GetUtcNow(), maximumStories, 220, out var extractionDetails);
+            // Evidence is input to the separate spoken editor, not the final narration. Allow
+            // bounded research detail (including qualifications and location metadata) without
+            // truncating it or dropping a cited paragraph solely for exceeding spoken length.
+            var passages = ReadPassages(research.RootElement, clock.GetUtcNow(), maximumStories, 600, out var extractionDetails);
             StoryInspection.Record("Citation extraction", passages.Count > 0 ? "Passages found" : "No usable passages", passages.Count > 0
-                ? $"{passages.Count} cited passages extracted." : $"No usable cited passages: {extractionDetails}.");
+                ? $"{passages.Count} cited passages extracted. {extractionDetails}." : $"No usable cited passages: {extractionDetails}.");
             if (passages.Count == 0)
             {
                 logger?.LogWarning("Route research citation failure: recovery={Recovery}; {Details}",
@@ -352,7 +355,15 @@ public sealed class OpenAILocalRouteResearcher(HttpClient client, LocalRouteRese
                     StoryInspection.Record("Spoken edit", "Accepted", "Sentence support references resolve to the cited passage; qualifications and numeric details retained. Semantic accuracy is not independently verified.", title: card.Title);
                 }
                 else
+                {
+                    if(passage.Text.Split(' ',StringSplitOptions.RemoveEmptyEntries).Length>220)
+                    {
+                        invalidCards++;
+                        StoryInspection.Record("Spoken edit", "Rejected", "Extended research evidence needs a supported spoken edit; oversized raw research is not a narration fallback.", title: card.Title);
+                        continue;
+                    }
                     StoryInspection.Record("Spoken edit", "Fallback", $"{(editReason == "accepted" ? "unusable_draft_pattern" : editReason)}; original cited prose retained.", title: card.Title);
+                }
                 // Never strip the qualification from disputed evidence or folklore.
                 var qualifications = new HashSet<AdaptiveStoryClaim>();
                 foreach (var phrase in uncertainty)
@@ -641,6 +652,8 @@ public sealed class OpenAILocalRouteResearcher(HttpClient client, LocalRouteRese
         var invalidOffsets = 0;
         var invalidUrls = 0;
         var rejectedLength = 0;
+        var longestParagraphWords = 0;
+        var extendedEvidence = 0;
         var embeddedUrls = 0;
         if (!root.TryGetProperty("output", out var output)) return results;
         foreach (var item in output.EnumerateArray())
@@ -685,17 +698,21 @@ public sealed class OpenAILocalRouteResearcher(HttpClient client, LocalRouteRese
                         narration = narration.Remove(citation.Start - paragraph.Index, citation.End - citation.Start);
                     narration = Regex.Replace(narration, @"\s+", " ").Trim();
                     var words = narration.Split(' ', StringSplitOptions.RemoveEmptyEntries).Length;
+                    longestParagraphWords = Math.Max(longestParagraphWords, words);
                     if (words < 15 || words > maximumWords) { rejectedLength++; continue; }
                     if (narration.Contains("http", StringComparison.OrdinalIgnoreCase)) { embeddedUrls++; continue; }
                     if (UnusableDraft.IsMatch(narration)) continue;
+                    if(words>220) extendedEvidence++;
                     results.Add(new Passage(narration, citations.Select(c => c.Source).DistinctBy(s => s.Url).ToArray()));
-                    if (results.Count == maximumStories) return results;
+                    if (results.Count == maximumStories) { details = Summary(); return results; }
                 }
             }
         }
-        details = $"{paragraphs} paragraphs; {citationCount} citation annotations; {invalidOffsets} invalid citation positions; "
-            + $"{invalidUrls} invalid HTTPS sources; {citedParagraphs} cited paragraphs; {rejectedLength} rejected for length; {embeddedUrls} with embedded URLs";
+        details = Summary();
         return results;
+        string Summary() => $"{paragraphs} paragraphs; {citationCount} citation annotations; {invalidOffsets} invalid citation positions; "
+            + $"{invalidUrls} invalid HTTPS sources; {citedParagraphs} cited paragraphs; {rejectedLength} rejected for length (allowed 15–{maximumWords} words; longest {longestParagraphWords}); "
+            + $"{extendedEvidence} evidence paragraphs above 220 words retained for spoken editing; {embeddedUrls} with embedded URLs";
     }
 
     private static bool PublicUrl(string? value, out Uri? uri) => Uri.TryCreate(value, UriKind.Absolute, out uri)

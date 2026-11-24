@@ -46,6 +46,7 @@ public static class JourneyInspectionPage
         foreach(var filter in new[]{("walk",walk),("request",request),("story",story)})
             if(filter.Item2.Length>0) html.Append($"<input type=hidden name='{filter.Item1}' value='{E(filter.Item2)}'>");
         html.Append("</form>");
+        if(walk.Length>0) html.Append($"<p><a href='/admin/research-review?walk={E(walk)}'>Research and review this journey</a> — findings and proposals only; no automatic changes.</p>");
         if(walk.Length+request.Length+story.Length>0) html.Append($"<p class=badge>Filtered: {E(walk.Length>0?"walk "+walk:request.Length>0?"request "+request:"story "+story)}</p>");
         Table("Journeys",["Walk","Places and stories","Latest activity","Recorded events","Inspection events"],
             "SELECT journey,group_concat(DISTINCT NULLIF(json_extract(CASE WHEN json_valid(details) THEN details ELSE '{}' END,'$.title'),'')),datetime(max(at),'unixepoch'),count(*),sum(kind='Story inspection')"+where+" AND journey<>'' GROUP BY journey ORDER BY max(at) DESC LIMIT 50");
