@@ -36,6 +36,17 @@ public static class JourneyReviewPage
             var report=JsonSerializer.Deserialize<JourneyReviewReport>(File.ReadAllText(file))!;
             var html=new StringBuilder("<!doctype html><html lang=en><meta charset=utf-8><meta name=viewport content='width=device-width,initial-scale=1'><title>Walkabout review</title><style>body{font:17px/1.5 system-ui;max-width:1000px;margin:32px auto;padding:20px;background:#f3f6f4;color:#18362d}article{background:white;padding:20px;margin:16px 0;border-radius:12px}pre{white-space:pre-wrap}a{color:#006d67}</style><a href='/admin/research-review'>New review</a><h1>Research review — proposals only</h1><p>No journey or story was changed. Confidence is automated, not independent historical verification.</p>");
             html.Append($"<p>{E(report.Context.City)} · {E(report.Status)} · {E(report.Created.ToString("u"))}</p><p>{E(report.Context.EvidenceOrigin)}</p><p>Interests: {E(string.Join(", ",report.Context.Interests))}. Depth: {E(report.Context.ContentDepth)}.</p><a href='/admin/journeys?walk={E(report.Walk)}'>Original journey</a> · <a href='/admin/journeys?request={E(report.ResearchTrace)}'>Research calls and evidence decisions</a><h2>Findings and suggested improvements</h2>");
+            html.Append("<article><h3>Stories checked and evidence available</h3><p>Complete describes the review run, not story quality or journey completeness.</p>");
+            if(report.Evidence is {} evidence) {
+                html.Append($"<p><strong>{evidence.StoriesChecked} stories checked</strong> · {evidence.IdentifiedStories} distinct story records · {evidence.StoriesWithoutDrafts} without narration · {evidence.DraftsWithSourceLinks} checked drafts with source links.</p><p><strong>Evidence: {E(evidence.Sufficiency)}</strong></p><p>{E(evidence.Explanation)}</p><p>{evidence.DecodedRecords} decoded of {evidence.InspectionRecordsRead} inspection records read; 31-day window; 500-record limit. Truncated: {evidence.Truncated}. New research proposals are separate from these counts. Playback is not assessed.</p>");
+                foreach(var draft in evidence.Drafts) {
+                    html.Append($"<details><summary>{E(draft.Title)} · {draft.Words} words · {draft.Sources.Length} source links</summary><p>{E(draft.Narration)}</p>");
+                    foreach(var source in draft.Sources) if(InspectionDetails.Source(source) is {} url)
+                        html.Append($"<p><a href='{E(url)}' rel='noreferrer noopener'>{E(url)}</a></p>");
+                    html.Append("</details>");
+                }
+            } else html.Append("<p>Story counts and evidence sufficiency were not recorded for this older report. Run a new review; an empty findings list does not establish good story quality.</p>");
+            html.Append("</article>");
             foreach(var f in report.Findings)html.Append($"<article><h3>{E(f.Title)}</h3><p><strong>Recorded evidence:</strong> {E(f.Evidence)}</p><p><strong>Suggestion:</strong> {E(f.Suggestion)}</p><small>{E(f.Code)}</small></article>");
             html.Append("<h2>Research proposals</h2>");
             foreach(var p in report.Proposals) {
@@ -50,8 +61,10 @@ public static class JourneyReviewPage
                 }html.Append("</article>");
             }
             var usage=store.Rows("SELECT count(*),coalesce(sum(usd),0),sum(usd IS NULL) FROM events WHERE at >= $since AND trace='"+report.ResearchTrace+"' AND kind='Model usage'",31,"");
-            html.Append("<h2>Research cost visibility</h2><p>The trace shows provider attempts and model receipts. Prices are estimates; absent receipts or unpriced tools mean the full cost is unknown.</p>");
+            html.Append("<h2>Research cost visibility</h2><p>The following receipts cover only new research in this review, not the original journey. A review with no new research can have zero receipts even when the original stories used AI. Prices are estimates; absent receipts or unpriced tools mean the full cost is unknown.</p>");
             if(usage.Count>0)html.Append($"<p>{E(usage[0][0])} model receipts · ${E(usage[0][1])} priced subtotal · {E(usage[0][2])} unpriced receipts.</p>");
+            var originalUsage=store.Rows("SELECT count(*),coalesce(sum(usd),0),coalesce(sum(usd IS NULL),0) FROM events WHERE at >= $since AND journey=$journey AND kind='Model usage'",31,report.Walk);
+            if(originalUsage.Count>0)html.Append($"<p>Original journey (currently retained 31-day evidence): {E(originalUsage[0][0])} model receipts · ${E(originalUsage[0][1])} priced subtotal · {E(originalUsage[0][2])} unpriced receipts. This is not a total-cost guarantee.</p>");
             return Results.Content(html.Append("</html>").ToString(),"text/html");
         }
         var walk=h.Request.Query["walk"].ToString();
@@ -99,7 +112,7 @@ public static class JourneyReviewPage
         try {
             Directory.CreateDirectory(Folder(c));
             var revision=store.Rows("SELECT coalesce(max(rowid),0),count(*) FROM events WHERE at >= $since AND journey=$journey",31,request!.Walk);
-            var fingerprint=Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes(JsonSerializer.Serialize(request)+JsonSerializer.Serialize(revision))));
+            var fingerprint=Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes("evidence-summary-v1:"+JsonSerializer.Serialize(request)+JsonSerializer.Serialize(revision))));
             var cache=Path.Combine(Folder(c),fingerprint+".cache");
             if(File.Exists(cache) && File.GetLastWriteTimeUtc(cache)>DateTime.UtcNow.AddMinutes(-15)) {
                 var cachedId=File.ReadAllText(cache);

@@ -23,7 +23,14 @@ public sealed record ReviewProposal(string Place, string Status, string Question
     IReadOnlyList<AdaptiveRouteStory> Stories, string[] Rejections);
 public sealed record JourneyReviewReport(string Id, string Walk, DateTimeOffset Created,
     JourneyReviewRequest Context, IReadOnlyList<ReviewFinding> Findings,
-    IReadOnlyList<ReviewProposal> Proposals, string ResearchTrace, string Status);
+    IReadOnlyList<ReviewProposal> Proposals, string ResearchTrace, string Status)
+{
+    public ReviewEvidenceSummary? Evidence { get; init; }
+}
+public sealed record ReviewedDraft(string Story, string Title, string Narration, int Words, string[] Sources);
+public sealed record ReviewEvidenceSummary(int InspectionRecordsRead, int DecodedRecords, bool Truncated,
+    int IdentifiedStories, int StoriesChecked, int StoriesWithoutDrafts, int DraftsWithSourceLinks,
+    string Sufficiency, string Explanation, IReadOnlyList<ReviewedDraft> Drafts);
 
 // A bounded investigation, not an editor: no route, narration, profile or playback repositories.
 public sealed class JourneyReviewAgent(UsageStore store, ILocalRouteResearcher researcher)
@@ -36,9 +43,8 @@ public sealed class JourneyReviewAgent(UsageStore store, ILocalRouteResearcher r
             double.IsFinite(p.Longitude) && Math.Abs(p.Latitude) <= 90 && Math.Abs(p.Longitude) <= 180);
     static bool Good(string? s, int max) => !string.IsNullOrWhiteSpace(s) && s.Length <= max && !s.Any(char.IsControl);
 
-    public static IReadOnlyList<ReviewFinding> Analyze(IReadOnlyList<ReviewObservation> newestFirst)
+    static IEnumerable<IGrouping<string,ReviewObservation>> StoryGroups(IReadOnlyList<ReviewObservation> newestFirst)
     {
-        var findings = new List<ReviewFinding>();
         // A later successful preparation supersedes an earlier rejected attempt. Titles are a
         // fallback only for legacy records without a story key; they are not verified identities.
         string Key(ReviewObservation x) {
@@ -46,10 +52,34 @@ public sealed class JourneyReviewAgent(UsageStore store, ILocalRouteResearcher r
             var ids=newestFirst.Where(y=>y.Title==x.Title && y.Story.Length>0).Select(y=>y.Story).Distinct().Take(2).ToArray();
             return ids.Length==1 ? "id:"+ids[0] : "title:"+x.Title;
         }
-        foreach (var group in newestFirst.Where(x => x.Title.Length > 0).GroupBy(Key))
+        return newestFirst.Where(x => x.Title.Length > 0 || x.Story.Length > 0).GroupBy(Key);
+    }
+
+    public static ReviewEvidenceSummary Summarize(IReadOnlyList<ReviewObservation> observations, int recordsRead, bool truncated)
+    {
+        var groups = StoryGroups(observations).ToArray();
+        var drafts = groups.Select(g => g.FirstOrDefault(x => !string.IsNullOrWhiteSpace(x.Narration)))
+            .OfType<ReviewObservation>().Select(x => new ReviewedDraft(x.Story,x.Title,x.Narration,
+                x.Narration.Split((char[]?)null,StringSplitOptions.RemoveEmptyEntries).Length,
+                x.Sources.Where(s => InspectionDetails.Source(s) is not null).Distinct().ToArray())).ToArray();
+        var withSources = drafts.Count(x => x.Sources.Length > 0);
+        var partial = truncated || observations.Count < recordsRead || drafts.Length < groups.Length || withSources < drafts.Length;
+        var sufficiency = drafts.Length == 0 ? "Insufficient" : partial ? "Partial" : "Enough for recorded-draft editorial checks";
+        var explanation = drafts.Length == 0
+            ? "No narration drafts were available to judge. Pipeline events and successful API responses are not stories."
+            : "Checks cover the latest recorded narration per story, not every version or every story in the walk. Source links are recorded references, not independent factual verification.";
+        if(partial) explanation += " Some drafts, source links or inspection records are missing, unreadable or outside the record limit.";
+        return new(recordsRead,observations.Count,truncated,groups.Length,drafts.Length,groups.Length-drafts.Length,
+            withSources,sufficiency,explanation,drafts);
+    }
+
+    public static IReadOnlyList<ReviewFinding> Analyze(IReadOnlyList<ReviewObservation> newestFirst)
+    {
+        var findings = new List<ReviewFinding>();
+        foreach (var group in StoryGroups(newestFirst))
         {
             var final = group.First();
-            var draft = group.FirstOrDefault(x => x.Narration.Length > 0);
+            var draft = group.FirstOrDefault(x => !string.IsNullOrWhiteSpace(x.Narration));
             if (final.Outcome is "Rejected" or "No accepted stories" or "No verified story" or "Failed")
                 findings.Add(new("latest-attempt-failed", final.Title, $"{final.Stage}: {final.Outcome}. {final.Reason}",
                     "Inspect the exact failed predicate. An older draft does not prove the latest attempt succeeded."));
@@ -89,6 +119,7 @@ public sealed class JourneyReviewAgent(UsageStore store, ILocalRouteResearcher r
         foreach (var row in rows.Take(500)) {
             try {
                 using var doc = JsonDocument.Parse(row[2]); var d = doc.RootElement;
+                if(d.ValueKind != JsonValueKind.Object) continue;
                 string V(string k) => d.TryGetProperty(k,out var v) && v.ValueKind == JsonValueKind.String ? v.GetString() ?? "" : "";
                 observations.Add(new(V("story"),V("title"),row[0],row[1],V("reason"),V("narration"),
                     d.TryGetProperty("sources",out var s) && s.ValueKind == JsonValueKind.Array ? s.EnumerateArray().Where(x=>x.ValueKind==JsonValueKind.String).Select(x=>x.GetString()!).ToArray() : [],V("depth")));
@@ -164,7 +195,9 @@ public sealed class JourneyReviewAgent(UsageStore store, ILocalRouteResearcher r
                 if (budget.IsCancellationRequested) break;
             }
             token.ThrowIfCancellationRequested();
-            return new(Guid.NewGuid().ToString("N"),request.Walk,DateTimeOffset.UtcNow,request,findings,proposals,scope.Trace,status);
+            return new(Guid.NewGuid().ToString("N"),request.Walk,DateTimeOffset.UtcNow,request,findings,proposals,scope.Trace,status) {
+                Evidence=Summarize(observations,Math.Min(rows.Count,500),rows.Count>500)
+            };
         } finally { UsageScope.Current.Value=previous;StoryInspection.Listener.Value=listener; }
     }
 }

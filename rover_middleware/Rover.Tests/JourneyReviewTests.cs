@@ -22,6 +22,19 @@ internal static class JourneyReviewTests
             throw new Exception("Legacy edit record was counted as a missing story despite a uniquely linked final draft");
         if(!JourneyReviewAgent.Analyze([rejected,accepted]).Any(x=>x.Code=="latest-attempt-failed"))throw new Exception("Later failure hidden by old draft");
         var weak=accepted with { Narration="Nestled in the heart of town, rich in history.",Sources=[] };
+        var summary=JourneyReviewAgent.Summarize([accepted,rejected,accepted with {Story="",Narration="",Stage="Spoken edit"}],3,false);
+        if(summary.StoriesChecked!=1 || summary.IdentifiedStories!=1 || summary.DraftsWithSourceLinks!=1 || summary.Sufficiency!="Enough for recorded-draft editorial checks")
+            throw new Exception("Repeated stages counted as separate stories");
+        var pipeline=accepted with {Story="",Title="",Narration="",Sources=[]};
+        var empty=JourneyReviewAgent.Summarize([pipeline],1,false);
+        if(empty.StoriesChecked!=0 || empty.Sufficiency!="Insufficient")throw new Exception("Pipeline event mistaken for reviewed narration");
+        if(JourneyReviewAgent.Summarize([accepted with {Narration="  "}],1,false).StoriesChecked!=0 ||
+           JourneyReviewAgent.Summarize([accepted],2,false).Sufficiency!="Partial" ||
+           JourneyReviewAgent.Summarize([accepted],1,true).Sufficiency!="Partial")
+            throw new Exception("Whitespace, unreadable or truncated evidence overstated review coverage");
+        var partial=JourneyReviewAgent.Summarize([accepted,weak with {Story="b",Title="Other"},rejected with {Story="c",Title="Missing"}],4,true);
+        if(partial.StoriesChecked!=2 || partial.StoriesWithoutDrafts!=1 || partial.DraftsWithSourceLinks!=1 || partial.Sufficiency!="Partial" || !partial.Truncated)
+            throw new Exception("Incomplete evidence incorrectly judged sufficient");
         if(JourneyReviewAgent.Analyze([weak]).Count!=3)throw new Exception("Expected source, length and editorial flags");
         if(!JourneyReviewAgent.Valid(Request()) || JourneyReviewAgent.Valid(Request() with { Places=[new("Museum",double.NaN,0)] }) ||
            JourneyReviewAgent.Valid(Request() with { Walk="' OR 1=1 --" }) || JourneyReviewAgent.Valid(Request() with { Places=[new("a",0,0),new("b",0,0),new("c",0,0)] }))
@@ -96,7 +109,12 @@ internal static class JourneyReviewTests
             var second=await Post();second.EnsureSuccessStatusCode();var b=await second.Content.ReadFromJsonAsync<JourneyReviewReport>();
             if(a!.Id!=b!.Id)throw new Exception("Identical review was not reused");
             var html=await client.GetStringAsync("/admin/research-review?id="+a.Id);
+            if(a.Evidence?.StoriesChecked!=1 || !html.Contains("1 stories checked") || !html.Contains("Evidence: Partial") || !html.Contains("not the original journey"))
+                throw new Exception("Evidence counts or cost scope absent from report");
             if(html.Contains("<script>alert(1)</script>") || !html.Contains("&lt;script&gt;"))throw new Exception("Report did not escape untrusted titles");
+            await File.WriteAllTextAsync(Path.Combine(folder,"reviews",a.Id+".json"),System.Text.Json.JsonSerializer.Serialize(a with {Evidence=null}));
+            var legacy=await client.GetStringAsync("/admin/research-review?id="+a.Id);
+            if(!legacy.Contains("not recorded for this older report") || legacy.Contains("0 stories checked"))throw new Exception("Legacy report invented evidence counts");
         } finally {await app.StopAsync();Microsoft.Data.Sqlite.SqliteConnection.ClearAllPools();Directory.Delete(folder,true);}
     }
 }
